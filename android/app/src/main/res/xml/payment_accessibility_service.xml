@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/payment_accessibility_description"
+    android:summary="@string/payment_accessibility_summary"
+    android:packageNames="com.tencent.mm,com.eg.android.AlipayGphone"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds"
+    android:notificationTimeout="800"
+    android:canRetrieveWindowContent="true"
+    android:canPerformGestures="false"
+    android:canTakeScreenshot="false"
+    android:canRequestFilterKeyEvents="false"
+    android:isAccessibilityTool="false"
+    android:settingsActivity="com.moneylab.superledger.mobile.MainActivity" />

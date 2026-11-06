@@ -1,4 +1,4 @@
-# Local sync protocol v1
+# Local sync: transport v1, full-ledger protocol v2
 
 The desktop's existing renderer API stays on an authenticated loopback listener.
 `mobile-sync.mjs` owns a second listener bound to one explicitly selected RFC1918
@@ -10,7 +10,7 @@ IPv4 interface. It starts only when the desktop sync panel opens, expires after
 The desktop QR contains UTF-8 JSON:
 
 ```
-{app:"superledger", v:1, addresses:["http://<private-ip>:<ephemeral-port>"],
+{app:"superledger", v:1, protocolVersion:2, addresses:["http://<private-ip>:<ephemeral-port>"],
  sessionId:"<16 random bytes as hex>", key:"<32 random bytes as base64url>",
  expiresAt:<epoch milliseconds>}
 ```
@@ -27,17 +27,30 @@ AAD is UTF-8 `superledger-sync-v1:<sessionId>:request` or the corresponding
 
 An authenticated request contains `requestId`, persistent `deviceId`, display-only
 `deviceName`, `bookId`, and up to 500 operations. Android also bounds batches by
-UTF-8 size. The first request uses `bookId:null, operations:[]` to download the
-baseline; unbound changes are never accepted. The first successful device binds
+UTF-8 size. Version 2 requests include `protocolVersion:2`. First pairing uses
+`bookId:null`; version 2 can also merge independently created mobile entities.
+Version 1 first pairing still requires an empty queue. Non-null book IDs must
+match, so a reset desktop ledger never accepts stale edits. The first successful device binds
 that temporary session. Reusing a request ID with changed contents is rejected.
 
-An authenticated response contains matching `requestId`, `bookId`, `state`,
+An authenticated response contains `protocolVersion:2`, matching `requestId`, `bookId`, `state`,
 `accepted` operation IDs, `conflicts`, `summary`, and `syncedAt`. Errors after
 authentication also use the encrypted envelope and include `requestId,error`.
 An HTTP success alone is not an acknowledgement; the phone verifies GCM and the
 request ID, then persists the resulting ledger and queue atomically.
 
 ## Merge and durability
+
+Version 2 entity operations use `{id,entity,kind,recordId,record,base}` with entity
+`account`, `subscription`, `goal`, `settings` or `transaction`. Settings has the
+fixed record ID `settings` and cannot be deleted. Transactions also retain the
+legacy `transaction` / `transactionId` fields below. The first base snapshot and
+queue position survive collapsed edits. Every candidate is validated as a whole
+ledger before its receipt is committed. Deleting a referenced account conflicts.
+Deleting a subscription detaches its history without deleting booked expenses.
+Processed subscription periods union independently of editable plan fields;
+deterministic `rec_<subscriptionId>_<YYYYMM>` charges deduplicate by occurrence and
+native financial fields. Different amounts/accounts require explicit review.
 
 - Put: `{id,kind:"put",base:<original transaction or null>,transaction}`.
 - Delete: `{id,kind:"delete",base:<original transaction>,transactionId}`.
@@ -63,11 +76,13 @@ request ID, then persists the resulting ledger and queue atomically.
 
 ## Scope and validation
 
-Mobile creates/edits CNY income/expense transactions. Account management, foreign
-currencies, transfers and subscription plans remain desktop-managed. Known
-subscription associations cannot be removed through mobile sync.
+Version 2 supports accounts, 12 currencies, income/expenses, same/cross-currency
+transfers, subscriptions, budget and goals. Version 1 retains CNY transaction-only
+scope. Android 1.2 requires desktop 1.7: it checks protocolVersion in both QR and
+authenticated response before applying data. The transport URL/AAD stay v1 for
+old phones; desktop 1.7 still accepts their limited operations.
 
-`tests/mobile-sync.test.mjs` covers durable retry/delete semantics, concurrent
+`tests/mobile-sync.test.mjs` and `tests/mobile-full-ledger.test.mjs` cover durable retry/delete semantics, concurrent
 edits, duplicate review, wrong-book rejection, invalid transactions, crypto
 tampering, loopback/public-address rejection, expiry/cancellation, and the real
 local HTTP encrypted round trip including desktop restart/import. Android tools

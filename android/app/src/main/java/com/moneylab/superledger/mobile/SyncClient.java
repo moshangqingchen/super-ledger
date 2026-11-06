@@ -26,6 +26,7 @@ public final class SyncClient {
         public String sessionId;
         public byte[] key;
         public long expiresAt;
+        public int protocolVersion;
     }
     private static final int B64 = Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING;
     public static Pairing parsePairing(String text) throws Exception {
@@ -34,6 +35,8 @@ public final class SyncClient {
         try { value = new JSONObject(text.trim()); } catch (Exception e) { throw new Exception("请扫描电脑端「手机同步」中的二维码"); }
         if (!value.optString("app").equals("superledger") || value.optInt("v") != 1) throw new Exception("二维码不属于超级账本，或版本不兼容");
         Pairing result = new Pairing();
+        result.protocolVersion = value.optInt("protocolVersion", 1);
+        if (result.protocolVersion != 2) throw new Exception("完整手机账本需要电脑 1.7.0 或更新版本，请先更新电脑端，再生成新二维码");
         result.sessionId = value.optString("sessionId"); if (!result.sessionId.matches("[a-fA-F0-9]{32}")) throw new Exception("同步会话标识无效");
         String key = value.optString("key"); if (!key.matches("[A-Za-z0-9_-]{43}")) throw new Exception("配对密钥无效");
         result.key = Base64.decode(key, B64); if (result.key.length != 32) throw new Exception("配对密钥长度无效");
@@ -89,6 +92,7 @@ public final class SyncClient {
                 if (!response.optString("requestId").equals(request.getString("requestId"))) throw new Exception("响应不属于本次同步，已拒绝接收");
                 if (response.has("error")) throw new AuthenticatedError(response.optString("error", "同步未完成"));
                 if (status != 200) throw new AuthenticatedError("电脑未接受同步，请重试");
+                if (response.optInt("protocolVersion", 1) != 2) throw new AuthenticatedError("电脑端同步版本过旧，手机记录已保留，请更新电脑端后重试");
                 return response;
             } catch (AuthenticatedError error) { throw error; }
             catch (Exception error) { lastFailure = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage(); }

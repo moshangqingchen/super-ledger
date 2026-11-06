@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="payment_accessibility_summary">可选的付款页辅助识别，默认关闭</string>
+    <string name="payment_accessibility_description">仅在你同时开启自动记账和付款页辅助识别后，读取微信、支付宝特定付款结果页面中可访问的文字，在本机提取实付金额、商家、付款方式和订单信息并放入待确认。不截图，不保存整页，不读输入框或聊天页，不点击或代为付款。页面不提供文字、结构未知或证据不足时不能识别，可随时关闭。</string>
+</resources>

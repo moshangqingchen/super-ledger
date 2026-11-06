@@ -12,12 +12,13 @@ const classes=path.join(build,'classes'), data=path.join(build,'desktop'), phone
 for(const p of [build,classes,data,phone])fs.mkdirSync(p,{recursive:true});
 const jar=path.join(tools,'lib','json-20240303.jar');
 const source=path.join(root,'android','app','src','main','java','com','moneylab','superledger','mobile');
-const files=[path.join(tools,'AndroidInteropHarness.java'),...['SyncClient','LedgerStore','PaymentParser','UpdatePolicy'].map(n=>path.join(source,n+'.java'))];
+const files=[path.join(tools,'AndroidInteropHarness.java'),...['SyncClient','LedgerStore','MobileLedger','PaymentParser','PaymentRouting','PaymentPageParser','UpdatePolicy'].map(n=>path.join(source,n+'.java'))];
 const testSource=path.join(root,'android','app','src','test','java','com','moneylab','superledger','mobile');
-files.push(...['PaymentParserTest','LedgerStoreTest','UpdatePolicyTest'].map(n=>path.join(testSource,n+'.java')));
+const testNames=['PaymentParserTest','PaymentRoutingTest','PaymentPageParserTest','LedgerStoreTest','MobileLedgerTest','UpdatePolicyTest'];
+files.push(...testNames.map(n=>path.join(testSource,n+'.java')));
 for(const file of ['android/util/Base64.java','android/util/AtomicFile.java','android/content/Context.java','android/os/Build.java'])files.push(path.join(tools,'test-stubs',file));
 await execute('javac.exe',['-J-Duser.language=en','-encoding','UTF-8','-cp',jar,'-d',classes,...files]);
-for(const name of ['PaymentParserTest','LedgerStoreTest','UpdatePolicyTest']){
+for(const name of testNames){
   const {stdout}=await execute('java.exe',['-Dfile.encoding=UTF-8','-cp',[classes,jar].join(path.delimiter),'com.moneylab.superledger.mobile.'+name]);process.stdout.write(stdout);
 }
 const address=networkChoices().find(i=>!i.virtual)?.address;
@@ -34,8 +35,8 @@ async function api(route,body,method='POST'){
 }
 const qrFile=path.join(build,'pairing.json'), resultFile=path.join(build,'result.json');
 async function pair(){const status=await api('/api/mobile-sync/start',{address});fs.writeFileSync(qrFile,status.qrPayload);}
-async function java(action,extra=''){
-  const {stdout}=await execute('java.exe',['-Dfile.encoding=UTF-8','-cp',[classes,jar].join(path.delimiter),'AndroidInteropHarness',action,phone,qrFile,resultFile,extra],{maxBuffer:2*1024*1024});
+async function java(action,extra='',profile=phone){
+  const {stdout}=await execute('java.exe',['-Dfile.encoding=UTF-8','-cp',[classes,jar].join(path.delimiter),'AndroidInteropHarness',action,profile,qrFile,resultFile,extra],{maxBuffer:2*1024*1024});
   process.stdout.write(stdout);return JSON.parse(fs.readFileSync(resultFile,'utf8'));
 }
 const checks=[];
@@ -53,10 +54,16 @@ try{
   await java('add','1');await java('sync-no-ack');assert.equal((await api('/api/state')).transactions.length,513);
   r=await java('delete-pending');assert.equal(r.snapshot.operations[0].kind,'delete');const deletedId=r.deletedId;
   r=await java('sync');assert.equal(r.response.summary.deleted,1);assert.equal(r.snapshot.operations.length,0);assert.equal(r.snapshot.state.transactions.length,512);assert.equal(r.snapshot.state.transactions.some(t=>t.id===deletedId),false);checks.push('delete after lost creation ACK sends tombstone and does not resurrect transaction');
-  await java('add-large','220');r=await java('sync');assert.equal(r.snapshot.operations.length,0);
+  await java('add-large','220');r=await java('sync');while(r.snapshot.operations.length){assert.equal(r.response.conflicts.length,0);const before=r.snapshot.operations.length;r=await java('sync');assert.ok(r.snapshot.operations.length<before);}assert.equal(r.snapshot.operations.length,0);
   await java('edit-large');r=await java('sync');const firstLargeCount=r.request.operations.length;
   assert.ok(firstLargeCount>0&&firstLargeCount<220);assert.ok(Buffer.byteLength(JSON.stringify(r.request),'utf8')<=2*1024*1024);assert.equal(r.snapshot.operations.length,220-firstLargeCount);
-  r=await java('sync');assert.equal(r.request.operations.length,220-firstLargeCount);assert.equal(r.snapshot.operations.length,0);assert.equal(r.snapshot.state.transactions.filter(t=>t.title.startsWith('长备注测试')&&t.title.endsWith('修改')).length,220);checks.push('UTF-8 base+put payload under 500 operations splits at 2MB and retains/sends remaining changes');
+  while(r.snapshot.operations.length){assert.equal(r.response.conflicts.length,0);const before=r.snapshot.operations.length;r=await java('sync');assert.ok(Buffer.byteLength(JSON.stringify(r.request),'utf8')<=2*1024*1024);assert.ok(r.snapshot.operations.length<before);}assert.equal(r.snapshot.state.transactions.filter(t=>t.title.startsWith('长备注测试')&&t.title.endsWith('修改')).length,220);checks.push('UTF-8 base+put payload under 500 operations splits at 2MB and retains/sends remaining changes');
+  await java('full-ledger');r=await java('sync-no-ack');assert.equal(r.response.conflicts.length,0,JSON.stringify(r.response.conflicts));
+  state=await api('/api/state');assert.equal(state.accounts.find(a=>a.id==='mobile_usd').currency,'USD');assert.equal(state.transactions.find(t=>t.id==='mobile_exchange').toAmount,1000);assert.equal(state.settings.monthlyBudget,123456);assert.equal(state.goals[0].saved,25000);assert.equal(state.transactions.filter(t=>t.subscriptionId==='mobile_sub').length,1);
+  r=await java('sync');assert.equal(r.snapshot.operations.length,0);assert.equal(r.snapshot.state.transactions.filter(t=>t.subscriptionId==='mobile_sub').length,1);checks.push('native full-entity queue, historical FX, cross-currency transfer, budget, goal and subscription converge after lost ACK');
+  await java('goal-edit');state=await api('/api/state');state.goals[0].saved=45000;await api('/api/state',{state,expectedRevision:state.revision},'PUT');r=await java('sync');assert.equal(r.snapshot.conflicts.length,1);assert.equal(r.snapshot.conflicts[0].entity,'goal');assert.equal(r.snapshot.state.goals[0].saved,35000);r=await java('resolve-desktop');assert.equal(r.snapshot.state.goals[0].saved,45000);checks.push('entity conflict keeps local goal until explicit resolution');
+  await java('delete-sub');r=await java('sync');assert.equal(r.snapshot.operations.length,0);state=await api('/api/state');assert.equal(state.subscriptions.length,0);assert.equal(state.transactions.filter(t=>t.id.startsWith('rec_mobile_sub_')).length,1);assert.equal(state.transactions.find(t=>t.id.startsWith('rec_mobile_sub_')).subscriptionId,undefined);checks.push('subscription deletion sync retains already booked expense');
+  await api('/api/mobile-sync/stop',{});await pair();const offlinePhone=path.join(build,'offline-first-phone');fs.mkdirSync(offlinePhone);await java('offline-first','',offlinePhone);r=await java('sync','',offlinePhone);assert.equal(r.request.bookId,null);assert.equal(r.response.conflicts.length,0);assert.equal(r.snapshot.operations.length,0);assert.ok(r.snapshot.state.accounts.some(a=>a.id==='wallet'));assert.ok(r.snapshot.state.accounts.some(a=>a.id==='offline_wallet'));assert.equal((await api('/api/state')).transactions.filter(t=>t.id==='offline_expense').length,1);checks.push('first pairing merges independently created mobile accounts and transactions without replacing desktop ledger');
   const report={passed:true,checks,scope:'Production Android Java sources on JDK with test-only platform adapters; not an Android runtime/device test.',completedAt:new Date().toISOString()};
   fs.writeFileSync(path.join(build,'report.json'),JSON.stringify(report,null,2));
   fs.writeFileSync(path.join(tools,'native-interop-latest.json'),JSON.stringify({...report,artifacts:build},null,2));

@@ -1,6 +1,6 @@
 package com.moneylab.superledger.mobile;
 
-/** Pure Java regression harness: java -ea ...PaymentParserTest. No device data required. */
+/** Synthetic receipts only; these are not captured notifications or real bank templates. */
 public final class PaymentParserTest {
     private static int cases;
     private static PaymentParser.Parsed parse(String title, String body) { return PaymentParser.parse("com.tencent.mm", title, body); }
@@ -46,6 +46,75 @@ public final class PaymentParserTest {
         check(dated != null && dated.confident, "ISO date not mistaken for negative money");
         check(parse("微信支付", "付款金额28元，余额不足") == null, "insufficient balance ignored");
         check(PaymentParser.parse("cmb.pb", "到账提醒", "预计收入100元") == null, "projected income ignored");
+        PaymentParser.Parsed grocery=parse("付款通知","付款成功\n商户：青禾生鲜超市\n原价：30.00元\n优惠：2.00元\n实付金额：28.00元\n付款方式：零钱");
+        check(grocery!=null&&grocery.confident&&grocery.amount==2800&&grocery.amountBasis.equals("actual"),"discount grocery actual payment");
+        check(grocery.fundingSource.equals("wallet")&&grocery.paymentChannel.equals("wechat")&&grocery.merchant.equals("青禾生鲜超市"),"wallet merchant evidence");
+        check(grocery.category.equals("购物消费"),"grocery uses normal shopping category");
+        PaymentParser.Parsed bound=parse("微信支付","扫码付款成功\n商家名称：青禾摊位\n订单金额：50元\n立减：3元\n实付：47元\n付款方式：招商银行(1234)\n订单号：SYNTHETIC001");
+        check(bound!=null&&bound.confident&&bound.amount==4700,"bound card QR actual amount");
+        check(bound.fundingSource.equals("bank")&&bound.bankId.equals("cmb")&&bound.lastFour.equals("1234"),"bank name and bracket tail");
+        check(bound.reference.equals("SYNTHETIC001")&&bound.category.equals("其他支出"),"reference and no guessed grocery category");
+        PaymentParser.Parsed ali=PaymentParser.parse("com.eg.android.AlipayGphone","支付助手","付款成功\n付款金额：￥18.80\n原价：20元\n已优惠：1.20元\n商户名称：青禾便利店\n支付方式：余额宝");
+        check(ali!=null&&ali.confident&&ali.amount==1880&&ali.fundingSource.equals("wallet"),"Alipay discount receipt");
+        PaymentParser.Parsed debit=PaymentParser.parse("cmb.pb","扣款提醒","您尾号1234银行卡通过微信支付消费人民币28.00元，商户：青禾生鲜，账户余额1234元");
+        check(debit!=null&&debit.confident&&debit.amount==2800&&debit.paymentChannel.equals("wechat")&&debit.fundingSource.equals("bank"),"actual bank debit survives reminder title");
+        check(PaymentParser.parse("cmb.pb","扣款提醒","将于明天扣款28元")==null,"reminder without completed event ignored");
+        PaymentParser.Parsed multi=parse("微信支付","付款成功\n付款金额：28元\n另一笔消费：32元");
+        check(multi!=null&&multi.amount==0&&!multi.confident&&multi.amountCandidates.size()==2,"unrelated second amount never first selected");
+        PaymentParser.Parsed twoActual=parse("微信支付","支付成功\n实付：28元\n实付：32元");
+        check(twoActual!=null&&twoActual.amount==0&&!twoActual.confident,"conflicting actual fields");
+        PaymentParser.Parsed feeTotal=parse("微信支付","支付成功\n交易金额：28元\n服务费：2元\n实际扣款：30元");
+        check(feeTotal!=null&&feeTotal.confident&&feeTotal.amount==3000,"explicit total resolves fee");
+        check(multiple.amount==0&&multiple.amountCandidates.contains(200L),"fee ambiguity retained as candidates");
+        check(parse("微信支付","付款成功\n原价：10元\n优惠：10元\n实付：0元")==null,"zero actual does not book original");
+        check(parse("微信支付","付款成功\n余额：100元")==null,"balance alone is not payment");
+        PaymentParser.Parsed noFunding=parse("微信支付","付款成功28元，账户余额100元");
+        check(noFunding!=null&&noFunding.amount==2800&&noFunding.fundingSource.equals("unknown"),"balance amount is not payment method");
+        PaymentParser.Parsed unknown=PaymentParser.parse("example.untrusted.bank","消费通知","付款成功28元，招商银行尾号1234");
+        check(unknown!=null&&!unknown.knownSource&&!unknown.confident,"unrecognized source remains review");
+        check(PaymentParser.parse("com.eg.android.AlipayGphone","张三","支付成功28元")==null,"Alipay chat ignored");
+        check(parse("微信支付","支付成功后可获得28元优惠券")==null,"conditional marketing ignored");
+        check(parse("微信支付","支付验证码：123456，实付金额28元")==null,"OTP never stored");
+        PaymentParser.Parsed recharge=parse("微信支付","充值成功\n支付成功20元");
+        check(recharge!=null&&!recharge.confident&&recharge.transactionKind.equals("recharge"),"recharge reviewed");
+        PaymentParser.Parsed withdrawal=PaymentParser.parse("com.eg.android.AlipayGphone","支付宝","提现到账20元");
+        check(withdrawal!=null&&!withdrawal.confident&&withdrawal.transactionKind.equals("withdrawal"),"withdrawal reviewed");
+        PaymentParser.Parsed repayment=parse("微信支付","信用卡还款成功\n支付金额：20元");
+        check(repayment!=null&&!repayment.confident&&repayment.transactionKind.equals("repayment"),"repayment reviewed");
+        PaymentParser.Parsed mixed=parse("微信支付","付款成功28元\n付款方式：零钱\n付款方式：招商银行(1234)");
+        check(mixed!=null&&mixed.ambiguousFunding&&!mixed.confident,"mixed funding reviewed");
+        PaymentParser.Parsed tails=parse("微信支付","支付成功28元\n付款方式：银行卡 尾号1234和尾号5678");
+        check(tails!=null&&tails.ambiguousFunding&&tails.lastFour.isEmpty(),"multiple card tails never first selected");
+        PaymentParser.Parsed masked=parse("微信支付","付款成功28元\n支付方式：工商银行 ****0088");
+        check(masked!=null&&masked.bankId.equals("icbc")&&masked.lastFour.equals("0088"),"masked tail preserves leading zero");
+        PaymentParser.Parsed fullWidth=parse("微信支付","付款成功\n实付：￥２８．５０\n付款方式：零钱");
+        check(fullWidth!=null&&fullWidth.amount==2850,"full width numeric amount");
+        check(parse("微信支付","支付成功￥12.345元，原价20元")==null,"invalid actual does not use original");
+        PaymentParser.Parsed foreignActual=parse("微信支付","支付成功\n实付：100元\n币种：HKD");
+        check(foreignActual!=null&&!foreignActual.confident&&foreignActual.amount==0,"foreign actual requires currency confirmation");
+        PaymentParser.Parsed merchantBank=parse("微信支付","付款成功28元\n商户：招商银行食堂\n付款方式：零钱");
+        check(merchantBank!=null&&merchantBank.fundingSource.equals("wallet")&&merchantBank.bankId.isEmpty(),"bank in merchant name is not funding bank");
+        PaymentParser.Parsed phoneTail=parse("微信支付","付款成功28元\n手机尾号1234\n订单尾号5678\n付款方式：零钱");
+        check(phoneTail!=null&&phoneTail.lastFour.isEmpty(),"phone and order tails excluded");
+        PaymentParser.Parsed unknownCard=parse("微信支付","支付成功28元\n支付方式：银行卡(1234)");
+        check(unknownCard!=null&&unknownCard.lastFour.equals("1234")&&unknownCard.bankId.isEmpty(),"generic bank card tail");
+        PaymentParser.Parsed credit=PaymentParser.parse("com.eg.android.AlipayGphone","支付宝","付款成功28元\n支付方式：花呗");
+        check(credit!=null&&credit.fundingSource.equals("credit"),"credit facility distinct from cash wallet");
+        PaymentParser.Parsed clipped=parse("微信支付","付款成功28元\n[通知内容已截断]");
+        check(clipped!=null&&!clipped.confident,"truncated text always reviewed");
+        check(PaymentParser.parse(null,"付款通知","支付成功28元")!=null,"null source remains safe review");
+        check(parse("微信支付","付款成功\n原价28元\n优惠2元")==null,"no actual payment inferred by subtraction");
+        PaymentParser.Parsed comma=parse("微信支付","付款成功,实付：￥28.50,余额：￥100.00");
+        check(comma!=null&&comma.confident&&comma.amount==2850,"ASCII field punctuation is not thousands separator");
+        check(parse("微信支付","付款成功￥12,34元")==null,"malformed grouping never sliced");
+        check(PaymentParser.parse("cmb.pb","消费提醒","尾号1234消费失败28元")==null,"failed card consumption ignored");
+        check(PaymentParser.parse("cmb.pb","扣款提醒","尾号1234消费限额1000元")==null,"card limit is not a transaction");
+        PaymentParser.Parsed reminder=PaymentParser.parse("cmb.pb","扣款提醒","尾号1234自动扣款服务，100元");
+        check(reminder!=null&&!reminder.confident&&!reminder.completed,"reminder title is not completion evidence");
+        check(parse("微信支付","支付处理中28元")==null,"processing payment ignored");
+        check(parse("微信支付","支付成功，即可领取28元红包")==null,"conditional reward is not paid amount");
+        PaymentParser.Parsed twoOrders=parse("微信支付","支付成功28元\n订单号：SYNTHETIC001\n订单号：SYNTHETIC002");
+        check(twoOrders!=null&&!twoOrders.confident&&twoOrders.reference.isEmpty(),"multiple orders not reduced to first reference");
         System.out.println("PaymentParser: " + cases + " checks passed");
     }
 }

@@ -30,14 +30,14 @@ Windows 构建在项目 `node_modules` 或 `LEDGER_DESKTOP_TOOLROOT` 指定目�
 
 先提交经过检查的源码到 `main`。`tools/github-release.py` 使用已有 Git credential manager 登录，先校验账户，所有 API 与安装包上传都经本机固定代理；不会打印或保存 token。
 
-以桌面 1.6.0 / 安卓 1.1.0 为例（未来发布替换对应版本）：
+以桌面 1.7.0 / 安卓 1.2.0 为例（未来发布替换对应版本）：
 
 ```powershell
-python tools/github-release.py create-release v1.6.0 --body-file release/release-notes.md
+python tools/github-release.py create-release v1.7.0 --body-file release/release-notes.md
 # 记录返回的草稿 release ID，下面的 <ID> 使用该值。
-python tools/github-release.py upload <ID> release/超级账本-安装-1.6.0.exe --name SuperLedger-Setup-1.6.0.exe
-python tools/github-release.py upload <ID> android/release/SuperLedger-Mobile-1.1.0.apk
-node tools/create-update-manifest.mjs --windows release/超级账本-安装-1.6.0.exe --android android/release/SuperLedger-Mobile-1.1.0.apk --android-version 1.1.0 --android-code 10100 --notes release/release-notes.md
+python tools/github-release.py upload <ID> release/超级账本-安装-1.7.0.exe --name SuperLedger-Setup-1.7.0.exe
+python tools/github-release.py upload <ID> android/release/SuperLedger-Mobile-1.2.0.apk
+node tools/create-update-manifest.mjs --windows release/超级账本-安装-1.7.0.exe --android android/release/SuperLedger-Mobile-1.2.0.apk --android-version 1.2.0 --android-code 10200 --notes release/release-notes.md
 python tools/github-release.py upload <ID> release/stable.json --name update-manifest.json
 python tools/github-release.py assets <ID>
 ```

@@ -45,3 +45,10 @@
 - 两个最终图标均从官网 HTML 已声明的真实资源地址获取，使用 `http://127.0.0.1:10090` 显式代理。通过 Pillow 读取实际格式、尺寸并校验文件；不是 HTML、错误响应或重绘图。
 - 微信资源 URL 虽以 `.ico` 结尾，原始内容实际是 PNG，因此仅按实际格式命名为 `wechat.png`；文件字节未转换或修改。
 - 支付宝官网还声明了一个大尺寸 favicon 原件，已原样保留在 `assets/brands/alipay-source.png`：PNG 2600 × 1950，来自 [支付宝官方静态资源](https://mdn.alipayobjects.com/rms/afts/file/A*7EyORZxdNDkAAAAAAAAAAAAAARQnAQ)。该原件留白较多，账户卡片使用上表中官方方形 ICO，无裁切或重新排版。
+
+## 安卓手机版资源适配（1.2.0）
+
+- 手机账户、账单、来源和订阅页面复用此处已有品牌原件，没有重新下载或 AI 重绘。PNG 原件直接复制到 `android/app/src/main/res/drawable-nodpi/logo_*.png`，保持原始像素。
+- 支付宝、百度、网易云、哔哩哔哩、酷狗及银行 ICO 转为安卓可读取的 PNG，保留可用最大原始图层的尺寸与完整图案：招商银行 48 × 48，支付宝/百度/网易云/哔哩哔哩 32 × 32，酷狗及建设/农业/中国/交通/邮储/平安银行 16 × 16。工商银行复用原 PNG。没有生成更高分辨率的替代图。
+- Claude 的 `logo_claude.xml` 为现有 `claude.svg` 的 Android VectorDrawable 适配，沿用原始 pathData、颜色和 248 × 248 viewport，不改变图形。
+- TT语音保持完整横向白色字标，手机使用紫色背景和等比例 FIT_CENTER 显示；其他品牌同样保持比例。未提供品牌图标的自定义账户使用名称首字作为占位，不声称是品牌标识。

@@ -12,7 +12,7 @@ vm.runInNewContext(fs.readFileSync(path.join(root, 'assets', 'vendor', 'qrcodege
 const { QrCode } = context.qrcodegen;
 execFileSync('javac.exe', ['-encoding', 'UTF-8', '-cp', jar, '-d', build, path.join(__dirname, 'QrInteropTest.java')], { stdio: 'inherit' });
 for (const addresses of [['http://192.168.1.100:49392'], ['http://192.168.1.100:49392', 'http://10.1.2.3:49392', 'http://172.16.1.30:49392']]) {
-  const payload = JSON.stringify({ app: 'superledger', v: 1, addresses,
+  const payload = JSON.stringify({ app: 'superledger', v: 1, protocolVersion: 2, addresses,
     sessionId: '0123456789abcdef0123456789abcdef', key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', expiresAt: 1793999999000 });
   const qr = QrCode.encodeText(payload, QrCode.Ecc.MEDIUM);
   const scale = 6, border = 4, size = (qr.size + border * 2) * scale;

@@ -246,10 +246,13 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
     synchronize(payload) {
       reconcile();
       const result = mergeMobileOperations(state, payload);
-      if (result.changed) commit(result.next);
+      // Publish receipts, entity edits and their due bookings atomically. A
+      // failed catch-up must not leave a partially acknowledged subscription.
+      const reconciled = applyRecurring(result.next, todayLocal()).state;
+      if (result.changed || JSON.stringify(reconciled) !== JSON.stringify(state)) commit(reconciled);
       const publicState = structuredClone(state);
       delete publicState._mobileSync;
-      return { requestId: payload.requestId, bookId: checkedMetadata(state).bookId, state: publicState,
+      return { requestId: payload.requestId, protocolVersion: 2, bookId: checkedMetadata(state).bookId, state: publicState,
         accepted: result.accepted, conflicts: result.conflicts, summary: result.summary, syncedAt: Date.now() };
     },
   });

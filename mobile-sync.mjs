@@ -10,6 +10,9 @@ const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+export const MOBILE_PROTOCOL_VERSION = 2;
+const ENTITY_COLLECTIONS = Object.freeze({ account: 'accounts', subscription: 'subscriptions', goal: 'goals' });
+const ENTITY_LABELS = Object.freeze({ account: '账户', subscription: '订阅', goal: '储蓄目标', settings: '预算设置' });
 
 // Canonical ordering lets Java and JS serialize object keys differently without
 // creating false edit conflicts. No financial arithmetic uses floating point.
@@ -66,9 +69,15 @@ function duplicateOf(state, incoming) {
   // enough to discard a transaction: weaker matches become review conflicts.
   for (const tx of state.transactions) {
     const old = tx.mobileCapture;
+    const knownEvents = ['payment', 'income', 'refund', 'transfer', 'recharge', 'withdrawal', 'repayment'];
+    const distinctEvents = old && knownEvents.includes(old.transactionKind) && knownEvents.includes(capture.transactionKind)
+      && old.transactionKind !== capture.transactionKind;
     if (old && old.sourcePackage === capture.sourcePackage
-        && (old.sourceKey === capture.sourceKey || capture.reference && old.reference === capture.reference)) {
-      return { transaction: tx, exact: tx.type === incoming.type && tx.amount === incoming.amount && tx.date === incoming.date && tx.accountId === incoming.accountId };
+        && (old.sourceKey === capture.sourceKey || !distinctEvents && capture.reference && old.reference === capture.reference)) {
+      const sameTransfer = tx.type !== 'transfer' || tx.toAccountId === incoming.toAccountId
+        && (tx.toCurrency || 'CNY') === (incoming.toCurrency || 'CNY') && (tx.toAmount ?? tx.amount) === (incoming.toAmount ?? incoming.amount);
+      return { transaction: tx, exact: tx.type === incoming.type && tx.amount === incoming.amount && tx.date === incoming.date
+        && tx.accountId === incoming.accountId && (tx.currency || 'CNY') === (incoming.currency || 'CNY') && sameTransfer };
     }
   }
   return null;
@@ -90,12 +99,31 @@ function suspectedDuplicate(state, incoming) {
   });
 }
 
+function withoutProcessed(record) {
+  if (!record) return record;
+  const value = structuredClone(record);
+  delete value.processedOccurrences;
+  return value;
+}
+
+function sameEntity(left, right, entity) {
+  return entity === 'subscription' ? same(withoutProcessed(left), withoutProcessed(right)) : same(left, right);
+}
+
+function sameScheduledCharge(left, right) {
+  return left.subscriptionId === right.subscriptionId && left.occurrenceKey === right.occurrenceKey
+    && left.type === 'expense' && right.type === 'expense' && left.accountId === right.accountId
+    && left.amount === right.amount && left.date === right.date && (left.currency || 'CNY') === (right.currency || 'CNY');
+}
+
 export function mergeMobileOperations(state, payload) {
   const metadata = checkedMetadata(state);
   if (!object(payload) || typeof payload.deviceId !== 'string' || !ID.test(payload.deviceId)
       || typeof payload.requestId !== 'string' || !ID.test(payload.requestId)
       || !Array.isArray(payload.operations) || payload.operations.length > MAX_OPERATIONS) throw fail(400, '手机同步请求格式不正确，单次最多同步 500 项。');
-  if (payload.bookId !== metadata.bookId && !(payload.bookId === null && payload.operations.length === 0)) {
+  const fullLedger = payload.protocolVersion === MOBILE_PROTOCOL_VERSION;
+  if (payload.protocolVersion !== undefined && ![1, MOBILE_PROTOCOL_VERSION].includes(payload.protocolVersion)) throw fail(400, '手机同步版本不兼容，请更新两端应用。');
+  if (payload.bookId !== metadata.bookId && !(payload.bookId === null && (payload.operations.length === 0 || fullLedger))) {
     throw fail(409, '此手机绑定的是另一份账本，或电脑账本已恢复/重置。请在手机上处理未同步记录，再重新配对。');
   }
   let next = structuredClone(state);
@@ -112,13 +140,71 @@ export function mergeMobileOperations(state, payload) {
       if (receipt !== digest) { conflicts.push({ operationId, reason: '同一操作标识的内容发生变化，请重新确认并生成新的操作。' }); continue; }
       accepted.push(operationId); summary.duplicates++; continue;
     }
+    const entity = operation.entity || 'transaction';
+    if (entity !== 'transaction') {
+      const recordId = operation.recordId;
+      const collection = own(ENTITY_COLLECTIONS, entity) ? ENTITY_COLLECTIONS[entity] : null;
+      const supported = collection !== null || entity === 'settings';
+      const current = supported ? entity === 'settings' ? next.settings : next[collection].find(item => item.id === recordId) || null : null;
+      const reject = reason => conflicts.push({ operationId, entity, reason, current });
+      if (!fullLedger || !supported) { reject('该操作需要电脑 1.7.0 与新版手机，请先升级。'); continue; }
+      if (!['put', 'delete'].includes(operation.kind) || typeof recordId !== 'string' || !ID.test(recordId)
+          || entity === 'settings' && (recordId !== 'settings' || operation.kind !== 'put')) { reject('不支持的账本项目操作。'); continue; }
+      if (operation.base !== null && (!object(operation.base) || entity !== 'settings' && operation.base.id !== recordId)) { reject('缺少修改前的原始项目，不能安全合并。'); continue; }
+      if (operation.kind === 'delete' && operation.base === null) { reject('删除项目需要原始记录。'); continue; }
+      if (operation.kind === 'put' && (!object(operation.record) || entity !== 'settings' && operation.record.id !== recordId)) { reject('项目内容或标识不正确。'); continue; }
+      if (operation.kind === 'delete' && current === null || operation.kind === 'put' && current && same(current, operation.record)) {
+        next._mobileSync.receipts[receiptKey] = digest; accepted.push(operationId); summary.duplicates++; continue;
+      }
+      const sameCreatedSubscription = entity === 'subscription' && operation.kind === 'put' && operation.base === null
+        && current && sameEntity(current, operation.record, entity);
+      if (!sameCreatedSubscription && !sameEntity(current, operation.base, entity)) {
+        // A new phone's empty local settings may merge only when they are the
+        // same as the desktop baseline; existing desktop choices always win a conflict.
+        reject(`电脑端的${ENTITY_LABELS[entity]}也发生了变化，请选择保留哪一版。`); continue;
+      }
+      const candidate = structuredClone(next);
+      if (operation.kind === 'delete') {
+        if (entity === 'account' && (candidate.transactions.some(tx => tx.accountId === recordId || tx.toAccountId === recordId)
+            || candidate.subscriptions.some(sub => sub.accountId === recordId))) { reject('该账户已有账单或订阅，请先调整关联项目，不能直接删除。'); continue; }
+        candidate[collection] = candidate[collection].filter(item => item.id !== recordId);
+        if (entity === 'subscription') for (const tx of candidate.transactions) if (tx.subscriptionId === recordId) {
+          delete tx.subscriptionId; delete tx.occurrenceKey;
+        }
+      } else {
+        const record = structuredClone(operation.record);
+        if (entity === 'subscription') {
+          if (!Array.isArray(record.processedOccurrences)) { reject('订阅的已记账账期无效。'); continue; }
+          record.processedOccurrences = [...new Set([...(current?.processedOccurrences || []), ...record.processedOccurrences])];
+        }
+        if (entity === 'settings') candidate.settings = record;
+        else if (current) candidate[collection][candidate[collection].findIndex(item => item.id === recordId)] = record;
+        else candidate[collection].push(record);
+      }
+      candidate.schemaVersion = 2;
+      try { validateState(candidate); } catch (error) { reject(error.message); continue; }
+      candidate._mobileSync.receipts[receiptKey] = digest; next = candidate; accepted.push(operationId);
+      summary[operation.kind === 'delete' ? 'deleted' : current ? 'updated' : 'added']++;
+      continue;
+    }
     const transactionId = operation.kind === 'delete' ? operation.transactionId : operation.transaction?.id;
     const current = next.transactions.find(tx => tx.id === transactionId) || null;
-    const reject = (reason, candidate) => conflicts.push({ operationId, reason, current, ...(candidate ? { candidate } : {}) });
+    const reject = (reason, candidate, details) => conflicts.push({ operationId, ...(fullLedger ? { entity: 'transaction' } : {}), reason, current, ...(candidate ? { candidate } : {}), ...details });
     if (!['put', 'delete'].includes(operation.kind) || typeof transactionId !== 'string' || !ID.test(transactionId)) { reject('不支持的手机账单操作。'); continue; }
     if (operation.base !== null && (!object(operation.base) || operation.base.id !== transactionId)) { reject('缺少编辑前的账单，无法安全合并。'); continue; }
     if (operation.kind === 'delete' && operation.base === null) { reject('删除账单需要原始记录。'); continue; }
     if (operation.kind === 'put' && !object(operation.transaction)) { reject('缺少账单内容。'); continue; }
+    if (fullLedger && operation.kind === 'put' && operation.base === null && operation.transaction.occurrenceKey) {
+      const existing = next.transactions.find(tx => tx.occurrenceKey === operation.transaction.occurrenceKey);
+      if (existing && sameScheduledCharge(existing, operation.transaction)) {
+        next._mobileSync.receipts[receiptKey] = digest; accepted.push(operationId); summary.duplicates++; continue;
+      }
+      if (existing) {
+        reject('这个订阅账期已经扣账，但金额或账户不同，请核对后保留一笔。', existing, existing.id !== transactionId ? {
+          canKeepPhone: false, resolutionHint: '该账期已经由另一条账单记录。请采用电脑记录，再编辑现有订阅账单；不会覆盖另一条记录。',
+        } : undefined); continue;
+      }
+    }
     // An already-applied edit may have lost its acknowledgement. Do not write
     // it again; a durable receipt is still committed together with the ledger.
     if (operation.kind === 'put' && current && same(current, operation.transaction)) {
@@ -128,7 +214,7 @@ export function mergeMobileOperations(state, payload) {
       next._mobileSync.receipts[receiptKey] = digest; accepted.push(operationId); summary.duplicates++; continue;
     }
     if (!same(current, operation.base)) { reject(current ? '电脑端也修改了这笔账，请选择保留哪一版。' : '电脑端已删除这笔账，手机修改尚未覆盖电脑。'); continue; }
-    if (current && ((current.currency || 'CNY') !== 'CNY' || current.type === 'transfer')) { reject('外币账单和账户转账请在电脑端修改。'); continue; }
+    if (!fullLedger && current && ((current.currency || 'CNY') !== 'CNY' || current.type === 'transfer')) { reject('外币账单和账户转账请在电脑端修改。'); continue; }
     const candidate = structuredClone(next);
     if (operation.kind === 'delete') {
       candidate.transactions = candidate.transactions.filter(tx => tx.id !== transactionId);
@@ -136,20 +222,24 @@ export function mergeMobileOperations(state, payload) {
       const tx = structuredClone(operation.transaction);
       // The phone validates its own local transaction date; the PC may be in a
       // different time zone. validateState still enforces real calendar dates.
-      if (!['income', 'expense'].includes(tx.type) || (tx.currency || 'CNY') !== 'CNY') { reject('手机端目前支持人民币收入和支出。'); continue; }
+      if (!fullLedger && (!['income', 'expense'].includes(tx.type) || (tx.currency || 'CNY') !== 'CNY')) { reject('旧版手机仅支持人民币收入和支出，请升级。'); continue; }
       if (tx.mobileCapture && !captureValid(tx.mobileCapture)) { reject('付款通知来源记录无效。'); continue; }
-      if (current?.subscriptionId && (tx.subscriptionId !== current.subscriptionId || tx.occurrenceKey !== current.occurrenceKey)) { reject('订阅账单的关联信息不能由手机移除。'); continue; }
-      if (!current && (tx.subscriptionId || tx.occurrenceKey)) { reject('订阅计划请在电脑端创建。'); continue; }
+      if (!fullLedger && current?.subscriptionId && (tx.subscriptionId !== current.subscriptionId || tx.occurrenceKey !== current.occurrenceKey)) { reject('旧版手机不能修改订阅账单关联，请升级。'); continue; }
+      if (!fullLedger && !current && (tx.subscriptionId || tx.occurrenceKey)) { reject('订阅计划请在电脑端创建。'); continue; }
+      if (fullLedger && !current && tx.subscriptionId && (!tx.occurrenceKey || tx.id !== `rec_${tx.subscriptionId}_${tx.date?.slice(0, 7).replace('-', '')}`)) { reject('订阅自动账单的标识或账期无效。'); continue; }
       const duplicate = !current && duplicateOf(next, tx);
       if (duplicate?.exact) {
         next._mobileSync.receipts[receiptKey] = digest; accepted.push(operationId); summary.duplicates++; continue;
       }
-      if (duplicate) { reject('同一条付款通知的金额或账户发生变化，请核对原账单。', duplicate.transaction); continue; }
+      if (duplicate) { reject('同一条付款通知的金额或账户发生变化，请核对原账单。', duplicate.transaction, {
+        canKeepPhone: false, resolutionHint: '此通知对应电脑上已有的另一条账单。请采用电脑记录，再编辑那笔账单的金额或账户；不会另增或覆盖另一条记录。',
+      }); continue; }
       const suspected = !current && operation.allowDuplicate !== true && suspectedDuplicate(next, tx);
       if (suspected) { reject('可能与现有支付记录或订阅扣账重复，请核对后选择保留现有账单或仍然新增。', suspected); continue; }
       if (current) candidate.transactions[candidate.transactions.findIndex(item => item.id === transactionId)] = tx;
       else candidate.transactions.push(tx);
     }
+    if (fullLedger) candidate.schemaVersion = 2;
     try { validateState(candidate); }
     catch (error) { reject(error.message); continue; }
     candidate._mobileSync.receipts[receiptKey] = digest;
@@ -216,7 +306,7 @@ export function createMobileSync({ ensureBook, synchronize, interfaces = network
     if (current && now() >= current.expiresAt) stop();
     const choices = interfaces();
     return { active: Boolean(current), expiresAt: current?.expiresAt || null, addresses: current ? [current.address] : [], networkChoices: choices,
-      qrPayload: current ? JSON.stringify({ app: 'superledger', v: 1, addresses: [current.address], sessionId: current.id, key: current.key.toString('base64url'), expiresAt: current.expiresAt }) : null,
+      qrPayload: current ? JSON.stringify({ app: 'superledger', v: 1, protocolVersion: MOBILE_PROTOCOL_VERSION, addresses: [current.address], sessionId: current.id, key: current.key.toString('base64url'), expiresAt: current.expiresAt }) : null,
       lastResult };
   };
   async function start(address) {

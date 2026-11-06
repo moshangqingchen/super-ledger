@@ -16,5 +16,9 @@
         <service android:name=".PaymentNotificationService" android:label="超级账本 · 付款通知记账" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE" android:exported="true">
             <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>
         </service>
+        <service android:name=".PaymentAccessibilityService" android:label="超级账本 · 付款页辅助识别" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/payment_accessibility_service" />
+        </service>
     </application>
 </manifest>

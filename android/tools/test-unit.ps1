@@ -11,16 +11,22 @@ $Output = Join-Path $Android ('build\unit-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $Output | Out-Null
 $Sources = @(
   (Join-Path $Source 'PaymentParser.java'),
+  (Join-Path $Source 'PaymentRouting.java'),
+  (Join-Path $Source 'PaymentPageParser.java'),
+  (Join-Path $Source 'MobileLedger.java'),
   (Join-Path $Source 'LedgerStore.java'),
   (Join-Path $Source 'UpdatePolicy.java'),
   (Join-Path $Tests 'PaymentParserTest.java'),
+  (Join-Path $Tests 'PaymentRoutingTest.java'),
+  (Join-Path $Tests 'PaymentPageParserTest.java'),
+  (Join-Path $Tests 'MobileLedgerTest.java'),
   (Join-Path $Tests 'LedgerStoreTest.java'),
   (Join-Path $Tests 'UpdatePolicyTest.java')
 )
 foreach($Stub in @('android\content\Context.java','android\os\Build.java','android\util\AtomicFile.java','android\util\Base64.java')) { $Sources += Join-Path $Tools ('test-stubs\'+$Stub) }
 & javac.exe '-J-Duser.language=en' '-encoding' 'UTF-8' '-cp' $JsonJar '-d' $Output @Sources
 if($LASTEXITCODE -ne 0) { throw 'Android unit-test compilation failed.' }
-foreach($Class in @('PaymentParserTest','LedgerStoreTest','UpdatePolicyTest')) {
+foreach($Class in @('PaymentParserTest','PaymentRoutingTest','PaymentPageParserTest','MobileLedgerTest','LedgerStoreTest','UpdatePolicyTest')) {
   & java.exe '-Dfile.encoding=UTF-8' '-cp' ($Output+';'+$JsonJar) ('com.moneylab.superledger.mobile.'+$Class)
   if($LASTEXITCODE -ne 0) { throw ('Android Java unit test failed: '+$Class) }
 }
