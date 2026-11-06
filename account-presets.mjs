@@ -43,6 +43,12 @@ export const isAppleBalance = account => account?.providerId === 'apple-balance'
 export function accountPreset(account) {
   if (!account) return undefined;
   if (account.providerId) return accountPresets.find(p => p.id === account.providerId);
+  // A saved bank and card type identify legacy cards more reliably than a
+  // nickname. Editing a card named “微信” must not turn it into a wallet.
+  if (bankById(account.bankId) && /银行卡|储蓄卡|信用卡|虚拟卡/.test(account.type || '')) {
+    const presetId = /虚拟卡/.test(account.type) ? 'virtual-card' : 'bank-card';
+    return accountPresets.find(p => p.id === presetId);
+  }
   // Apple balances require an explicit region; do not reclassify older custom accounts by name.
   return accountPresets.find(p => p.id !== 'apple-balance' && [p.name, ...(p.aliases || [])].includes(account.name))
     || accountPresets.find(p => p.id !== 'apple-balance' && !p.logo && p.type === account.type);

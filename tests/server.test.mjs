@@ -7,7 +7,7 @@ import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createLedgerServer } from '../server.mjs';
-import { makeEmptyState, localDate } from '../engine.mjs';
+import { makeEmptyState, localDate, MAX_MONEY, validateState } from '../engine.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -257,6 +257,71 @@ test('import records due subscriptions once and later reads do not duplicate the
   await fixture.close();
   await fixture.start();
   assert.deepEqual(await readState(fixture), saved);
+});
+
+async function blockedRecurringFixture(t) {
+  const fixture = await startFixture(t);
+  await fixture.close();
+  const state = makeEmptyState();
+  const today = localDate();
+  state.accounts = [{ id: 'cash', name: '现金', type: '现金', openingBalance: -MAX_MONEY, color: '#123456' }];
+  state.subscriptions = [{ id: 'fee', name: '到期订阅', amount: 1, accountId: 'cash', category: '会员订阅', startDate: today, billingDay: Number(today.slice(-2)), recurring: true, active: true, color: '#123456', icon: 'spark', processedOccurrences: [] }];
+  assert.equal(validateState(state), true, 'The saved ledger remains valid before its next automatic debit');
+  fs.writeFileSync(path.join(fixture.directory, 'ledger.json'), JSON.stringify(state));
+  await fixture.start();
+  return { fixture, state };
+}
+
+test('failed automatic bookings leave the ledger readable and exportable and allow pausing the failing subscription', async t => {
+  const { fixture, state } = await blockedRecurringFixture(t);
+  assert.deepEqual(await readState(fixture), state);
+  const health = await (await fetch(`${fixture.base}/api/health`)).json();
+  assert.equal(health.ready, true);
+  assert.match(health.automaticBookingError, /账户累计余额/);
+  const exported = await fetch(`${fixture.base}/api/export`);
+  assert.equal(exported.status, 200);
+  assert.deepEqual(await exported.json(), state, 'Operational errors must not enter the backup schema');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(fixture.directory, 'ledger.json'), 'utf8')), state);
+
+  const repaired = structuredClone(state);
+  repaired.subscriptions[0].active = false;
+  const response = await send(fixture, '/api/state', { state: repaired, expectedRevision: state.revision }, 'PUT');
+  assert.equal(response.status, 200);
+  const saved = await response.json();
+  assert.equal(saved.revision, state.revision + 1);
+  assert.equal(saved.subscriptions[0].active, false);
+  assert.deepEqual(saved.transactions, []);
+  assert.deepEqual(saved.subscriptions[0].processedOccurrences, []);
+  assert.deepEqual(await readState(fixture), saved);
+  assert.equal((await (await fetch(`${fixture.base}/api/health`)).json()).automaticBookingError, '');
+
+  const invalid = structuredClone(saved);
+  invalid.subscriptions[0].active = true;
+  for (const endpoint of ['/api/state', '/api/import']) {
+    const rejected = await send(fixture, endpoint, { state: invalid, expectedRevision: saved.revision }, endpoint === '/api/state' ? 'PUT' : 'POST');
+    assert.equal(rejected.status, 400, 'An unbookable candidate must return an actionable validation error');
+    assert.match((await rejected.json()).error, /账户累计余额/);
+    assert.deepEqual(await readState(fixture), saved);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(fixture.directory, 'ledger.json'), 'utf8')), saved);
+    assert.equal((await (await fetch(`${fixture.base}/api/health`)).json()).automaticBookingError, '', 'A rejected candidate must not mark the saved ledger as blocked');
+  }
+});
+
+test('a blocked automatic booking does not prevent explicit backup import or reset', async t => {
+  for (const endpoint of ['/api/import', '/api/reset']) {
+    const { fixture, state } = await blockedRecurringFixture(t);
+    const body = endpoint === '/api/import'
+      ? { state: makeEmptyState(), expectedRevision: state.revision }
+      : { mode: 'empty', expectedRevision: state.revision };
+    const response = await send(fixture, endpoint, body);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ...makeEmptyState(), revision: state.revision + 1 });
+    assert.equal((await (await fetch(`${fixture.base}/api/health`)).json()).automaticBookingError, '');
+    const prefix = endpoint === '/api/import' ? 'ledger.before-import.' : 'ledger.before-reset.';
+    const backups = fs.readdirSync(fixture.directory).filter(name => name.startsWith(prefix));
+    assert.equal(backups.length, 1);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(fixture.directory, backups[0]), 'utf8')), state);
+  }
 });
 
 test('desktop server uses an OS-selected port and updates its allowed origin to that port', async t => {

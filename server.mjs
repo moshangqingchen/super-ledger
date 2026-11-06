@@ -172,7 +172,7 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
   }
 
   const rates = rateService || createRateService({ dataDirectory, enabled: onlineRates });
-  let ratesApplyError = '', ratesClosed = false;
+  let ratesApplyError = '', ratesClosed = false, automaticBookingError = '';
 
   function rateStatus() {
     return { ...rates.status(), applyError: ratesApplyError };
@@ -226,9 +226,19 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
   }
 
   function reconcile() {
-    const result = applyRecurring(state, todayLocal());
-    if (JSON.stringify(result.state) !== JSON.stringify(state)) commit(result.state);
-    return result.added;
+    try {
+      const result = applyRecurring(state, todayLocal());
+      if (JSON.stringify(result.state) !== JSON.stringify(state)) commit(result.state);
+      automaticBookingError = '';
+      return result.added;
+    } catch (error) {
+      // A failed future debit must not lock the owner out of the last valid
+      // ledger, its export, or the edits needed to repair the subscription.
+      const message = error.message || String(error);
+      if (automaticBookingError !== message) console.error(`自动记账失败：${message}`);
+      automaticBookingError = message;
+      return [];
+    }
   }
 
   function checkRevision(expectedRevision) {
@@ -250,6 +260,7 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
       // failed catch-up must not leave a partially acknowledged subscription.
       const reconciled = applyRecurring(result.next, todayLocal()).state;
       if (result.changed || JSON.stringify(reconciled) !== JSON.stringify(state)) commit(reconciled);
+      automaticBookingError = '';
       const publicState = structuredClone(state);
       delete publicState._mobileSync;
       return { requestId: payload.requestId, protocolVersion: 2, bookId: checkedMetadata(state).bookId, state: publicState,
@@ -281,7 +292,7 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
       }
 
       if (route === '/api/health' && request.method === 'GET') {
-        return sendJson(response, 200, { app: 'money-lab-local-ledger', ready: true, port: listeningPort });
+        return sendJson(response, 200, { app: 'money-lab-local-ledger', ready: true, port: listeningPort, automaticBookingError });
       }
       if (route === '/api/mobile-sync/status' && request.method === 'GET') return sendJson(response, 200, mobileSync.status());
       if (route === '/api/mobile-sync/start' && request.method === 'POST') {
@@ -312,14 +323,16 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
         reconcile();
         checkRevision(body.expectedRevision);
         try { validateState(body.state); } catch (error) { throw fail(400, error.message); }
-        let candidate;
-        try { candidate = applyCachedRates(body.state); } catch (error) { throw fail(400, error.message); }
-        const next = applyRecurring(candidate, todayLocal()).state;
+        let next;
+        try { next = applyRecurring(applyCachedRates(body.state), todayLocal()).state; }
+        catch (error) { throw fail(400, error.message); }
         // Mobile receipts are server-owned and must survive edits from an older
         // renderer. A whole-ledger PUT cannot erase deduplication history.
         if (state._mobileSync) next._mobileSync = structuredClone(state._mobileSync);
         else delete next._mobileSync;
-        return sendJson(response, 200, commit(next));
+        const saved = commit(next);
+        automaticBookingError = '';
+        return sendJson(response, 200, saved);
       }
       if (route === '/api/import' && request.method === 'POST') {
         const body = await parseBody(request);
@@ -327,15 +340,16 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
         reconcile();
         checkRevision(body.expectedRevision);
         try { validateState(body.state); } catch (error) { throw fail(400, error.message); }
-        let candidate;
-        try { candidate = applyCachedRates(body.state); } catch (error) { throw fail(400, error.message); }
-        const next = applyRecurring(candidate, todayLocal()).state;
+        let next;
+        try { next = applyRecurring(applyCachedRates(body.state), todayLocal()).state; }
+        catch (error) { throw fail(400, error.message); }
         const backup = path.join(dataDirectory, `ledger.before-import.${new Date().toISOString().replace(/[:.]/g, '-')}.${randomUUID().slice(0, 8)}.json`);
         fs.copyFileSync(ledgerFile, backup, fs.constants.COPYFILE_EXCL);
         // Restoring a backup starts a new pairing identity, so an offline phone
         // cannot silently reapply operations from a superseded ledger.
         delete next._mobileSync;
         const saved = commit(next);
+        automaticBookingError = '';
         mobileSync.stop();
         return sendJson(response, 200, saved);
       }
@@ -348,6 +362,7 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
         fs.copyFileSync(ledgerFile, backup);
         const next = body.mode === 'demo' ? makeInitialState(todayLocal()) : makeEmptyState();
         const saved = commit(applyRecurring(next, todayLocal()).state);
+        automaticBookingError = '';
         mobileSync.stop();
         return sendJson(response, 200, saved);
       }
@@ -361,7 +376,7 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
       let relative;
       try { relative = decodeURIComponent(route === '/' ? '/index.html' : route).slice(1); }
       catch { throw fail(400, '无效的文件地址。'); }
-      const topAllowed = new Set(['index.html', 'app.js', 'icon-select.js', 'icon-select.css', 'styles.css', 'dashboard.css', 'currency-ui.css', 'fresh-ui.css', 'update-ui.js', 'update-ui.css', 'mobile-sync-ui.js', 'mobile-sync.css', 'currencies.mjs', 'engine.mjs', 'subscription-catalog.mjs', 'account-presets.mjs', 'bank-catalog.mjs', 'favicon.svg']);
+      const topAllowed = new Set(['index.html', 'app.js', 'icon-select.js', 'icon-select.css', 'styles.css', 'dashboard.css', 'currency-ui.css', 'fresh-ui.css', 'update-ui.js', 'update-ui.css', 'mobile-sync-ui.js', 'mobile-sync.css', 'currencies.mjs', 'engine.mjs', 'subscription-catalog.mjs', 'account-presets.mjs', 'bank-catalog.mjs', 'account-groups.mjs', 'account-cards.js', 'account-cards.css', 'ledger-ui.css', 'subscription-polish.css', 'favicon.svg']);
       if (!topAllowed.has(relative) && !relative.startsWith('assets/')) throw fail(404, '没有找到此文件。');
       if (relative.includes('\\') || relative.includes('\0') || relative.split('/').includes('..') || relative.split('/').some(part => part.startsWith('.'))) throw fail(404, '没有找到此文件。');
       const filename = path.resolve(ROOT, relative);

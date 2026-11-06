@@ -137,7 +137,8 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     private TextView text(String value, int size, int color, boolean bold) {
         TextView view = new TextView(this); view.setText(value); view.setTextSize(size); view.setTextColor(color);
         view.setTypeface(Typeface.create(bold ? "sans-serif-medium" : "sans-serif", Typeface.NORMAL));
-        view.setLineSpacing(dp(3), 1); view.setBreakStrategy(android.text.Layout.BREAK_STRATEGY_SIMPLE); return view;
+        view.setLineSpacing(dp(3), 1); if (bold && size >= 22) view.setLetterSpacing(-.025f);
+        view.setBreakStrategy(android.text.Layout.BREAK_STRATEGY_SIMPLE); return view;
     }
     private TextView label(String value) { TextView v = text(value, 13, MUTED, false); v.setPadding(0, dp(5), 0, dp(7)); return v; }
     private LinearLayout column() { LinearLayout layout = new LinearLayout(this); layout.setOrientation(LinearLayout.VERTICAL); return layout; }
@@ -145,20 +146,22 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     private void gap(LinearLayout parent, int height) { parent.addView(new View(this), new LinearLayout.LayoutParams(1, dp(height))); }
     private void divider(LinearLayout parent) { View view = new View(this); view.setBackgroundColor(LINE); LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(1)); params.topMargin = dp(14); params.bottomMargin = dp(14); parent.addView(view, params); }
     private LinearLayout card() {
-        LinearLayout card = column(); card.setBackground(MobileStyle.outlined(this, Color.WHITE, LINE, 22));
-        card.setPadding(dp(18), dp(18), dp(18), dp(18)); LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.bottomMargin = dp(14); body.addView(card, params); return card;
+        LinearLayout card = column(); card.setBackground(MobileStyle.material(this, 0xFF9AAAC4, 22));
+        MobileStyle.softElevation(card, 2);
+        card.setPadding(dp(19), dp(20), dp(19), dp(20)); LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.bottomMargin = dp(16); body.addView(card, params); return card;
     }
     private Button button(String value, boolean primary, Action action) {
         Button button = new Button(this); button.setText(value); button.setAllCaps(false); button.setTextSize(14);
         button.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL)); button.setTextColor(primary ? Color.WHITE : PURPLE);
-        button.setBackground(MobileStyle.ripple(this, primary ? PURPLE : SOFT, 14)); button.setPadding(dp(12), dp(11), dp(12), dp(11));
-        button.setMinHeight(dp(48)); button.setMinimumHeight(dp(48)); button.setMinWidth(0); button.setMinimumWidth(0); button.setElevation(0);
+        button.setBackground(MobileStyle.buttonBackground(this, primary)); button.setPadding(dp(13), dp(12), dp(13), dp(12));
+        button.setMinHeight(dp(48)); button.setMinimumHeight(dp(48)); button.setMinWidth(0); button.setMinimumWidth(0);
+        button.setStateListAnimator(null); MobileStyle.softElevation(button, primary ? 2 : 0);
         button.setOnClickListener(v -> act(action)); return button;
     }
     private void addButton(LinearLayout parent, String value, boolean primary, Action action) { LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.topMargin = dp(10); parent.addView(button(value, primary, action), params); }
     private View icon(String name, int color, int size) { return MobileIcons.view(this, name, color, size); }
     private void sectionTitle(LinearLayout parent, String name, String glyph) {
-        LinearLayout line = row(); FrameLayout mark = new FrameLayout(this); mark.setBackground(rounded(SOFT, 10));
+        LinearLayout line = row(); FrameLayout mark = new FrameLayout(this); mark.setBackground(MobileStyle.material(this, PURPLE, 10));
         FrameLayout.LayoutParams centered = new FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER); mark.addView(icon(glyph, PURPLE, 18), centered);
         LinearLayout.LayoutParams stamp = new LinearLayout.LayoutParams(dp(32), dp(32)); stamp.rightMargin = dp(10); line.addView(mark, stamp);
         line.addView(text(name, 17, INK, true), new LinearLayout.LayoutParams(0, -2, 1)); parent.addView(line); gap(parent, 9);
@@ -168,7 +171,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         view.setMinHeight(dp(48)); view.setBackground(MobileStyle.ripple(this, Color.TRANSPARENT, 10)); view.setOnClickListener(v -> act(action)); view.setFocusable(true); return view;
     }
     private TextView amountText(String value, int size, int color) {
-        TextView amount = text(value, size, color, true);
+        TextView amount = text(value, size, color, true); amount.setFontFeatureSettings("tnum");
         if (!largeText() && value.length() <= 14) { amount.setMaxLines(1); amount.setAutoSizeTextTypeUniformWithConfiguration(12, size, 1, android.util.TypedValue.COMPLEX_UNIT_SP); }
         return amount;
     }
@@ -179,12 +182,12 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
             if (!store.isSyncing()) { try { store.applyRecurring(LedgerStore.today()); recurringError = ""; } catch (Exception error) { recurringError = error.getMessage() == null ? "请核对订阅和账户设置" : error.getMessage(); } }
             JSONObject data = store.snapshot(); updatePanel = null; updateProgressLabel = null; updateProgressBar = null; updateCardKey = ""; root = column(); root.setBackgroundColor(BG);
             root.setOnApplyWindowInsetsListener((v, insets) -> { v.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(), insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom()); return insets; });
-            LinearLayout header = row(); header.setPadding(dp(20), dp(14), dp(20), dp(12));
-            FrameLayout brand = new FrameLayout(this); brand.setBackground(rounded(PURPLE, 13)); brand.addView(icon("ledger", Color.WHITE, 25), new FrameLayout.LayoutParams(dp(25), dp(25), Gravity.CENTER)); header.addView(brand, new LinearLayout.LayoutParams(dp(42), dp(42)));
+            LinearLayout header = row(); header.setPadding(dp(20), dp(14), dp(20), dp(14)); header.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{Color.WHITE, BG}));
+            FrameLayout brand = new FrameLayout(this); brand.setBackground(MobileStyle.buttonBackground(this, true)); MobileStyle.softElevation(brand, 2); brand.addView(icon("ledger", Color.WHITE, 25), new FrameLayout.LayoutParams(dp(25), dp(25), Gravity.CENTER)); header.addView(brand, new LinearLayout.LayoutParams(dp(42), dp(42)));
             LinearLayout titles = column(); titles.setPadding(dp(11), 0, dp(6), 0); titles.addView(text("超级账本", 19, INK, true)); titles.addView(text("MONEY LAB · 随身记", 9, MUTED, false)); header.addView(titles, new LinearLayout.LayoutParams(0, -2, 1));
             LinearLayout badge = row(); badge.setPadding(dp(10), dp(8), dp(10), dp(8)); badge.setBackground(MobileStyle.ripple(this, SOFT, 14)); badge.setMinimumHeight(dp(48)); badge.addView(icon("sync", PURPLE, 17));
             TextView syncLabel = text(store.isSyncing() ? "同步中" : "扫码同步", 11, PURPLE, true); syncLabel.setPadding(dp(5), 0, 0, 0); badge.addView(syncLabel); badge.setContentDescription(store.isSyncing() ? "查看同步状态" : "扫码同步到电脑"); badge.setFocusable(true); badge.setOnClickListener(v -> openMore("sync")); header.addView(badge); root.addView(header);
-            ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setClipToPadding(false); body = column(); body.setPadding(dp(20), dp(8), dp(20), dp(22)); scroll.addView(body); root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+            ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setClipToPadding(false); body = column(); body.setClipChildren(false); body.setClipToPadding(false); body.setPadding(dp(20), dp(8), dp(20), dp(24)); scroll.addView(body); root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
             if (!recurringError.isEmpty()) { LinearLayout alert = card(); alert.addView(text("订阅记账需要检查", 15, RED, true)); alert.addView(label(recurringError)); }
             try {
                 if (page == 0) renderOverview(data); else if (page == 1) renderTransactions(data); else if (page == 2) renderAccounts(data); else if (page == 3) renderMore(data); else renderSettings(data);
@@ -194,14 +197,14 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
                 addButton(recovery, "查看待确认与同步冲突", true, () -> openMore("review")); addButton(recovery, "导出手机完整备份", false, () -> exportBackup(false));
             }
             View navLine = new View(this); navLine.setBackgroundColor(LINE); root.addView(navLine, new LinearLayout.LayoutParams(-1, dp(1)));
-            LinearLayout tabs = row(); tabs.setPadding(dp(10), dp(7), dp(10), dp(7)); tabs.setBackgroundColor(Color.WHITE);
+            LinearLayout tabs = row(); tabs.setPadding(dp(10), dp(8), dp(10), dp(8)); tabs.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{Color.WHITE, 0xFFFBFCFF})); MobileStyle.softElevation(tabs, 4);
             int review = data.getJSONArray("pending").length() + data.getJSONArray("conflicts").length();
             String[] names = {"总览", "账单", "资产", "更多", "设置"}, glyphs = {"home", "list", "wallet", "grid", "settings"};
             for (int i = 0; i < names.length; i++) {
-                final int target = i; boolean active = page == i; LinearLayout tab = column(); tab.setGravity(Gravity.CENTER); tab.setPadding(dp(2), dp(7), dp(2), dp(7)); tab.setMinimumHeight(dp(58)); tab.setBackground(MobileStyle.ripple(this, active ? SOFT : Color.WHITE, 14));
-                FrameLayout symbol = new FrameLayout(this); symbol.addView(icon(glyphs[i], active ? PURPLE : MUTED, 21), new FrameLayout.LayoutParams(dp(21), dp(21), Gravity.CENTER));
+                final int target = i; boolean active = page == i; LinearLayout tab = column(); tab.setGravity(Gravity.CENTER); tab.setPadding(dp(2), dp(5), dp(2), dp(5)); tab.setMinimumHeight(dp(58)); tab.setBackground(MobileStyle.ripple(this, Color.TRANSPARENT, 14));
+                FrameLayout symbol = new FrameLayout(this); if (active) symbol.setBackground(MobileStyle.material(this, PURPLE, 11)); symbol.addView(icon(glyphs[i], active ? PURPLE : MUTED, 21), new FrameLayout.LayoutParams(dp(21), dp(21), Gravity.CENTER));
                 if (i == 3 && review > 0) { View dot = new View(this); dot.setBackground(rounded(RED, 5)); FrameLayout.LayoutParams dotParams = new FrameLayout.LayoutParams(dp(6), dp(6), Gravity.TOP | Gravity.END); symbol.addView(dot, dotParams); }
-                tab.addView(symbol, new LinearLayout.LayoutParams(dp(30), dp(25))); TextView caption = text(names[i], 11, active ? PURPLE : MUTED, active); caption.setGravity(Gravity.CENTER); tab.addView(caption);
+                tab.addView(symbol, new LinearLayout.LayoutParams(dp(42), dp(31))); TextView caption = text(names[i], 11, active ? PURPLE : MUTED, active); caption.setGravity(Gravity.CENTER); caption.setPadding(0, dp(3), 0, 0); tab.addView(caption);
                 tab.setContentDescription(names[i] + (i == 3 && review > 0 ? "，" + review + " 项待确认" : "") + (active ? "，已选中" : "")); tab.setSelected(active); tab.setFocusable(true); tab.setOnClickListener(v -> { page = target; render(); });
                 LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -2, 1); p.leftMargin = dp(2); p.rightMargin = dp(2); tabs.addView(tab, p);
             }
@@ -243,7 +246,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         greeting.addView(text(new SimpleDateFormat("M 月 d 日 · E", Locale.CHINA).format(new Date()), 11, MUTED, false)); gap(greeting, 7);
         greeting.addView(text("每一笔，\n都心中有数。", 25, INK, true)); gap(greeting, 4); greeting.addView(text("好好生活，慢慢积累。", 12, MUTED, false)); welcome.addView(greeting, new LinearLayout.LayoutParams(0, -2, 1));
         ImageView artwork = new ImageView(this); artwork.setImageResource(R.drawable.ledger_bloom); artwork.setScaleType(ImageView.ScaleType.FIT_CENTER); artwork.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO); welcome.addView(artwork, new LinearLayout.LayoutParams(dp(108), dp(118))); body.addView(welcome);
-        LinearLayout hero = card(); GradientDrawable gradient = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0xFFF2EFFF, 0xFFF8FBFE}); gradient.setCornerRadius(dp(22)); gradient.setStroke(dp(1), 0xFFE3DFFA); hero.setBackground(gradient);
+        LinearLayout hero = card(); hero.setBackground(MobileStyle.heroSurface(this));
         LinearLayout assetTitle = row(); assetTitle.addView(icon("wallet", PURPLE, 17)); TextView assetLabel = text("当前净资产 · 折合人民币", 12, MUTED, false); assetLabel.setPadding(dp(7), 0, 0, 0); assetTitle.addView(assetLabel, new LinearLayout.LayoutParams(0, -2, 1)); hero.addView(assetTitle); gap(hero, 14);
         hero.addView(amountText(money(MobileLedger.netWorth(state, today), "CNY"), 36, INK));
         LinearLayout caption = row(); caption.addView(text(accounts.length() + " 个账户的当前余额", 11, MUTED, false), new LinearLayout.LayoutParams(0, -2, 1)); caption.addView(link("管理账户 ›", () -> { page = 2; render(); })); hero.addView(caption);
@@ -263,7 +266,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         List<JSONObject> txs = sortedTransactions(state);
         if (txs.isEmpty()) { gap(recent, 8); recent.addView(text("故事，等你写下第一笔。", 15, INK, true)); recent.addView(label("从今天开始，让钱的来去清清楚楚。")); }
         for (int i = 0; i < Math.min(5, txs.size()); i++) { if (i > 0) divider(recent); final JSONObject tx = txs.get(i); addTransactionRow(recent, tx, state); recent.getChildAt(recent.getChildCount() - 1).setOnClickListener(v -> act(() -> editTransaction(tx, null))); }
-        long budget = monthly.optLong("budget"); LinearLayout budgetCard = card(); budgetCard.setBackground(MobileStyle.outlined(this, SOFT, 0xFFE3DFFA, 22)); LinearLayout budgetHeading = row();
+        long budget = monthly.optLong("budget"); LinearLayout budgetCard = card(); budgetCard.setBackground(MobileStyle.material(this, PURPLE, 22)); LinearLayout budgetHeading = row();
         budgetHeading.addView(text("本月预算", 17, INK, true), new LinearLayout.LayoutParams(0, -2, 1)); budgetHeading.addView(link(budget > 0 ? "调整 ›" : "设置 ›", this::editBudget)); budgetCard.addView(budgetHeading);
         if (budget > 0) { progress(budgetCard, monthly.optLong("expense"), budget, monthly.optLong("remaining") < 0 ? RED : PURPLE); budgetCard.addView(label((monthly.optLong("remaining") >= 0 ? "还可使用 " : "已超出 ") + money(Math.abs(monthly.optLong("remaining")), "CNY") + " / 预算 " + money(budget, "CNY"))); }
         else budgetCard.addView(label("为日常花销，留一点计划。"));
@@ -291,7 +294,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     private void renderFilteredTransactions(LinearLayout results,JSONObject state)throws Exception {
         results.removeAllViews();List<JSONObject> list=filteredTransactions(state);long income=0,expense=0;String today=LedgerStore.today();for(JSONObject tx:list){if(tx.optString("date").compareTo(today)>0)continue;if(tx.optString("type").equals("income"))income+=MobileLedger.transactionCnyAmount(tx);if(tx.optString("type").equals("expense"))expense+=MobileLedger.transactionCnyAmount(tx);}
         LinearLayout summary=column();summary.setPadding(dp(8),dp(4),dp(8),dp(14));summary.addView(text(list.size()+" 笔账单 · 折合人民币",12,MUTED,false));metrics(summary,new JSONObject().put("income",income).put("expense",expense).put("balance",income-expense));results.addView(summary);
-        LinearLayout listCard=column();listCard.setBackground(MobileStyle.outlined(this,Color.WHITE,LINE,22));listCard.setPadding(dp(17),dp(16),dp(17),dp(16));results.addView(listCard);
+        LinearLayout listCard=column();listCard.setBackground(MobileStyle.material(this,0xFF9AAAC4,22));MobileStyle.softElevation(listCard,2);listCard.setPadding(dp(17),dp(16),dp(17),dp(16));results.addView(listCard);
         if(list.isEmpty()){sectionTitle(listCard,"这里还没有账单","list");listCard.addView(label("试试切换月份或清除筛选，也可以记下今天的第一笔。"));}
         for(int i=0;i<Math.min(visibleTransactions,list.size());i++){if(i>0)divider(listCard);final JSONObject tx=list.get(i);addTransactionRow(listCard,tx,state);listCard.getChildAt(listCard.getChildCount()-1).setOnClickListener(v->act(()->editTransaction(tx,null)));}
         if(list.size()>visibleTransactions)addButton(listCard,"查看更多（还有 "+(list.size()-visibleTransactions)+" 笔）",false,()->{visibleTransactions+=100;renderFilteredTransactions(results,state);});
@@ -316,9 +319,9 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     }
     private void renderAccounts(JSONObject data)throws Exception {
         JSONObject state=data.getJSONObject("state");JSONArray accounts=items(state,"accounts");JSONObject balances=MobileLedger.balances(state,LedgerStore.today());heading("我的资产","每笔收支对应实际账户，转账只移动资产。");
-        LinearLayout total=card();total.addView(label("账户总资产 · 折合人民币"));total.setBackground(MobileStyle.outlined(this,SOFT,0xFFE3DFFA,22));total.addView(amountText(money(MobileLedger.netWorth(state,LedgerStore.today()),"CNY"),31,INK));actionPair(total,"＋ 添加账户",()->editAccount(null),"账户间转账",()->newTransaction("transfer",""));
+        LinearLayout total=card();total.addView(label("账户总资产 · 折合人民币"));total.setBackground(MobileStyle.heroSurface(this));total.addView(amountText(money(MobileLedger.netWorth(state,LedgerStore.today()),"CNY"),32,INK));actionPair(total,"＋ 添加账户",()->editAccount(null),"账户间转账",()->newTransaction("transfer",""));
         if(accounts.length()==0){LinearLayout empty=card();sectionTitle(empty,"给第一个账户安个家","wallet");empty.addView(label("微信、支付宝、银行卡或现金，选好账户，填写真实余额就能开始。"));}
-        for(int i=0;i<accounts.length();i++){final JSONObject account=accounts.getJSONObject(i);String code=account.optString("currency","CNY");long balance=balances.optLong(account.getString("id"));LinearLayout c=card(),top=row();addLogo(top,BrandIcons.forAccount(account),account.optString("name"),account.optString("color","#6254D9"),44);LinearLayout title=column();title.addView(text(accountName(account),17,INK,true));title.addView(text(account.optString("type")+" · "+code,11,MUTED,false));top.addView(title,new LinearLayout.LayoutParams(0,-2,1));top.addView(link("管理 ›",()->editAccount(account)));c.addView(top);gap(c,13);c.addView(amountText(money(balance,code),29,INK));
+        for(int i=0;i<accounts.length();i++){final JSONObject account=accounts.getJSONObject(i);String code=account.optString("currency","CNY");long balance=balances.optLong(account.getString("id"));LinearLayout c=card(),top=row();c.setBackground(MobileStyle.material(this,safeColor(account.optString("color","#8C7BC1")),22));addLogo(top,BrandIcons.forAccount(account),account.optString("name"),account.optString("color","#6254D9"),44);LinearLayout title=column();title.addView(text(accountName(account),17,INK,true));title.addView(text(account.optString("type")+" · "+code,11,MUTED,false));top.addView(title,new LinearLayout.LayoutParams(0,-2,1));top.addView(link("管理 ›",()->editAccount(account)));c.addView(top);gap(c,16);c.addView(text("当前余额",11,MUTED,false));gap(c,5);c.addView(amountText(money(balance,code),31,INK));
             if(!code.equals("CNY"))c.addView(label("≈ "+money(MobileLedger.toCnyCents(balance,code,account.optString("cnyRate")),"CNY")+" · 汇率 "+account.optString("cnyRate")+" CNY / "+code));
             c.addView(text("期初 "+money(account.optLong("openingBalance"),code)+" · 当前余额已计入账单",11,MUTED,false));actionPair(c,"从此账户记账",()->newTransaction("expense",account.getString("id")),"查看明细",()->{selectedAccount=account.getString("id");selectedMonth="";selectedCategory="";selectedType="";searchQuery="";page=1;render();});}
     }
@@ -335,10 +338,10 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     }
     private void menuCard(String title,String subtitle,String section,String glyph) {
         String symbol = section.equals("sync") ? "sync" : section.equals("review") ? "check" : section.equals("subscriptions") ? "calendar" : section.equals("budget") ? "chart" : section.equals("goals") ? "goal" : "shield";
-        LinearLayout panel = card(), r = row(); FrameLayout stamp = new FrameLayout(this); stamp.setBackground(rounded(SOFT, 14)); stamp.addView(icon(symbol, PURPLE, 22), new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER));
+        LinearLayout panel = card(), r = row(); FrameLayout stamp = new FrameLayout(this); stamp.setBackground(MobileStyle.material(this, PURPLE, 14)); stamp.addView(icon(symbol, PURPLE, 22), new FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER));
         LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(dp(46), dp(46)); size.rightMargin = dp(13); r.addView(stamp, size);
         LinearLayout labels = column(); labels.addView(text(title,17,INK,true)); labels.addView(text(subtitle,12,MUTED,false)); r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));
-        LinearLayout.LayoutParams arrow = new LinearLayout.LayoutParams(dp(18),dp(18)); arrow.leftMargin=dp(8); r.addView(icon("chevron",MUTED,18),arrow); panel.addView(r); panel.setBackground(MobileStyle.ripple(this,Color.WHITE,22)); panel.setContentDescription(title+"，"+subtitle); panel.setFocusable(true); panel.setOnClickListener(v->openMore(section));
+        LinearLayout.LayoutParams arrow = new LinearLayout.LayoutParams(dp(18),dp(18)); arrow.leftMargin=dp(8); r.addView(icon("chevron",MUTED,18),arrow); panel.addView(r); panel.setBackground(MobileStyle.cardRipple(this,0xFF9AAAC4,22)); panel.setContentDescription(title+"，"+subtitle); panel.setFocusable(true); panel.setOnClickListener(v->openMore(section));
     }
     private void renderDataTools(JSONObject data)throws Exception {heading("数据握在自己手里","手机完整备份包含待同步操作与待确认通知。");LinearLayout c=card();c.addView(text("手机完整备份",18,INK,true));c.addView(label("导出 JSON 保存到你选的位置。恢复前会留存当前手机内容，恢复后请先核对账本和同步状态。"));addButton(c,"导出手机完整备份",true,()->exportBackup(false));addButton(c,"从手机备份恢复",false,this::importBackup);LinearLayout csv=card();csv.addView(text("CSV 账单明细",18,INK,true));csv.addView(label("按账单页当前月份、账户、分类与搜索条件导出；金额保留原币，并提供人民币参考金额。"));addButton(csv,"筛选并导出 CSV",false,()->{page=1;render();});}
     private void renderReview(JSONObject data) throws Exception {
@@ -549,7 +552,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
                 TextView view = (TextView)super.getDropDownView(position,recycled,parent); view.setTextColor(INK); view.setTextSize(15); view.setSingleLine(false); view.setMaxLines(Integer.MAX_VALUE); view.setPadding(dp(16),dp(12),dp(16),dp(12)); view.setMinimumHeight(dp(48)); return view;
             }
         };
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinner.setAdapter(adapter); spinner.setMinimumHeight(dp(48)); spinner.setBackground(MobileStyle.outlined(this,0xFFF8F9FD,LINE,12));
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinner.setAdapter(adapter); spinner.setMinimumHeight(dp(48)); spinner.setBackground(MobileStyle.inputSurface(this));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1,-2); params.topMargin=dp(3); params.bottomMargin=dp(8); spinner.setLayoutParams(params); return spinner;
     }
     private void sourceSettings(String pkg) throws Exception {
@@ -565,7 +568,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         if (names.isEmpty()) throw new Exception("没有读取到可选应用，请先安装并打开需要记录的银行应用");
         dialogBuilder().setTitle("选择付款 / 银行 / 短信应用").setItems(names.toArray(new String[0]), (dialog, index) -> act(() -> { store.setSource(packages.get(index), names.get(index), true, ""); sourceSettings(packages.get(index)); render(); })).setNegativeButton("取消", null).show();
     }
-    private void styleInput(EditText input) { input.setTextColor(INK); input.setHintTextColor(MUTED); input.setTextSize(16); input.setMinimumHeight(dp(52)); input.setPadding(dp(13),dp(12),dp(13),dp(12)); input.setBackground(MobileStyle.outlined(this,0xFFF8F9FD,LINE,12)); }
+    private void styleInput(EditText input) { input.setTextColor(INK); input.setHintTextColor(MUTED); input.setTextSize(16); input.setMinimumHeight(dp(52)); input.setPadding(dp(13),dp(12),dp(13),dp(12)); input.setBackground(MobileStyle.inputSurface(this)); }
     private EditText field(LinearLayout form, String name, String value, int inputType) {
         TextView caption=label(name); caption.setTextColor(INK); form.addView(caption); EditText input = new EditText(this); input.setId(View.generateViewId()); caption.setLabelFor(input.getId()); input.setText(value); input.setInputType(inputType); styleInput(input);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.bottomMargin = dp(13); form.addView(input, p); return input;
@@ -674,11 +677,11 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     private void renderSubscriptions(JSONObject data)throws Exception {
         JSONObject state=data.getJSONObject("state"),accountBalances=MobileLedger.balances(state,LedgerStore.today());JSONArray subscriptions=items(state,"subscriptions");heading("会员与订阅","到期自动记入账本，只记账，不会实际扣款或取消平台会员。");
         LinearLayout intro=card();long monthly=0;for(int i=0;i<subscriptions.length();i++){JSONObject sub=subscriptions.getJSONObject(i),account=findAccount(state,sub.optString("accountId"));if(sub.optBoolean("active")&&sub.optBoolean("recurring")&&account!=null)monthly+=MobileLedger.toCnyCents(sub.optLong("amount"),sub.optString("currency","CNY"),account.optString("currency","CNY").equals("CNY")?"1":account.optString("cnyRate"));}
-        intro.addView(label("每月启用的计划扣账 · 折合人民币"));intro.addView(text(money(monthly,"CNY"),29,INK,true));addButton(intro,"＋ 添加订阅",true,()->editSubscription(null));
+        intro.setBackground(MobileStyle.heroSurface(this));intro.addView(label("每月启用的计划扣账 · 折合人民币"));intro.addView(amountText(money(monthly,"CNY"),31,INK));addButton(intro,"＋ 添加订阅",true,()->editSubscription(null));
         intro.addView(label("到期标注：已过期红色，7 天内橙色，8–30 天黄色，30 天以上绿色，未设置灰色。"));
         if(subscriptions.length()==0)intro.addView(label("选择服务品牌，填写你实际支付的金额和扣款账户。"));
-        for(int i=0;i<subscriptions.length();i++){final JSONObject sub=subscriptions.getJSONObject(i);LinearLayout c=card(),r=row();addLogo(r,BrandIcons.forSubscription(sub),sub.optString("name"),sub.optString("color","#8476D9"),44);LinearLayout labels=column();labels.addView(text(sub.optString("name"),17,INK,true));labels.addView(text(sub.optString("tier").isEmpty()?"自定义档位":sub.optString("tier"),12,MUTED,false));r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));r.addView(text(money(sub.optLong("amount"),sub.optString("currency","CNY")),16,INK,true));c.addView(r);String due=MobileLedger.nextSubscriptionDue(sub,LedgerStore.today());c.addView(label((sub.optBoolean("active")?(sub.optBoolean("recurring")?"每月 "+sub.optInt("billingDay")+" 日":"单次记账"):"已暂停")+(due==null?"":" · 下次 "+due)));
-            SubscriptionDetails.Status expiry=SubscriptionDetails.expiryStatus(sub,LedgerStore.today());int tone=expiryColor(expiry.tone);TextView badge=text(expiry.label,13,tone,true);badge.setPadding(dp(10),dp(7),dp(10),dp(7));badge.setBackground(MobileStyle.outlined(this,Color.WHITE,tone,10));c.addView(badge);c.addView(text(expiry.detail,12,MUTED,false));
+        for(int i=0;i<subscriptions.length();i++){final JSONObject sub=subscriptions.getJSONObject(i);LinearLayout c=card(),r=row();c.setBackground(MobileStyle.material(this,safeColor(sub.optString("color","#8C7BC1")),22));addLogo(r,BrandIcons.forSubscription(sub),sub.optString("name"),sub.optString("color","#8476D9"),44);LinearLayout labels=column();labels.addView(text(sub.optString("name"),17,INK,true));labels.addView(text(sub.optString("tier").isEmpty()?"自定义档位":sub.optString("tier"),12,MUTED,false));r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));c.addView(r);gap(c,16);c.addView(amountText(money(sub.optLong("amount"),sub.optString("currency","CNY")),29,INK));String due=MobileLedger.nextSubscriptionDue(sub,LedgerStore.today());c.addView(label((sub.optBoolean("active")?(sub.optBoolean("recurring")?"每月 "+sub.optInt("billingDay")+" 日":"单次记账"):"已暂停")+(due==null?"":" · 下次 "+due)));
+            SubscriptionDetails.Status expiry=SubscriptionDetails.expiryStatus(sub,LedgerStore.today());int tone=expiryColor(expiry.tone);TextView badge=text(expiry.label,13,tone,true);badge.setPadding(dp(11),dp(9),dp(11),dp(9));badge.setBackground(MobileStyle.outlined(this,MobileStyle.blend(Color.WHITE,tone,.06f),MobileStyle.blend(Color.WHITE,tone,.22f),11));c.addView(badge);gap(c,5);c.addView(text(expiry.detail,12,MUTED,false));
             gap(c,12);c.addView(subscriptionFunding(findAccount(state,sub.optString("accountId")),accountBalances.optLong(sub.optString("accountId")),sub.optLong("amount")));
             JSONArray linked=sub.optJSONArray("linkedAccounts");if(linked!=null&&linked.length()>0){gap(c,12);c.addView(text("关联登录账号",13,MUTED,true));for(int j=0;j<linked.length();j++){JSONObject identity=linked.getJSONObject(j);c.addView(text(linkedAccountLabel(identity),12,INK,false));}}
             if(!sub.optString("note").isEmpty())c.addView(label(sub.optString("note")));
@@ -687,10 +690,10 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     }
     /** Read-only comparison, in integer units of the selected account; no booking or currency conversion. */
     private LinearLayout subscriptionFunding(JSONObject account,long balance,Long fee){
-        LinearLayout panel=column();panel.setPadding(dp(14),dp(12),dp(14),dp(12));panel.setBackground(MobileStyle.outlined(this,0xFFF6F7FD,LINE,14));
+        LinearLayout panel=column();panel.setPadding(dp(15),dp(14),dp(15),dp(14));panel.setBackground(MobileStyle.material(this,0xFF93A3C3,16));
         panel.addView(text("扣款账户",12,MUTED,true));panel.addView(text(accountName(account),14,INK,true));gap(panel,8);
         String code=account==null?"CNY":account.optString("currency","CNY");panel.addView(text("当前账本余额",12,MUTED,false));panel.addView(amountText(money(balance,code),24,INK));
-        if(fee!=null&&fee>0){panel.addView(text("本次费用  "+money(fee,code),14,INK,false));long difference=fee-balance;TextView status=text(difference>0?"余额不足 · 还差 "+fundingDifference(difference,code):"余额充足",13,difference>0?RED:GREEN,true);gap(panel,6);panel.addView(status);}
+        if(fee!=null&&fee>0){panel.addView(text("本次费用  "+money(fee,code),14,INK,false));long difference=fee-balance;if(difference>0)panel.setBackground(MobileStyle.material(this,RED,16));TextView status=text(difference>0?"余额不足 · 还差 "+fundingDifference(difference,code):"余额充足",13,difference>0?RED:GREEN,true);gap(panel,8);panel.addView(status);}
         else panel.addView(label("填写本次费用后，可查看余额是否足够。"));
         panel.addView(text("按当前余额比较一笔费用，未预扣未来费用。",11,MUTED,false));return panel;
     }

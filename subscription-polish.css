@@ -1,0 +1,214 @@
+/* Subscription-only presentation. State colors, money masking, native form
+   controls and all data/action hooks remain owned by the existing application. */
+.subscription-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
+  align-items: start;
+}
+.subscription-grid > .subscription-card {
+  --subscription-accent: #8271c2;
+  position: relative;
+  min-width: 0;
+  padding: 25px;
+  border: 1px solid #e7e9f2;
+  border-top: 2px solid var(--expiry-dot, #d7dbe9);
+  border-radius: 22px;
+  background: radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--subscription-accent) 11%, transparent), transparent 42%), linear-gradient(155deg, #fff 35%, #fcfcff);
+  box-shadow: inset 0 1px 0 #fff, 0 3px 6px #26324a03, 0 12px 30px #26324a06;
+  transition: box-shadow .2s ease, border-color .2s ease;
+}
+.subscription-grid > .subscription-card:hover {
+  border-color: #d9deec;
+  border-top-color: var(--expiry-dot, #c7cddd);
+  box-shadow: inset 0 1px 0 #fff, 0 5px 12px #26324a05, 0 16px 34px #26324a0a;
+}
+.subscription-card:has(.service-logo[data-service="chatgpt"]),
+.subscription-card:has(.service-logo[data-service="grok"]) { --subscription-accent: #536671; }
+.subscription-card:has(.service-logo[data-service="claude"]) { --subscription-accent: #cf8c72; }
+.subscription-card:has(.service-logo[data-service="gemini"]) { --subscription-accent: #728ed4; }
+.subscription-card:has(.service-logo[data-service="ttvoice"]) { --subscription-accent: #8173d0; }
+.subscription-card:has(.service-logo[data-service="suno"]) { --subscription-accent: #d08e80; }
+.subscription-card:has(.service-logo[data-service="kugou"]),
+.subscription-card:has(.service-logo[data-service="icloud"]) { --subscription-accent: #6ba3d2; }
+.subscription-card:has(.service-logo[data-service="baidu"]) { --subscription-accent: #698fd0; }
+.subscription-card:has(.service-logo[data-service="netease"]) { --subscription-accent: #cf7e87; }
+.subscription-card:has(.service-logo[data-service="bilibili"]) { --subscription-accent: #ce8fac; }
+.subscription-grid .subscription-top { align-items: center; gap: 14px; min-height: 52px; }
+.subscription-grid .subscription-top > :is(.service-logo, .service-icon) {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  border: 1px solid #ffffffed;
+  box-shadow: 0 1px 2px #26324a08, 0 6px 14px color-mix(in srgb, var(--subscription-accent) 13%, transparent), inset 0 1px 0 #ffffffb3;
+}
+.subscription-grid .subscription-top > .service-logo { background: #ffffffec; padding: 10px; }
+.subscription-grid .subscription-top > .service-logo[data-service="ttvoice"] { background: #626ad4; padding: 5px; }
+.subscription-grid .subscription-top-actions { min-width: 0; gap: 9px; }
+.subscription-grid .subscription-top-actions .icon-btn {
+  flex: 0 0 34px;
+  background: #ffffffb3;
+  border-color: #ffffffd9;
+  color: #7b859b;
+  box-shadow: 0 2px 6px #27344b04;
+}
+.subscription-grid .subscription-top-actions .icon-btn:hover { background: #fff; color: #495672; border-color: #d9deeb; }
+.subscription-grid .subscription-top-actions .status-pill.paused { background: #edf0f5; color: #637087; border: 1px solid #e3e7ef; font-size: 10px; }
+.subscription-grid .subscription-card > h3 { margin: 19px 0 8px; color: #303b52; font-size: 19px; line-height: 1.45; font-weight: 700; letter-spacing: -.025em; }
+.subscription-grid .membership-tier-badge {
+  max-width: 100%;
+  margin: 0 0 10px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--subscription-accent) 15%, white);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--subscription-accent) 7%, white);
+  color: color-mix(in srgb, var(--subscription-accent) 65%, #354158);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.subscription-grid .subscription-card > .money { margin: 10px 0 21px; color: #303c53; font-size: 33px; font-weight: 700; line-height: 1.22; letter-spacing: -1.1px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.subscription-grid .subscription-card > .money small { color: #8790a3; font-size: 11px; font-weight: 500; letter-spacing: 0; white-space: nowrap; }
+.subscription-grid .expiry-banner { align-items: flex-start; gap: 10px; padding: 12px 13px; border-radius: 12px; box-shadow: inset 0 1px 0 #ffffff99; }
+.subscription-grid .expiry-banner > svg { margin-top: 2px; }
+.subscription-grid .expiry-banner b { font-size: 12px; font-weight: 650; }
+.subscription-grid .expiry-banner small { font-size: 11px; line-height: 1.65; }
+
+/* Funding is its own quiet panel. Semantic enough/shortfall colors are kept
+   separate from the subscription provider's decorative accent. */
+:is(.subscription-card, #subscription-form) .subscription-payment {
+  padding: 15px;
+  border: 1px solid #e2e7f1;
+  border-radius: 15px;
+  background: linear-gradient(145deg, #fafbfe, #f3f6fb);
+  box-shadow: inset 0 1px 0 #fff, 0 2px 4px #29364b03;
+}
+:is(.subscription-card, #subscription-form) .subscription-payment-heading { color: #53627c; }
+:is(.subscription-card, #subscription-form) .subscription-payment-heading > span { font-size: 11px; font-weight: 650; }
+:is(.subscription-card, #subscription-form) .subscription-payment-heading > small { padding: 3px 6px; background: #fff; border: 1px solid #e4e9f2; color: #73819a; font-size: 10px; border-radius: 6px; }
+:is(.subscription-card, #subscription-form) .subscription-payment-account { margin-top: 12px; gap: 9px; color: #3e4c65; font-size: 12px; line-height: 1.65; }
+:is(.subscription-card, #subscription-form) .subscription-payment-account .account-logo { background: #fff; border: 1px solid #e9edf5; box-shadow: 0 2px 6px #24314d04; }
+:is(.subscription-card, #subscription-form) .subscription-payment-amounts { gap: 14px; margin: 16px 0 14px; }
+:is(.subscription-card, #subscription-form) .subscription-payment-amounts > div + div { border-left: 1px solid #e0e6f0; padding-left: 14px; }
+:is(.subscription-card, #subscription-form) .subscription-payment-amounts span { color: #7a869d; font-size: 10px; margin-bottom: 5px; }
+:is(.subscription-card, #subscription-form) .subscription-payment-amounts b { color: #3e4c65; font-size: 15px; line-height: 1.55; font-weight: 650; letter-spacing: -.02em; }
+:is(.subscription-card, #subscription-form) .subscription-payment-result { border-color: #e0e6f0; padding-top: 11px; font-size: 11px; }
+:is(.subscription-card, #subscription-form) .subscription-payment-result > span:first-child { gap: 6px; }
+:is(.subscription-card, #subscription-form) .subscription-payment[data-funding="enough"] .subscription-payment-result { color: #26745d; }
+:is(.subscription-card, #subscription-form) .subscription-payment[data-funding="shortfall"] { border-color: #eccfd5; background: linear-gradient(145deg, #fffafd, #fdf4f5); }
+:is(.subscription-card, #subscription-form) .subscription-payment[data-funding="shortfall"] .subscription-payment-result { color: #a33f57; border-color: #eddae0; }
+:is(.subscription-card, #subscription-form) .subscription-payment-result .money { color: inherit; }
+:is(.subscription-card, #subscription-form) .subscription-payment-note { margin-top: 9px; color: #7d879a; font-size: 10px; line-height: 1.7; }
+.subscription-grid .subscription-login-heading { margin-top: 21px; color: #66728a; font-size: 11px; font-weight: 650; }
+.subscription-grid .linked-account-list { gap: 7px; margin-bottom: 17px; }
+.subscription-grid .linked-account-item { padding: 10px 11px; border-color: #e9edf4; border-radius: 10px; background: #fafbfe; box-shadow: inset 0 1px 0 #fff; }
+.subscription-grid .linked-account-item > b { color: #4b5971; font-size: 12px; line-height: 1.6; }
+.subscription-grid .linked-account-item > :is(span, small) { color: #8490a4; font-size: 10px; }
+.subscription-grid .linked-account-empty { padding: 11px; background: #fafbfe; color: #8590a3; border-color: #e3e7f0; font-size: 11px; border-radius: 10px; }
+.subscription-grid .sub-details { padding: 12px 0; gap: 16px; border-color: #edf0f5; color: #7e899e; font-size: 11px; }
+.subscription-grid .sub-details > b { color: #53617b; font-size: 12px; font-weight: 550; font-variant-numeric: tabular-nums; }
+.subscription-grid .subscription-note { border-color: #e6eaf2; }
+.subscription-grid .subscription-note > p { color: #65728b; font-size: 11px; line-height: 1.8; }
+.subscription-grid .toggle-row { padding-top: 14px; border-top: 1px solid #e9edf4; margin-top: 10px; color: #6c7890; font-size: 11px; line-height: 1.6; }
+.subscription-grid .switch { width: 40px; height: 24px; background: #dfe4ee; box-shadow: inset 0 1px 3px #25344e0c; }
+.subscription-grid .switch::after { width: 18px; height: 18px; top: 3px; left: 3px; box-shadow: 0 1px 4px #25344e1c; }
+.subscription-grid .switch.on { background: #8e7acb; }
+.subscription-grid .switch.on::after { left: 19px; }
+.subscription-grid > .add-card { min-height: 250px; border: 1px dashed #d8ddec; border-radius: 22px; background: linear-gradient(150deg, #fcfcff, #f4f5fc); color: #74809b; box-shadow: inset 0 1px 0 #fff; }
+.subscription-grid > .add-card:hover { background: #f2effc; border-color: #baaedb; color: #75629f; }
+.subscription-grid > .add-card > svg { color: #9a8bbc; background: #eeebf8; box-shadow: 0 4px 10px #594a8b06; }
+.subscription-legend { border-radius: 14px; border-color: #e6eaf3; background: #ffffffa6; box-shadow: inset 0 1px 0 #fff; }
+.subscription-legend > strong { color: #59667e; }
+.subscription-tools { padding: 6px 0; gap: 15px; }
+.subscription-filters { padding: 4px; border: 1px solid #e7eaf3; border-radius: 13px; background: #eef1f8; gap: 3px; }
+.subscription-filters button { min-height: 34px; border-radius: 9px; background: transparent; color: #75819a; font-size: 11px; padding: 8px 11px; }
+.subscription-filters button.selected { color: #6a59a6; background: #fff; box-shadow: 0 2px 5px #33406408; }
+.subscription-filters button:hover:not(.selected) { background: #e8eaf4; color: #586786; }
+.subscription-search { min-height: 42px; border-radius: 12px; border-color: #e0e5ef; box-shadow: inset 0 1px 2px #27344b03; color: #526078; }
+.subscription-search:focus { border-color: #b6a8d7; box-shadow: 0 0 0 3px #8b76bc14; }
+.subscription-count { color: #8993a8; font-size: 11px; margin-top: 4px; }
+
+/* Editing remains the existing form, including accessible native selects. */
+.modal:has(#subscription-form) { width: 760px; border-color: #ffffffd9; border-radius: 24px; box-shadow: 0 22px 70px #27344b26, 0 3px 12px #27344b0a; }
+.modal:has(#subscription-form) .modal-head { padding: 25px 28px 23px; border-bottom-color: #e8ecf4; background: radial-gradient(ellipse at 100% 0, #ede9fa 0, transparent 65%), #fcfcff; }
+.modal:has(#subscription-form) .modal-head h2 { color: #3f4a64; font-size: 22px; letter-spacing: -.035em; }
+.modal:has(#subscription-form) .modal-head p { color: #7a869d; font-size: 12px; line-height: 1.65; }
+.modal:has(#subscription-form) .modal-body { padding: 25px 28px 27px; background: #fff; }
+.modal:has(#subscription-form) .form-heading-icon { background: linear-gradient(145deg, #fff, #ece7f8); border-color: #fff; box-shadow: 0 4px 12px #7863a917, inset 0 1px 0 #fff; color: #8c77b7; }
+#subscription-form .membership-shortcuts { gap: 9px; padding-bottom: 23px; margin-bottom: 24px; border-color: #eceff5; }
+#subscription-form .membership-choice { position: relative; min-width: 0; min-height: 76px; gap: 8px; border-radius: 13px; border-color: #e7eaf2; color: #6d7890; background: linear-gradient(145deg, #fff, #f8f9fd); box-shadow: inset 0 1px 0 #fff, 0 2px 4px #27344b03; }
+#subscription-form .membership-choice span { font-size: 11px; }
+#subscription-form .membership-choice:hover { border-color: #c7bddf; color: #79659e; background: #fbf9ff; }
+#subscription-form .membership-choice.selected { border-color: #b7a7d6; color: #6d568f; background: linear-gradient(145deg, #faf7ff, #efebf9); box-shadow: inset 0 1px 0 #fff, 0 3px 8px #7863a90b; }
+#subscription-form .membership-choice.selected::after { content: ''; position: absolute; width: 5px; height: 5px; top: 7px; right: 7px; border-radius: 50%; background: #9a80bd; }
+#subscription-form > .form-grid { gap: 20px 18px; }
+#subscription-form .field { min-width: 0; }
+#subscription-form .field > label { color: #5f6c85; font-size: 12px; font-weight: 550; }
+#subscription-form :is(input:not([type="checkbox"]):not([type="color"]), textarea, select, .icon-select-trigger) { border-color: #e0e5ef; background-color: #fcfdff; border-radius: 11px; box-shadow: inset 0 1px 2px #27344b03; }
+#subscription-form :is(input:not([type="checkbox"]):not([type="color"]), textarea, select):focus { border-color: #b6a6d7; background: #fff; box-shadow: 0 0 0 3px #8b76bc14; }
+#subscription-form .icon-select-trigger { min-height: 46px; color: #53617b; }
+#subscription-form .icon-select-trigger[aria-expanded="true"], #subscription-form .icon-select-trigger:focus-visible { border-color: #b6a6d7; box-shadow: 0 0 0 3px #8b76bc14; }
+#subscription-form .icon-select-trigger:disabled { background-color: #f4f6fa; }
+#subscription-form .tier-picker-row { gap: 11px; }
+#subscription-form .tier-picker-row > * { min-width: 0; }
+#subscription-form .subscription-section.field.full { padding: 19px; margin-top: 2px; border: 1px solid #e7ebf3; border-radius: 16px; background: linear-gradient(145deg, #fbfcff, #f7f9fd); box-shadow: inset 0 1px 0 #fff; gap: 15px; }
+#subscription-form .subscription-section-title h3 { color: #475570; font-size: 14px; }
+#subscription-form .subscription-section-title p { color: #7a869c; font-size: 11px; line-height: 1.75; }
+#subscription-form .form-section-icon { background: #fff; color: #9180b3; border: 1px solid #ebe7f4; box-shadow: 0 2px 6px #6c5d9106; }
+#subscription-form .linked-account-row { padding: 13px; background: #fff; border-color: #e4e8f1; border-radius: 12px; box-shadow: 0 2px 5px #26324a03; }
+#subscription-form .linked-account-fields { grid-template-columns: 122px minmax(0,1fr) 112px; gap: 9px; }
+#subscription-form .linked-account-empty { margin: 0; padding: 13px; color: #7c889e; font-size: 11px; border-color: #dce3ef; background: #ffffff9c; }
+#subscription-form .linked-account-actions { gap: 10px; }
+#subscription-form .linked-account-actions .btn { min-height: 42px; border-color: #ded9ec; color: #7d6a9c; background: #fff; }
+#subscription-form .expiry-banner { border-radius: 11px; box-shadow: inset 0 1px 0 #ffffff99; }
+#subscription-form .hint, #subscription-form .currency-hint { color: #7a869b; font-size: 11px; line-height: 1.75; }
+#subscription-form #subscription-payment-preview .subscription-payment { padding: 18px; margin: 0; }
+#subscription-form #subscription-payment-preview .subscription-payment-amounts b { font-size: 19px; }
+#subscription-form .checkbox-field { padding: 14px 15px; border: 1px solid #e7eaf3; border-radius: 12px; background: #fafbfe; color: #5c6982; }
+#subscription-form .checkbox-field small { color: #8490a4; line-height: 1.7; }
+#subscription-form .subscription-note-field textarea { min-height: 92px; line-height: 1.8; }
+#subscription-form .modal-footer { padding-top: 21px; margin-top: 25px; border-color: #e7ebf3; }
+#subscription-form .modal-footer .btn-primary { background: linear-gradient(145deg, #8e79bd, #7d69ad); box-shadow: inset 0 1px 0 #ffffff26, 0 5px 12px #7e68ad21; }
+#subscription-form .modal-footer .delete-btn { color: #ac6b7d; background: #fcf5f7; border-color: #f1dfe6; }
+:is(.subscription-grid, .subscription-filters, #subscription-form) button:focus-visible { outline: 2px solid #a191c5; outline-offset: 3px; }
+
+@media (max-width: 1270px) {
+  .subscription-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .subscription-tools { align-items: stretch; gap: 12px; }
+  .subscription-filters { width: 100%; }
+  .subscription-search { flex-basis: 100%; min-width: 0; }
+  .subscription-grid { gap: 17px; }
+  .subscription-grid > .subscription-card { padding: 21px; }
+  .modal:has(#subscription-form) .modal-head { padding: 21px; }
+  .modal:has(#subscription-form) .modal-body { padding: 21px; }
+  #subscription-form .linked-account-fields { grid-template-columns: 112px minmax(0,1fr); }
+  #subscription-form .linked-account-fields > .field:last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 600px) {
+  .subscription-grid { grid-template-columns: minmax(0, 1fr); }
+  .subscription-grid > .subscription-card { border-radius: 19px; }
+  .subscription-grid .subscription-card > .money { font-size: 32px; }
+  .subscription-grid > .add-card { min-height: 175px; border-radius: 19px; }
+  #subscription-form .membership-shortcuts { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 7px; }
+  #subscription-form .membership-choice { min-height: 58px; flex-direction: column; gap: 6px; padding: 9px 4px; }
+  #subscription-form .membership-choice span { font-size: 10px; }
+  #subscription-form .subscription-section.field.full { padding: 14px; }
+  #subscription-form .subscription-section-title:has(.form-section-icon) p { margin-left: 0; }
+  #subscription-form .linked-account-actions > .icon-select { flex-basis: 100%; }
+  #subscription-form .linked-account-actions .btn { width: 100%; }
+}
+@media (max-width: 480px) {
+  .subscription-filters { gap: 3px; }
+  .subscription-filters button { flex: 1 0 auto; padding: 8px 9px; font-size: 11px; }
+  .subscription-legend { gap: 8px 12px; font-size: 10px; }
+  #subscription-form > .form-grid, #subscription-form .tier-picker-row, #subscription-form .linked-account-fields { grid-template-columns: minmax(0,1fr); }
+  #subscription-form .linked-account-row { padding: 10px; gap: 7px; }
+  #subscription-form .modal-footer { gap: 8px; flex-wrap: wrap; }
+  #subscription-form .modal-footer .btn { padding-inline: 12px; }
+  #subscription-form #subscription-payment-preview .subscription-payment { padding: 14px; }
+  #subscription-form #subscription-payment-preview .subscription-payment-amounts b { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .subscription-grid > .subscription-card, #subscription-form .membership-choice { transition: none; }
+}
