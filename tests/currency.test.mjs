@@ -34,7 +34,7 @@ function mixedFixture() {
 }
 
 test('currency parsing preserves exact native precision and refuses silent rounding', () => {
-  assert.deepEqual(currencyCatalog.map(c => c.code), ['CNY', 'USD', 'USDT', 'JPY', 'EUR', 'HKD', 'GBP', 'KRW', 'SGD', 'AUD', 'CAD', 'CHF']);
+  assert.deepEqual(currencyCatalog.map(c => c.code), ['CNY', 'USD', 'USDT', 'JPY', 'EUR', 'HKD', 'GBP', 'KRW', 'SGD', 'AUD', 'CAD', 'CHF', 'TRY']);
   assert.equal(accountCurrency({}), 'CNY');
   assert.equal(parseMoney('0.29', 'USD'), 29);
   assert.equal(parseMoney('-0', 'CNY'), 0);
@@ -48,6 +48,20 @@ test('currency parsing preserves exact native precision and refuses silent round
     assert.throws(() => parseMoney(value, code));
   }
   for (const code of ['usd', 'USTD', '', null, 123]) assert.throws(() => currencyInfo(code));
+});
+
+test('Turkish lira keeps two decimal places and converts account balances exactly', () => {
+  assert.deepEqual(currencyInfo('TRY'), { code: 'TRY', name: '土耳其里拉', symbol: '₺', decimals: 2 });
+  assert.equal(parseMoney('100.25', 'TRY'), 10025);
+  assert.equal(amountInput(10025, 'TRY'), '100.25');
+  assert.equal(formatMoney(10025, 'TRY'), 'TRY 100.25');
+  assert.throws(() => parseMoney('100.251', 'TRY'), /2 位小数/);
+  const state = makeEmptyState();
+  state.schemaVersion = 2;
+  state.accounts = [account('turkey', 'TRY', '100.25', '0.15')];
+  assert.equal(validateState(state), true);
+  assert.equal(getBalances(state).turkey, 10025);
+  assert.equal(getNetWorth(state), 1504);
 });
 
 test('editable and displayed values preserve their denomination and never show JPY as CNY', () => {

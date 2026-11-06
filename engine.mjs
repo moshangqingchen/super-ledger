@@ -1,7 +1,18 @@
 import { accountCurrency, currencyRate, currencyInfo, parseMoney, toCnyCents } from './currencies.mjs';
+import { appleBalanceRegion, isAppleBalance } from './account-presets.mjs';
 
 /** Balances and transactions use integer units of their account currency; reports use CNY cents. */
 export const MAX_MONEY = 1_000_000_000_000;
+export const subscriptionAccountTypes = Object.freeze([
+  { id: 'email', label: '邮箱' },
+  { id: 'apple', label: 'Apple 账户' },
+  { id: 'google', label: 'Google 账户' },
+  { id: 'phone', label: '手机号' },
+  { id: 'wechat', label: '微信' },
+  { id: 'qq', label: 'QQ' },
+  { id: 'other', label: '其他' },
+].map(item => Object.freeze(item)));
+const SUBSCRIPTION_ACCOUNT_TYPES = new Set(subscriptionAccountTypes.map(item => item.id));
 const DATE_PATTERN = /^(19\d{2}|20\d{2}|21\d{2})-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/;
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const own = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -96,6 +107,15 @@ export function validateState(state) {
     string(account.name, '账户名称', 60);
     string(account.type, '账户类型', 40);
     if (own(account, 'providerId')) id(account.providerId, '账户预设标识', 80);
+    if (own(account, 'appleRegion')) string(account.appleRegion, 'Apple 账户国家或地区', 10, true);
+    if (own(account, 'appleAccount')) string(account.appleAccount, 'Apple 账号标注', 160, true);
+    if (isAppleBalance(account)) {
+      const region = appleBalanceRegion(account.appleRegion);
+      if (!region) fail('请选择 Apple 账户的国家或地区');
+      if (region.currency && accountCurrency(account) !== region.currency) fail(`Apple 账户地区与币种不一致，${region.name}应使用 ${region.currency}`);
+    } else if (account.appleRegion || account.appleAccount) {
+      fail('只有 Apple 余额账户可以设置 Apple 地区或账号标注');
+    }
     if (own(account, 'bankId')) id(account.bankId, '银行标识', 80);
     if (own(account, 'lastFour') && (typeof account.lastFour !== 'string' || !/^[0-9]{4}$/.test(account.lastFour))) fail('银行卡尾号必须为 4 位数字');
     if (own(account, 'rateMode') && !['auto', 'manual'].includes(account.rateMode)) fail('账户汇率模式必须为 auto 或 manual');
@@ -160,6 +180,16 @@ export function validateState(state) {
     string(sub.name, '订阅名称', 80);
     if (own(sub, 'serviceId')) id(sub.serviceId, '会员服务标识', 80);
     if (own(sub, 'tier')) string(sub.tier, '会员档位', 80, true);
+    if (own(sub, 'linkedAccounts')) {
+      array(sub.linkedAccounts, '关联账号', 10);
+      for (const linked of sub.linkedAccounts) {
+        object(linked, '关联账号');
+        if (!SUBSCRIPTION_ACCOUNT_TYPES.has(linked.type)) fail('关联账号类型不正确');
+        string(linked.value, '关联账号内容', 160);
+        if (own(linked, 'label')) string(linked.label, '关联账号标注', 40, true);
+      }
+    }
+    if (own(sub, 'note')) string(sub.note, '订阅备注', 500, true);
     integer(sub.amount, '订阅金额', 1);
     if (!accounts.has(sub.accountId)) fail('订阅扣款账户不存在');
     const account = accountById.get(sub.accountId);
@@ -168,6 +198,13 @@ export function validateState(state) {
     const convertedAmount = toCnyCents(sub.amount, subCurrency, currencyRate(account));
     if (sub.category !== '会员订阅') fail('订阅分类必须为会员订阅');
     date(sub.startDate, '首次扣款日期');
+    if (own(sub, 'expiresOn')) {
+      string(sub.expiresOn, '会员到期日期', 10, true);
+      if (sub.expiresOn) {
+        date(sub.expiresOn, '会员到期日期');
+        if (sub.expiresOn < sub.startDate) fail('会员到期日期不能早于首次扣款日期');
+      }
+    }
     integer(sub.billingDay, '每月扣款日', 1, 31);
     boolean(sub.recurring, '连续订阅');
     boolean(sub.active, '订阅启用状态');
@@ -346,6 +383,35 @@ export function nextSubscriptionDue(sub, today = localDate()) {
     if (due >= today && !processed.has(occurrenceKey(sub, due))) return due;
   }
   return null;
+}
+
+/** Membership expiry is a reminder only; it does not stop or reschedule ledger bookings. */
+export function subscriptionExpiryStatus(sub, referenceDate = localDate()) {
+  date(referenceDate, '当前日期');
+  let target = sub.expiresOn || null;
+  let source = target ? 'expiry' : 'none';
+  if (!target && sub.recurring && sub.active) {
+    target = nextSubscriptionDue(sub, referenceDate);
+    if (target) source = 'renewal';
+  }
+  if (!target) return {
+    tone: 'unset', label: '未设置到期日期', detail: '可在编辑中填写会员到期日期',
+    date: null, days: null, source: 'none',
+  };
+  date(target, '会员到期日期');
+  // UTC date ordinals count calendar days equally across local DST transitions.
+  const ordinal = value => {
+    const [year, month, day] = value.split('-').map(Number);
+    return Date.UTC(year, month - 1, day) / 86_400_000;
+  };
+  const days = ordinal(target) - ordinal(referenceDate);
+  const action = source === 'expiry' ? '到期' : '续费';
+  return {
+    tone: days < 0 ? 'expired' : days <= 7 ? 'urgent' : days <= 30 ? 'soon' : 'normal',
+    label: days < 0 ? `已${action} ${-days} 天` : days === 0 ? `今天${action}` : `${days} 天后${action}`,
+    detail: `${target} · ${source === 'expiry' ? '会员到期' : '下次续费'}`,
+    date: target, days, source,
+  };
 }
 
 export function makeEmptyState() {

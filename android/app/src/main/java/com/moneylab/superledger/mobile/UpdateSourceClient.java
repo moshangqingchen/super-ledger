@@ -86,10 +86,10 @@ public final class UpdateSourceClient {
                     UpdatePolicy.Release release = UpdatePolicy.readVerifiedRelease(bytes, key);
                     identity(release, expectedCertificate, deviceSdk);
                     UpdatePolicy.validateVersionFence(release, installedCode, highestCode, highestSha, highestSize);
-                    if (current != null && release.versionCode == current.release.versionCode && (!release.sha256.equals(current.release.sha256) || release.size != current.release.size)) throw new UpdatePolicy.IntegrityException("不同更新源对同一版本提供了不同安装包，已停止更新");
+                    if (current != null) UpdatePolicy.validateVersionFence(release, installedCode, current.release.versionCode, current.release.sha256, current.release.size);
                     current = new ManifestResult(bytes, release, source); session.check();
                     if (release.versionCode > installedCode || sources.size() == 1) return current;
-                    // A mirror holding exactly the installed version may be stale:
+                    // A mirror at or below the installed version may be stale:
                     // consult remaining registered sources before saying up to date.
                 } catch (UpdatePolicy.StaleReleaseException error) {
                     stale = true; session.check();

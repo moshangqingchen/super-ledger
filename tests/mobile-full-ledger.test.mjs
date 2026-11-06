@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { makeEmptyState, applyRecurring, validateState, getBalances, getNetWorth } from '../engine.mjs';
+import { makeEmptyState, applyRecurring, setSubscriptionActive, validateState, getBalances, getNetWorth } from '../engine.mjs';
 import { newSyncMetadata, mergeMobileOperations } from '../mobile-sync.mjs';
 
 function state() {
@@ -62,6 +62,76 @@ test('subscription processed markers merge independently from editable fields', 
   assert.deepEqual(result.next.subscriptions[0].processedOccurrences, ['member:2026-11', 'member:2026-12']);
   const conflict = mergeMobileOperations(result.next, payload(result.next, [put('subscription', { ...base, amount: 2000 }, base)]));
   assert.equal(conflict.conflicts.length, 1); assert.equal(conflict.next.subscriptions[0].amount, 1000);
+});
+
+test('linked subscription accounts, expiry and notes survive sync, phone edits, paused periods and automatic charges', () => {
+  const desktop = state(), details = {
+    linkedAccounts: [{ type: 'email', value: 'member@example.com' }, { type: 'apple', value: 'store@example.com', label: '美区商店' }],
+    expiresOn: '2027-02-05', note: '家庭共享 · 到期前检查续费',
+  };
+  const sub = subscription(details);
+  const wire = value => JSON.parse(JSON.stringify(value));
+  const checkDetails = book => {
+    for (const field of Object.keys(details)) assert.deepEqual(book.subscriptions[0][field], details[field], field);
+    assert.equal(validateState(book), true);
+  };
+  let result = mergeMobileOperations(desktop, wire(payload(desktop, [put('subscription', sub)])));
+  assert.equal(result.conflicts.length, 0); assert.equal(result.accepted.length, 1); checkDetails(result.next);
+  let booked = applyRecurring(result.next, '2026-11-05');
+  assert.equal(booked.added.length, 1); checkDetails(booked.state);
+
+  // The existing phone editor copies the entire subscription before changing its visible fields.
+  const phoneBase = wire(booked.state.subscriptions[0]);
+  const renamed = { ...phoneBase, name: '手机修改会员名称' };
+  result = mergeMobileOperations(booked.state, wire(payload(booked.state, [put('subscription', renamed, phoneBase)])));
+  assert.equal(result.conflicts.length, 0); assert.equal(result.next.subscriptions[0].name, renamed.name); checkDetails(result.next);
+
+  const beforePause = wire(result.next.subscriptions[0]);
+  const paused = setSubscriptionActive(result.next, sub.id, false, '2026-11-06');
+  result = mergeMobileOperations(result.next, wire(payload(result.next, [put('subscription', paused.subscriptions[0], beforePause)])));
+  assert.equal(result.conflicts.length, 0); checkDetails(result.next);
+  booked = applyRecurring(result.next, '2026-12-05');
+  assert.equal(booked.added.length, 0); checkDetails(booked.state);
+
+  const beforeResume = wire(booked.state.subscriptions[0]);
+  const resumed = setSubscriptionActive(booked.state, sub.id, true, '2027-01-04');
+  result = mergeMobileOperations(booked.state, wire(payload(booked.state, [put('subscription', resumed.subscriptions[0], beforeResume)])));
+  assert.equal(result.conflicts.length, 0); checkDetails(result.next);
+  booked = applyRecurring(result.next, '2027-01-05');
+  assert.deepEqual(booked.added.map(item => item.date), ['2027-01-05']); checkDetails(booked.state);
+  assert.equal(booked.state.transactions.length, 2);
+  assert.equal(applyRecurring(booked.state, '2027-01-05').added.length, 0);
+});
+
+test('each subscription detail participates in conflict detection and cannot silently overwrite a concurrent edit', () => {
+  const baseline = subscription({ linkedAccounts: [{ type: 'apple', value: 'old@example.com' }], expiresOn: '2027-02-05', note: '原备注' });
+  const variants = [
+    ['linkedAccounts', [{ type: 'apple', value: 'desktop@example.com' }], [{ type: 'email', value: 'phone@example.com' }]],
+    ['expiresOn', '2027-03-05', '2027-04-05'],
+    ['note', '电脑确认过的备注', '离线手机备注'],
+  ];
+  for (const [field, desktopValue, phoneValue] of variants) {
+    const desktop = state(), current = { ...structuredClone(baseline), [field]: desktopValue };
+    desktop.subscriptions.push(current);
+    const result = mergeMobileOperations(desktop, payload(desktop, [put('subscription', { ...baseline, [field]: phoneValue }, baseline)]));
+    assert.equal(result.accepted.length, 0, field); assert.equal(result.conflicts.length, 1, field);
+    assert.equal(result.conflicts[0].entity, 'subscription');
+    assert.deepEqual(result.conflicts[0].current[field], desktopValue, field);
+    assert.deepEqual(result.next, desktop, field);
+  }
+});
+
+test('explicitly clearing subscription details syncs without restoring stale account or expiry values', () => {
+  const desktop = state(), baseline = subscription({ linkedAccounts: [{ type: 'email', value: 'member@example.com' }], expiresOn: '2027-02-05', note: '可清空' });
+  desktop.subscriptions.push(baseline);
+  const cleared = { ...baseline, linkedAccounts: [], expiresOn: '', note: '' };
+  const operation = put('subscription', cleared, baseline);
+  const result = mergeMobileOperations(desktop, payload(desktop, [operation]));
+  assert.equal(result.conflicts.length, 0); assert.equal(result.accepted.length, 1);
+  assert.deepEqual(result.next.subscriptions[0], cleared);
+  const retry = mergeMobileOperations(result.next, payload(result.next, [operation]));
+  assert.equal(retry.summary.duplicates, 1);
+  assert.deepEqual(retry.next.subscriptions[0], cleared);
 });
 
 test('both devices charging the same subscription period preserve one charge despite metadata differences', () => {

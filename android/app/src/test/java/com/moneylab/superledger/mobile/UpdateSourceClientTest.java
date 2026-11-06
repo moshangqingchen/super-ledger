@@ -77,7 +77,7 @@ public final class UpdateSourceClientTest {
         public void onProgress(long value) { progress.add(value); }
     }
     private static JSONObject payload(int code, String hash) throws Exception {
-        String version = code == 10301 ? "1.3.1" : code == 10302 ? "1.3.2" : "1.3.3";
+        String version = (code / 10000) + "." + ((code / 100) % 100) + "." + (code % 100);
         return new JSONObject().put("schema", 1).put("repository", UpdatePolicy.REPOSITORY).put("publishedAt", "2026-11-06T12:00:00Z")
             .put("android", new JSONObject().put("version", version).put("versionCode", code).put("url", "https://github.com/" + UpdatePolicy.REPOSITORY + "/releases/download/android-v" + version + "/SuperLedger-Mobile-" + version + ".apk")
                 .put("size", APK.length).put("sha256", hash).put("certificateSha256", CERT).put("packageName", UpdatePolicy.PACKAGE_NAME).put("minSdk", 26).put("notes", "多源更新测试"));
@@ -117,9 +117,19 @@ public final class UpdateSourceClientTest {
             check(allOld.get() == 3, "All configured sources tried for stale mirrors");
             result = manifest("auto", 10302, 10302, digest, APK.length, new UpdateSourceClient.Session(), null, address -> new Fake(valid), NORMAL);
             check(result.release.versionCode == 10302, "Equal installed version remains a fully verified result");
+            AtomicInteger localAhead = new AtomicInteger();
+            result = manifest("auto", 10304, 0, "", 0, new UpdateSourceClient.Session(), null, address -> { localAhead.incrementAndGet(); return new Fake(valid); }, NORMAL);
+            check(result.release.versionCode == 10302 && localAhead.get() == 3, "Local 1.3.4 accepts older public channel after checking available mirrors");
+            result = manifest("github", 10304, 10302, digest, APK.length, new UpdateSourceClient.Session(), null, address -> new Fake(valid), NORMAL);
+            check(result.release.versionCode == 10302, "Manual source accepts unchanged older public release without offering downgrade");
+            byte[] public133 = signed(payload(10303, digest)); AtomicInteger differentAges = new AtomicInteger();
+            result = manifest("auto", 10304, 0, "", 0, new UpdateSourceClient.Session(), null, address -> new Fake(differentAges.incrementAndGet() == 1 ? valid : differentAges.get() == 2 ? public133 : old), NORMAL);
+            check(result.release.versionCode == 10303 && differentAges.get() == 3, "Local build ahead retains highest verified mirror rather than last older response");
+            check(failure(() -> manifest("auto", 10304, 10303, digest, APK.length, new UpdateSourceClient.Session(), null, address -> new Fake(valid), NORMAL)).getMessage().contains("尚未同步"), "Newer local installation still rejects public rollback below saved remote watermark");
             byte[] divergent = signed(payload(10302, "c".repeat(64))); AtomicInteger divergentCalls = new AtomicInteger();
             check(failure(() -> manifest("auto", 10302, 0, "", 0, new UpdateSourceClient.Session(), null, address -> new Fake(divergentCalls.incrementAndGet() == 1 ? valid : divergent), NORMAL)) instanceof UpdatePolicy.IntegrityException, "Same-version disagreement inside one check fails closed without saved pin");
             check(divergentCalls.get() == 2, "Artifact disagreement stops before third source");
+            check(failure(() -> manifest("auto", 10304, 10302, digest, APK.length, new UpdateSourceClient.Session(), null, address -> new Fake(divergent), NORMAL)) instanceof UpdatePolicy.IntegrityException, "Newer local build does not waive same-version remote artifact pin");
 
             JSONObject badEnvelope = new JSONObject(new String(valid, StandardCharsets.UTF_8)); badEnvelope.put("signature", Base64.getEncoder().encodeToString(new byte[256])); byte[] invalidSignature = badEnvelope.toString().getBytes(StandardCharsets.UTF_8);
             AtomicInteger signatureCalls = new AtomicInteger();

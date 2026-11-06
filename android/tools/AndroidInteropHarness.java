@@ -7,6 +7,7 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.time.LocalDate;
 import java.util.UUID;
 
 /** Uses production SyncClient + LedgerStore; only Android platform types are adapted. */
@@ -23,6 +24,21 @@ public class AndroidInteropHarness {
       store.saveGoal(new JSONObject().put("id","mobile_goal").put("name","手机储蓄心愿").put("target",500000).put("saved",25000).put("color","#778899"));
       store.saveSettings(new JSONObject().put("monthlyBudget",123456).put("currency","CNY"));
       store.saveSubscription(new JSONObject().put("id","mobile_sub").put("name","手机订阅").put("amount",500).put("currency","CNY").put("accountId","wallet").put("category","会员订阅").put("startDate",LedgerStore.today()).put("billingDay",Integer.parseInt(LedgerStore.today().substring(8))).put("active",true).put("recurring",true).put("icon","repeat").put("color","#778899").put("processedOccurrences",new JSONArray()));
+    } else if(action.equals("apple-edit")) {
+      store.saveAccount(new JSONObject().put("id","desktop_apple_tr").put("openingBalance",20050));
+    } else if(action.equals("apple-convert")) {
+      store.saveAccount(new JSONObject().put("id","desktop_apple_tr").put("type","其他账户").put("providerId",JSONObject.NULL).put("appleRegion",JSONObject.NULL).put("appleAccount",JSONObject.NULL));
+    } else if(action.equals("mobile-apple-create")) {
+      String today=LedgerStore.today();
+      store.saveAccount(new JSONObject().put("id","mobile_apple_tr").put("name","手机土耳其礼品卡余额").put("type","Apple 账户余额").put("providerId","apple-balance").put("appleRegion","TR").put("appleAccount","owner-mobile@example.com").put("color","#77728f").put("currency","TRY").put("cnyRate","0.15").put("rateMode","manual").put("openingBalance",10025));
+      JSONArray linked=new JSONArray().put(new JSONObject().put("type","email").put("value","email-mobile@example.com")).put(new JSONObject().put("type","apple").put("value","owner-mobile@example.com")).put(new JSONObject().put("type","other").put("value","手机自定义账号"));
+      store.saveSubscription(new JSONObject().put("id","mobile_apple_subscription").put("name","手机 Apple 会员").put("accountId","mobile_apple_tr").put("amount",999).put("currency","TRY").put("category","会员订阅").put("startDate",today).put("billingDay",Integer.parseInt(today.substring(8))).put("active",false).put("recurring",true).put("icon","repeat").put("color","#77728f").put("linkedAccounts",linked).put("expiresOn",LocalDate.parse(today).plusDays(30).toString()).put("note","手机创建的订阅备注").put("processedOccurrences",new JSONArray()));
+    } else if(action.equals("mobile-apple-edit")) {
+      store.saveAccount(new JSONObject().put("id","mobile_apple_tr").put("appleRegion","OTHER").put("appleAccount","edited-mobile@example.com").put("openingBalance",25075));
+      store.saveSubscription(new JSONObject().put("id","mobile_apple_subscription").put("linkedAccounts",new JSONArray().put(new JSONObject().put("type","apple").put("value","edited-mobile@example.com"))).put("expiresOn",LocalDate.parse(LedgerStore.today()).plusDays(60).toString()).put("note","手机修改后的订阅备注"));
+    } else if(action.equals("mobile-apple-clear")) {
+      store.saveAccount(new JSONObject().put("id","mobile_apple_tr").put("appleRegion","TR").put("appleAccount",JSONObject.NULL));
+      store.saveSubscription(new JSONObject().put("id","mobile_apple_subscription").put("linkedAccounts",new JSONArray()).put("expiresOn","").put("note",""));
     } else if(action.equals("goal-edit")) {
       JSONObject goal=LedgerStore.copy(store.snapshot().getJSONObject("state").getJSONArray("goals").getJSONObject(0));goal.put("saved",35000);store.saveGoal(goal);
     } else if(action.equals("delete-sub")) {

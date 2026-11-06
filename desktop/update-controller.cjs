@@ -38,4 +38,36 @@ function createUpdateController({ updater, isVisible, hasOpenEditor, notify, qui
   };
 }
 
-module.exports = { createUpdateController };
+/** Check once after startup and on explicit reopening, without checking on focus. */
+function createUpdateLifecycle({ check, enabled, intervalMs, onResult = () => {}, onError = () => {}, setIntervalFn = setInterval, clearIntervalFn = clearInterval }) {
+  let started = false, closed = false, timer = null, pending = null;
+  function run(reason) {
+    if (!started || closed || !enabled()) return Promise.resolve(null);
+    if (pending) return pending;
+    pending = Promise.resolve().then(() => {
+      if (closed || !enabled()) return null;
+      return check();
+    }).then(value => {
+      if (!closed && value) onResult(value, reason);
+      return value;
+    }).catch(error => {
+      if (!closed) onError(error, reason);
+      return null;
+    }).finally(() => { pending = null; });
+    return pending;
+  }
+  return {
+    start() {
+      if (started || closed) return pending || Promise.resolve(null);
+      started = true;
+      if (!enabled()) return Promise.resolve(null);
+      timer = setIntervalFn(() => { void run('periodic'); }, intervalMs);
+      timer?.unref?.();
+      return run('startup');
+    },
+    opened: () => run('open'),
+    close() { closed = true; if (timer !== null) clearIntervalFn(timer); timer = null; },
+  };
+}
+
+module.exports = { createUpdateController, createUpdateLifecycle };

@@ -8,7 +8,7 @@ const { execFile } = require('node:child_process');
 const { migrateLegacyData } = require('./migrate.cjs');
 const { assertSafeExport } = require('./fs-safety.cjs');
 const { createUpdater, CHECK_INTERVAL_MS } = require('./updater.cjs');
-const { createUpdateController } = require('./update-controller.cjs');
+const { createUpdateController, createUpdateLifecycle } = require('./update-controller.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_ID = 'com.moneylab.superledger';
@@ -25,7 +25,7 @@ app.commandLine.appendSwitch('disable-background-networking');
 const dataDirectory = path.join(app.getPath('userData'), 'data');
 const protectedDirectories = [app.getPath('userData')];
 let mainWindow, tray, server, origin = '', quitting = false, alreadyClosing = false;
-let updater, updateController, updateTimer, updateStartupTimer;
+let updater, updateController, updateLifecycle;
 const sessionToken = randomBytes(32).toString('hex');
 const preferencesFile = path.join(app.getPath('userData'), 'desktop-settings.json');
 let preferences = { keepInTray: true };
@@ -43,7 +43,7 @@ function trusted(event) {
   const url = new URL(event.senderFrame.url);
   if (url.origin !== origin) throw new Error('无效的应用来源');
 }
-function showWindow() { if(mainWindow&&!mainWindow.isDestroyed()){if(mainWindow.isMinimized())mainWindow.restore();mainWindow.show();mainWindow.focus();void offerUpdate(false);} }
+function showWindow() { if(mainWindow&&!mainWindow.isDestroyed()){if(mainWindow.isMinimized())mainWindow.restore();mainWindow.show();mainWindow.focus();void updateLifecycle?.opened();void offerUpdate(false);} }
 function info() { return { version:app.getVersion(),dataDirectory,keepInTray:preferences.keepInTray,platform:process.platform }; }
 function configureIpc() {
   ipcMain.handle('ledger:info',event=>{trusted(event);return info();});
@@ -132,6 +132,13 @@ function initializeUpdater() {
     notify:value=>{if(mainWindow&&!mainWindow.isDestroyed()&&!quitting)mainWindow.webContents.send('ledger:update-prompt',value);},
     quit:()=>{quitting=true;app.quit();},
   });
+  updateLifecycle=createUpdateLifecycle({
+    check:()=>checkUpdates(false),
+    enabled:()=>!quitting&&updater.status().enabled,
+    intervalMs:CHECK_INTERVAL_MS,
+    onResult:(value,reason)=>log(`Update check (${reason}): ${value.phase}${value.error?`; ${value.error}`:''}`),
+    onError:(error,reason)=>log(`Update check (${reason}): ${error.message}`),
+  });
 }
 async function hasOpenEditor() {
   if(!mainWindow||mainWindow.isDestroyed())return true;
@@ -145,12 +152,6 @@ async function offerUpdate(manual=false) {
 async function checkUpdates(manual=false) {
   if(!updateController||quitting)return;
   return updateController.check(manual);
-}
-function scheduleUpdates() {
-  if(!updater.status().enabled)return;
-  const check=()=>{void checkUpdates(false).catch(error=>log(`Update check: ${error.message}`));};
-  updateStartupTimer=setTimeout(check,12000);updateStartupTimer.unref();
-  updateTimer=setInterval(check,CHECK_INTERVAL_MS);updateTimer.unref();
 }
 async function configureSession(appSession) {
   await appSession.setProxy({mode:'fixed_servers',proxyRules:'http://127.0.0.1:10090',proxyBypassRules:'<local>'});
@@ -208,7 +209,7 @@ async function boot() {
   await configureSession(appSession);configureIpc();Menu.setApplicationMenu(null);
   if(!TEST_MODE)createTray();
   await createWindow(appSession);
-  publishUpdateStatus(updater.status());scheduleUpdates();
+  publishUpdateStatus(updater.status());void updateLifecycle.start();
   log(`Application ${app.getVersion()} ready; local ledger, daily public exchange rates via configured proxy; migration=${migrated.migrated}`);
   if(TEST_MODE){
     const check=await fetch(origin+'/api/state',{headers:{'X-Ledger-Token':sessionToken}});const state=await check.json();validateState(state);
@@ -226,7 +227,7 @@ if(!primary){app.quit();}else{
   app.on('window-all-closed',()=>{if(!preferences.keepInTray||quitting||TEST_MODE)app.quit();});
   app.on('before-quit',event=>{
     quitting=true;
-    clearTimeout(updateStartupTimer);clearInterval(updateTimer);updater?.close();
+    updateLifecycle?.close();updater?.close();
     if(server&&!alreadyClosing){event.preventDefault();alreadyClosing=true;const active=server;server=null;active.close(()=>app.quit());active.closeAllConnections();}
   });
   app.on('will-quit',()=>{tray?.destroy();});

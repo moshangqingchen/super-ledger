@@ -76,7 +76,7 @@ export function createUpdateUI({ desktop, icon = () => '', onStatus = () => {}, 
       badge = status.lastCheckedAt ? '<span class="update-chip is-success">已是最新</span>' : '';
       actions = actionButton('check', '检查更新');
     }
-    return `<div class="update-settings"><div class="update-settings-top"><div class="update-settings-heading">${glyph('download', 19)}<h2>应用更新</h2></div>${badge}</div><div class="update-settings-main"><div class="update-settings-copy"><h3>${label}</h3><p>${detail}</p></div><div class="update-settings-actions">${actions}</div></div>${phase === 'downloading' ? progress() : ''}<div class="update-settings-meta"><span>Windows ${escapeHTML(version(status.currentVersion))}</span><span>${escapeHTML(latestText())}</span></div></div>`;
+    return `<div class="update-settings"><div class="update-settings-top"><div class="update-settings-heading">${glyph('download', 19)}<h2>应用更新</h2></div>${badge}</div><div class="update-settings-main"><div class="update-settings-copy"><h3>${label}</h3><p>${detail}</p></div><div class="update-settings-actions">${actions}</div></div>${phase === 'downloading' ? progress() : ''}<div class="update-settings-meta"><span>Windows ${escapeHTML(version(status.currentVersion))}</span>${status.enabled!==false?'<span>每次打开自动检查</span>':''}<span>${escapeHTML(latestText())}</span></div></div>`;
   }
 
   function refreshSettings() {

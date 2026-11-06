@@ -12,8 +12,32 @@ public final class MobileLedgerTest {
     static JSONObject account(String id,String currency,long opening,String rate)throws Exception{JSONObject a=new JSONObject().put("id",id).put("name",id).put("type","银行账户").put("color","#89abcd").put("currency",currency).put("openingBalance",opening);if(!currency.equals("CNY"))a.put("cnyRate",rate).put("rateMode","manual");return a;}
     static JSONObject tx(String id,String type,String account,long amount,String date)throws Exception{return new JSONObject().put("id",id).put("type",type).put("accountId",account).put("amount",amount).put("date",date).put("title",id).put("category",type.equals("income")?"其他收入":"其他支出").put("note","");}
     static JSONObject subscription(String id,String account,long amount,String start,boolean recurring)throws Exception{return new JSONObject().put("id",id).put("name","测试会员").put("accountId",account).put("amount",amount).put("currency","CNY").put("category","会员订阅").put("startDate",start).put("billingDay",31).put("recurring",recurring).put("active",true).put("color","#89abcd").put("icon","repeat").put("processedOccurrences",new JSONArray());}
+    private static JSONObject apple(String region,String currency)throws Exception{return account("apple",currency,10000,currency.equals("CNY")?null:"0.15").put("name","礼品卡余额").put("type",AppleBalance.TYPE).put("providerId",AppleBalance.PROVIDER_ID).put("appleRegion",region).put("appleAccount","owner@example.com");}
+    private static void validateApple(JSONObject account)throws Exception{JSONObject state=MobileLedger.emptyState().put("schemaVersion",2);state.getJSONArray("accounts").put(account);MobileLedger.validateState(state);}
     public static void main(String[] args)throws Exception{
-        check(MobileLedger.currencyCodes().length==12,"all desktop currencies available");
+        check(MobileLedger.currencyCodes().length==13,"all desktop currencies available");
+        check(MobileLedger.parseMoney("100.25","TRY")==10025,"TRY preserves two decimal places");
+        rejects(()->MobileLedger.parseMoney("100.251","TRY"),"TRY excess precision rejected");
+        check(MobileLedger.toCnyCents(10025,"TRY","0.15")==1504,"TRY conversion rounds exact native units");
+        check(MobileLedger.formatMoney(10025,"TRY").equals("TRY 100.25"),"TRY remains identifiable in displayed balances");
+        check(AppleBalance.regions().length==22,"Apple offers 21 regions and custom selection");
+        AppleBalance.Region[] selectedRegions=AppleBalance.regions();selectedRegions[0]=null;check(AppleBalance.regions()[0]!=null,"UI cannot mutate the shared Apple catalogue");
+        check(AppleBalance.region("TR").currency.equals("TRY")&&AppleBalance.regionLabel("TR").equals("土耳其"),"Turkey selects TRY with a readable region label");
+        check(AppleBalance.region("OTHER").currency==null&&AppleBalance.region("missing")==null,"custom region does not imply a currency and unknown IDs stay unknown");
+        for(AppleBalance.Region region:AppleBalance.regions())validateApple(apple(region.id,region.currency==null?"SGD":region.currency));
+        check(true,"each built-in region creates a valid mobile account; custom accepts an available currency");
+        check(AppleBalance.accountLabel(apple("TR","TRY")).equals("礼品卡余额 · 土耳其 · owner@example.com · TRY"),"Apple account labels expose identity, region and currency");
+        JSONObject noIdentity=apple("CN","CNY");noIdentity.remove("appleAccount");noIdentity.remove("currency");validateApple(noIdentity);check(AppleBalance.accountLabel(noIdentity).equals("礼品卡余额 · 中国大陆 · CNY"),"optional identity and legacy CNY default label correctly");
+        rejects(()->validateApple(apple("TR","USD")),"Turkey rejects a mismatched denomination");
+        rejects(()->validateApple(apple("","TRY")),"Apple region is required");
+        rejects(()->validateApple(apple("unknown","TRY")),"Apple region must be recognized");
+        rejects(()->validateApple(apple("TR","TRY").put("appleAccount",123)),"Apple identity must be text");
+        rejects(()->validateApple(apple("TR","TRY").put("appleAccount",JSONObject.NULL)),"null Apple identity is not a valid persisted string");
+        rejects(()->validateApple(apple("TR","TRY").put("appleAccount","x".repeat(161))),"Apple identity length matches desktop maximum");
+        rejects(()->validateApple(apple("TR","TRY").put("appleAccount","owner\u0000test")),"Apple identity control characters are rejected");
+        JSONObject customNamed=account("legacy_apple","CNY",100,null).put("name","Apple 余额");validateApple(customNamed);check(!AppleBalance.isAppleBalance(customNamed),"legacy custom account names do not imply Apple metadata");
+        rejects(()->validateApple(MobileLedger.copy(customNamed).put("appleRegion","CN")),"ordinary accounts cannot retain Apple region");
+        rejects(()->validateApple(MobileLedger.copy(customNamed).put("appleAccount","owner@example.com")),"ordinary accounts cannot retain Apple identity");
         check(MobileLedger.parseMoney("1.000001","USDT")==1000001,"USDT preserves micro units");
         check(MobileLedger.parseMoney("100","JPY")==100,"JPY integer denomination");
         check(MobileLedger.parseMoney("-0.01","CNY")==-1,"negative opening exact");

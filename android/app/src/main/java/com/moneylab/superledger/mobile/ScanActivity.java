@@ -41,6 +41,9 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
     private SurfaceView preview;
     private Camera camera;
     private boolean surfaceReady, finished, decoding;
+    private boolean awaitingCameraPermission;
+    private final UpdatePolicy.OpenLifecycle updateOpen = new UpdatePolicy.OpenLifecycle(false);
+    private AppUpdater updater;
     private long lastFrame;
     private final ExecutorService decoder = Executors.newSingleThreadExecutor();
     private final MultiFormatReader reader = new MultiFormatReader();
@@ -52,6 +55,8 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        updater = AppUpdater.get(this);
+        awaitingCameraPermission = saved != null && saved.getBoolean("awaitingCameraPermission", false);
         getWindow().setStatusBarColor(MobileStyle.BG); getWindow().setNavigationBarColor(MobileStyle.BG);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(MobileStyle.BG);
@@ -92,7 +97,11 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
         TextView footer = copy("本地连接 · 加密同步", 12, MobileStyle.MUTED, false); footer.setGravity(Gravity.CENTER); footer.setPadding(0, dp(18), 0, 0); content.addView(footer);
         setContentView(root); root.requestApplyInsets();
         Map<DecodeHintType, Object> hints = new EnumMap<>(DecodeHintType.class); hints.put(DecodeHintType.POSSIBLE_FORMATS, Collections.singletonList(BarcodeFormat.QR_CODE)); hints.put(DecodeHintType.TRY_HARDER, Boolean.TRUE); reader.setHints(hints);
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.CAMERA}, 8);
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED && !awaitingCameraPermission) {
+            awaitingCameraPermission = true;
+            try { requestPermissions(new String[]{Manifest.permission.CAMERA}, 8); }
+            catch (RuntimeException error) { awaitingCameraPermission = false; throw error; }
+        }
     }
     private void manual() {
         LinearLayout form = new LinearLayout(this); form.setOrientation(LinearLayout.VERTICAL); form.setPadding(dp(22), dp(8), dp(22), dp(8));
@@ -131,8 +140,12 @@ public final class ScanActivity extends Activity implements SurfaceHolder.Callba
     @Override public void surfaceCreated(SurfaceHolder holder) { surfaceReady = true; openCamera(); }
     @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {}
     @Override public void surfaceDestroyed(SurfaceHolder holder) { surfaceReady = false; releaseCamera(); }
+    @Override protected void onStart() { super.onStart(); updater.onSecondaryActivityStarted(updateOpen.onStart()); }
+    @Override protected void onStop() { updateOpen.onStop(isChangingConfigurations() || isFinishing() || awaitingCameraPermission); super.onStop(); }
+    @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putBoolean("awaitingCameraPermission", awaitingCameraPermission); }
     @Override protected void onResume() { super.onResume(); openCamera(); }
+    @Override public void onWindowFocusChanged(boolean focused) { super.onWindowFocusChanged(focused); if (focused) awaitingCameraPermission = false; }
     @Override protected void onPause() { releaseCamera(); super.onPause(); }
     @Override protected void onDestroy() { finished = true; decoder.shutdown(); super.onDestroy(); }
-    @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) { super.onRequestPermissionsResult(code, permissions, results); if (code == 8 && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) openCamera(); else status.setText("相机未授权，仍可粘贴配对内容同步。"); }
+    @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) { super.onRequestPermissionsResult(code, permissions, results); if (code == 8) awaitingCameraPermission = false; if (code == 8 && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) openCamera(); else status.setText("相机未授权，仍可粘贴配对内容同步。"); }
 }

@@ -11,6 +11,8 @@
 | ChatGPT | `assets/brands/chatgpt.png` | PNG / 180 × 180 | [ChatGPT](https://chatgpt.com/) 的 apple-touch-icon 声明 | [原 PNG](https://chatgpt.com/cdn/assets/favicon-180x180.9e0103ce69.png) |
 | Claude | `assets/brands/claude.svg` | SVG / 248 × 248 viewBox | [Claude](https://claude.com/) 的 icon 声明 | [原 SVG](https://claude.com/icon.svg) |
 | Gemini | `assets/brands/gemini.png` | PNG / 512 × 512 | [Gemini](https://gemini.google.com/) 的 icon 声明 | [Google 静态资源](https://www.gstatic.com/lamda/images/gemini_sparkle_4g_512_lt_f94943af3be039176192d.png) |
+| Suno | `assets/brands/suno.png` | PNG / 192 × 192 | [Suno 官方定价页面](https://suno.com/pricing) HTML 的 icon 声明 | [Suno 官方 CDN 原 PNG](https://cdn-o.suno.com/favicon-192x192.png) |
+| Grok | `assets/brands/grok.png` | PNG / 192 × 192 | [Grok 官网](https://grok.com/) HTML 的 icon 声明 | [Grok 原 PNG](https://grok.com/images/android-chrome-192x192.png) |
 | TT语音 | `assets/brands/ttvoice.png` | PNG / 350 × 100，完整白色字标 | [TT语音官网](https://52tt.com/) 的 logo 图片 | [官网原 PNG](https://52tt.com/_nuxt/img/logo_black.b38d682.png) |
 | 酷狗音乐 | `assets/brands/kugou.ico` | ICO / 16 × 16 | [酷狗音乐](https://www.kugou.com/) 的 shortcut icon 声明 | [官网原 ICO](https://www.kugou.com/root/favicon.ico) |
 | 百度网盘 | `assets/brands/baidu.ico` | ICO / 32 × 32 | [百度网盘](https://pan.baidu.com/) 的 icon 声明 | [百度静态资源](https://nd-static.bdstatic.com/m-static/wp-brand/favicon.ico) |
@@ -29,6 +31,7 @@
 
 ## 校验及使用约束
 
+- 2026-11-05 新增 Suno / Grok：均为原始 192 × 192 PNG，桌面与 Android `drawable-nodpi/logo_suno.png`、`logo_grok.png` 逐字节一致。Suno SHA-256：`19460509f185b94a3bea2cd102cde0de40ee8638a4527e649467741c526cdc5b`；Grok SHA-256：`768cbbf7a7528d6e7b3af8112d7cde43eb6c9c8989ad9b06be8047dae1227463`。通过 Pillow 校验实际格式/尺寸，并目视确认完整官方标记。Suno 首次请求在代理路径下失败后，用正常浏览器 User-Agent / Referer 通过同一代理取得；没有关闭证书验证、切换直连或改代理设置。
 - SVG 经 XML 解析验证，根节点为 SVG，没有 script 节点；PNG/ICO 经 Pillow 读取真实格式和尺寸，下载结果不是 HTML 或错误页面。
 - TT语音官网 favicon 指向 `https://ga-album-cdnqn.52tt.com/web/tt-backstage-system/20211221174054_45303550.ico`，该 CDN 在当前代理路径下 TLS 握手失败。未绕过代理，采用官网可访问的完整 PNG 字标。
 - TT语音白色字标须使用深色容器并保持 `object-fit: contain`，保留完整比例，不要拉伸、裁切或把透明白色图案直接放在白底上。

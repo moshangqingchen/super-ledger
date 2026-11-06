@@ -16,6 +16,7 @@ export const currencyCatalog = Object.freeze([
   { code: 'AUD', name: '澳大利亚元', symbol: 'A$', decimals: 2 },
   { code: 'CAD', name: '加拿大元', symbol: 'C$', decimals: 2 },
   { code: 'CHF', name: '瑞士法郎', symbol: 'CHF', decimals: 2 },
+  { code: 'TRY', name: '土耳其里拉', symbol: '₺', decimals: 2 },
 ].map(Object.freeze));
 
 export function currencyInfo(code = 'CNY') {

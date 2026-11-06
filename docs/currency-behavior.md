@@ -1,6 +1,6 @@
 # 多币种账户与每日汇率
 
-1.4.0 起，外币账户默认每天自动联网查询汇率。人民币 CNY 固定为 1。支持 USD、USDT、JPY、EUR、HKD、GBP、KRW、SGD、AUD、CAD、CHF。旧人民币账户与原币余额保持兼容。
+1.4.0 起，外币账户默认每天自动联网查询汇率。人民币 CNY 固定为 1。支持 USD、USDT、JPY、EUR、HKD、GBP、KRW、SGD、AUD、CAD、CHF、TRY。旧人民币账户与原币余额保持兼容。
 
 ## 更新节奏
 
@@ -28,7 +28,7 @@ USDT 使用 [Kraken 公共行情接口](https://docs.kraken.com/api-reference/ma
 
 | 币种 | 支持的小数位 |
 | --- | ---: |
-| CNY、USD、EUR、HKD、GBP、SGD、AUD、CAD、CHF | 2 |
+| CNY、USD、EUR、HKD、GBP、SGD、AUD、CAD、CHF、TRY | 2 |
 | JPY、KRW | 0 |
 | USDT | 6 |
 

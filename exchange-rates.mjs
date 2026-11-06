@@ -6,7 +6,7 @@ import tls from 'node:tls';
 import { randomUUID } from 'node:crypto';
 import { normalizeRate } from './currencies.mjs';
 
-export const FIAT_CODES = Object.freeze(['USD', 'JPY', 'EUR', 'HKD', 'GBP', 'KRW', 'SGD', 'AUD', 'CAD', 'CHF']);
+export const FIAT_CODES = Object.freeze(['USD', 'JPY', 'EUR', 'HKD', 'GBP', 'KRW', 'SGD', 'AUD', 'CAD', 'CHF', 'TRY']);
 export const FIAT_URL = `https://api.frankfurter.dev/v2/rates?base=CNY&quotes=${FIAT_CODES.join(',')}&providers=ECB`;
 export const USDT_URL = 'https://api.kraken.com/0/public/Ticker?pair=USDTUSD';
 export const RATE_CACHE_FILENAME = 'exchange-rates.json';

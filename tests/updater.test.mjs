@@ -55,7 +55,57 @@ test('check never downloads or launches and same/older releases cannot become in
   assert.equal((await f.service.check()).phase, 'available'); assert.deepEqual(f.calls, [MANIFEST_URL]); assert.equal(f.launches.length, 0);
   const same = fixture(t, { currentVersion: '1.6.0' }); assert.equal((await same.service.check()).phase, 'idle');
   await assert.rejects(same.service.download(), /检查/);
-  const older = fixture(t, { currentVersion: '2.0.0' }); assert.equal((await older.service.check()).phase, 'error'); assert.equal(older.service.status().availableVersion, null);
+  const older = fixture(t, { currentVersion: '2.0.0' }); assert.equal((await older.service.check()).phase, 'idle'); assert.equal(older.service.status().availableVersion, null);
+  assert.equal(older.service.status().error, ''); assert.equal(older.service.status().lastCheckedAt, older.now());
+  await assert.rejects(older.service.download(), /检查/); await assert.rejects(older.service.install(), /下载并验证/);
+  assert.deepEqual(older.calls, [MANIFEST_URL]); assert.deepEqual(older.launches, []);
+});
+
+test('a local build ahead of public releases persists the verified feed watermark and rejects a later rollback', async t => {
+  const f = fixture(t, { currentVersion: '2.0.0' });
+  assert.equal((await f.service.check()).phase, 'idle');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(f.directory, 'updates', 'update-state.json'), 'utf8')).highestVersion, '1.6.0');
+  const restored = createUpdater({ currentVersion: '2.1.0', userDataDirectory: f.directory, publicKey, request: f.request, now: f.now });
+  assert.equal((await restored.check()).phase, 'idle', 'reopening a newer local build accepts the unchanged public release');
+  f.setManifest(envelope(payload('1.7.0')));
+  assert.equal((await restored.check()).phase, 'idle');
+  const afterRestart = createUpdater({ currentVersion: '2.1.0', userDataDirectory: f.directory, publicKey, request: f.request, now: f.now });
+  f.setManifest(envelope(payload('1.6.0')));
+  assert.match((await afterRestart.check()).error, /拒绝回退/);
+  assert.equal(afterRestart.status().availableVersion, null);
+  f.setManifest(envelope(payload('2.2.0')));
+  assert.equal((await afterRestart.check()).phase, 'available');
+  assert.equal(afterRestart.status().availableVersion, '2.2.0');
+  assert.deepEqual(f.launches, []);
+});
+
+test('simultaneous startup/manual checks share a request and checks never interrupt downloads', async t => {
+  let finishCheck, finishDownload, markCheckStarted, markDownloadStarted;
+  const checkStarted = new Promise(resolve => { markCheckStarted = resolve; });
+  const downloadStarted = new Promise(resolve => { markDownloadStarted = resolve; });
+  const urls = [];
+  const f = fixture(t, { request: async (url, options) => {
+    urls.push(url);
+    if (url === MANIFEST_URL) {
+      markCheckStarted();
+      await new Promise(resolve => { finishCheck = resolve; });
+      return { statusCode: 200, body: Buffer.from(JSON.stringify(envelope())), headers: {} };
+    }
+    markDownloadStarted();
+    await new Promise(resolve => { finishDownload = resolve; });
+    options.onChunk(installer);
+    return { statusCode: 200, headers: {} };
+  } });
+  const first = f.service.check(), second = f.service.check();
+  await checkStarted;
+  assert.deepEqual(urls, [MANIFEST_URL]);
+  finishCheck();
+  assert.equal((await first).phase, 'available'); assert.equal((await second).phase, 'available');
+  const download = f.service.download(); await downloadStarted;
+  assert.equal((await f.service.check()).phase, 'downloading');
+  assert.deepEqual(urls, [MANIFEST_URL, installerUrl('1.6.0')]);
+  finishDownload(); assert.equal((await download).phase, 'ready');
+  assert.deepEqual(f.launches, []);
 });
 
 test('disabled mode never sends requests or executes installers', async t => {

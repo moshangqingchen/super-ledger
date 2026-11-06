@@ -17,7 +17,7 @@ public final class MobileLedger {
     private MobileLedger() {}
     public static final long MAX_MONEY = 1_000_000_000_000L;
     private static final BigInteger LIMIT = BigInteger.valueOf(MAX_MONEY), RATE_SCALE = BigInteger.valueOf(100_000_000L);
-    private static final String[] CODES = {"CNY","USD","USDT","JPY","EUR","HKD","GBP","KRW","SGD","AUD","CAD","CHF"};
+    private static final String[] CODES = {"CNY","USD","USDT","JPY","EUR","HKD","GBP","KRW","SGD","AUD","CAD","CHF","TRY"};
     public static String[] currencyCodes() { return CODES.clone(); }
     public static int decimals(String code) throws Exception {
         for (String item : CODES) if (item.equals(code)) return code.equals("USDT") ? 6 : code.equals("JPY") || code.equals("KRW") ? 0 : 2;
@@ -94,6 +94,7 @@ public final class MobileLedger {
         for(int i=0;i<accounts.length();i++) { JSONObject a=accounts.getJSONObject(i);text(a,"name",60,false);text(a,"type",40,false);color(a);integer(a,"openingBalance",-MAX_MONEY,MAX_MONEY);String c=currency(a);currencyRate(a);
             if(schema==1&&!c.equals("CNY"))throw new Exception("外币账本需要 schemaVersion 2");
             for(String field:new String[]{"providerId","bankId"})if(a.has(field))id(a,field,80);
+            AppleBalance.validateAccount(a);
             if(a.has("lastFour")&&!text(a,"lastFour",4,false).matches("[0-9]{4}"))throw new Exception("卡片尾号须为 4 位数字");
             if(a.has("rateMode")&&!a.getString("rateMode").matches("auto|manual"))throw new Exception("汇率模式无效");
             if(a.has("rateAsOf"))date(a.getString("rateAsOf"));if(a.has("rateSource"))text(a,"rateSource",120,false);
@@ -111,6 +112,7 @@ public final class MobileLedger {
         BigInteger recurringTotal=BigInteger.ZERO;
         for(int i=0;i<subs.length();i++){JSONObject sub=subs.getJSONObject(i);text(sub,"name",80,false);if(sub.has("serviceId"))id(sub,"serviceId",80);if(sub.has("tier"))text(sub,"tier",80,true);integer(sub,"amount",1,MAX_MONEY);JSONObject account=find(accounts,sub.optString("accountId"));if(account==null||!currency(account).equals(currency(sub)))throw new Exception("订阅账户或币种无效");long cny=toCnyCents(sub.getLong("amount"),currency(sub),currencyRate(account));
             if(!"会员订阅".equals(sub.optString("category")))throw new Exception("订阅分类必须为会员订阅");date(sub.getString("startDate"));integer(sub,"billingDay",1,31);bool(sub,"active");bool(sub,"recurring");color(sub);text(sub,"icon",80,false);
+            SubscriptionDetails.validateSubscription(sub);
             if(sub.getBoolean("active")&&sub.getBoolean("recurring")){recurringTotal=recurringTotal.add(BigInteger.valueOf(cny));if(recurringTotal.multiply(BigInteger.valueOf(12)).compareTo(LIMIT)>0)throw new Exception("订阅年度折算超过支持范围");}
             JSONArray processed=array(sub,"processedOccurrences",3600);Set<String> unique=new HashSet<>();String prefix=sub.getString("id")+":";for(int j=0;j<processed.length();j++){String key=processed.getString(j);if(!key.startsWith(prefix)||!isValidDate(key.substring(prefix.length())+"-01")||!unique.add(key))throw new Exception("已处理订阅账期无效或重复");}
         }

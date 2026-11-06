@@ -23,6 +23,8 @@ public final class BrandIcons {
         {"chatgpt", "ChatGPT", "#171717", "Go|Plus|Pro 100|Pro 200|Pro 500"},
         {"claude", "Claude", "#D97757", "Pro|Max|Ultra"},
         {"gemini", "Gemini", "#4285F4", "Google AI Plus|Google AI Pro|Google AI Ultra 5x|Google AI Ultra 20x"},
+        {"suno", "Suno", "#E89277", "Pro|Premier"},
+        {"grok", "Grok", "#171717", "Plus|Premium|Super|Ultra"},
         {"ttvoice", "TT语音", "#5E69F5", "超级玩家|超级玩家SVIP"},
         {"kugou", "酷狗音乐", "#009DF4", "豪华VIP|超级VIP|音乐包"},
         {"baidu", "百度网盘", "#2F7DF4", "会员|超级会员"},
@@ -32,7 +34,8 @@ public final class BrandIcons {
     };
     public static final String[][] ACCOUNTS = {
         {"wechat", "微信", "数字钱包", "#28b877"}, {"alipay", "支付宝", "数字钱包", "#3e9ee8"},
-        {"bank-card", "银行卡", "银行卡", "#849fda"}, {"cash", "现金", "现金", "#c8a66c"}, {"virtual-card", "虚拟卡", "虚拟卡", "#a28ad6"}
+        {"bank-card", "银行卡", "银行卡", "#849fda"}, {"cash", "现金", "现金", "#c8a66c"}, {"virtual-card", "虚拟卡", "虚拟卡", "#a28ad6"},
+        {"apple-balance", "Apple 余额", "Apple 账户余额", "#77728f"}
     };
     public static String forAccount(JSONObject account) {
         if (account == null) return "";
@@ -59,6 +62,7 @@ public final class BrandIcons {
             case "wechat": return R.drawable.logo_wechat; case "alipay": return R.drawable.logo_alipay;
             case "chatgpt": return R.drawable.logo_chatgpt; case "claude": return R.drawable.logo_claude;
             case "gemini": return R.drawable.logo_gemini; case "ttvoice": return R.drawable.logo_ttvoice;
+            case "suno": return R.drawable.logo_suno; case "grok": return R.drawable.logo_grok;
             case "kugou": return R.drawable.logo_kugou; case "baidu": return R.drawable.logo_baidu;
             case "netease": return R.drawable.logo_netease; case "bilibili": return R.drawable.logo_bilibili; case "icloud": return R.drawable.logo_icloud;
             case "icbc": return R.drawable.logo_icbc; case "ccb": return R.drawable.logo_ccb; case "abc": return R.drawable.logo_abc; case "cmb": return R.drawable.logo_cmb;

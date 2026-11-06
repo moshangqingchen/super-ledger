@@ -144,7 +144,7 @@ public final class LedgerStore {
     private static void defaultValue(JSONObject value,String key,Object fallback) throws Exception {if(!value.has(key))value.put(key,fallback);}
     private JSONObject mergedRecord(String entity,JSONObject input,String prefix) throws Exception {
         JSONObject value=copy(input);String id=value.optString("id");if(id.isEmpty())id=prefix+UUID.randomUUID();value.put("id",id);JSONObject merged=MobileLedger.merge(getRecord(state(),entity,id),value);
-        String[] clearable=entity.equals("account")?new String[]{"providerId","bankId","lastFour","rateAsOf","rateSource"}:entity.equals("subscription")?new String[]{"serviceId"}:entity.equals("goal")?new String[]{"cover"}:new String[0];
+        String[] clearable=entity.equals("account")?new String[]{"providerId","bankId","lastFour","rateAsOf","rateSource","appleRegion","appleAccount"}:entity.equals("subscription")?new String[]{"serviceId"}:entity.equals("goal")?new String[]{"cover"}:new String[0];
         for(String key:clearable)if(input.has(key)&&input.isNull(key))merged.remove(key);return merged;
     }
     private void promoteSchema() throws Exception {JSONArray accounts=state().getJSONArray("accounts");for(int i=0;i<accounts.length();i++)if(!MobileLedger.currency(accounts.getJSONObject(i)).equals("CNY")){state().put("schemaVersion",2);return;}}

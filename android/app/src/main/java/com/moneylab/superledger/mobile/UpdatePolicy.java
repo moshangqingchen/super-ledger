@@ -33,6 +33,64 @@ public final class UpdatePolicy {
         public StaleReleaseException() { super("此更新源的版本较旧，正在尝试其他来源"); }
     }
     public static boolean shouldCheck(long now, long lastCheck, boolean manual) { return manual || lastCheck <= 0 || now < lastCheck || now - lastCheck >= 6L * 60 * 60 * 1000; }
+    public enum CheckReason { PERIODIC, OPEN, MANUAL }
+    /** One check per actual opening; focus/resume and temporary child activities are not openings. */
+    public static final class OpenLifecycle {
+        private boolean started, pendingOpen;
+        public OpenLifecycle() { this(true); }
+        public OpenLifecycle(boolean initialOpen) { pendingOpen = initialOpen; }
+        public synchronized boolean onStart() {
+            if (started) return false;
+            started = true; boolean result = pendingOpen; pendingOpen = false; return result;
+        }
+        public synchronized void onStop(boolean temporary) {
+            if (!started) return;
+            started = false; pendingOpen = !temporary;
+        }
+        /** Call only for an explicit launcher intent, not arbitrary activity results. */
+        public synchronized boolean onLauncherIntent() {
+            if (started) return true;
+            pendingOpen = true; return false;
+        }
+        public synchronized void openedElsewhere() { pendingOpen = false; }
+    }
+    /** Initialization queues one request; concurrent requests share the active check. */
+    public static final class CheckGate {
+        private boolean restoring = true, checking;
+        private CheckReason pending;
+        public synchronized boolean request(CheckReason reason, boolean operationInProgress, long now, long lastCheck) {
+            if (reason == null) throw new IllegalArgumentException("Missing update check reason");
+            if (restoring) {
+                if (pending == null || reason != CheckReason.PERIODIC) pending = reason;
+                return false;
+            }
+            if (checking || operationInProgress || !shouldCheck(now, lastCheck, reason != CheckReason.PERIODIC)) return false;
+            checking = true; return true;
+        }
+        public synchronized CheckReason restored() {
+            restoring = false; CheckReason result = pending; pending = null; return result;
+        }
+        public synchronized void finished() { checking = false; }
+    }
+    /** Permission-result ownership lasts only as long as this process. */
+    public static final class InstallPermission {
+        private boolean waiting;
+        public synchronized boolean begin() { if (waiting) return false; waiting = true; return true; }
+        public synchronized boolean isWaiting() { return waiting; }
+        public synchronized boolean returned() { boolean result = waiting; waiting = false; return result; }
+        public synchronized void cancel() { waiting = false; }
+        public synchronized boolean releaseIfOwnerGone(boolean ownerExists, boolean destroyed, boolean changingConfigurations) {
+            if (!waiting || ownerExists && (!destroyed || changingConfigurations)) return false;
+            waiting = false; return true;
+        }
+    }
+    public enum InstallRecovery { NONE, COMPLETE, WAIT, RETRY }
+    /** A sealed session can be waiting for user action even when it is not active. */
+    public static InstallRecovery recoverInstallation(long installedCode, long targetCode, boolean sessionPresent, boolean active, boolean sealed) {
+        if (targetCode > 0 && installedCode >= targetCode) return InstallRecovery.COMPLETE;
+        if (sessionPresent && (active || sealed)) return InstallRecovery.WAIT;
+        return InstallRecovery.RETRY;
+    }
     public static final class Release {
         public final String version, url, sha256, notes, packageName, certificateSha256;
         public final long versionCode, size;
@@ -103,7 +161,10 @@ public final class UpdatePolicy {
     /** Only a stale signed mirror can be retried; a changed artifact at the same version is an integrity error. */
     public static void validateVersionFence(Release release, long installedCode, long highestCode, String highestSha256, long highestSize) throws Exception {
         if (release == null || installedCode < 0 || highestCode < 0 || highestSize < 0 || ((highestSha256 == null || highestSha256.isEmpty()) && highestSize != 0)) throw new IntegrityException("已保存的版本校验状态无效");
-        if (release.versionCode < Math.max(installedCode, highestCode)) throw new StaleReleaseException();
+        // A locally installed build may be ahead of the public channel. Only
+        // authenticated remote history establishes the anti-rollback fence;
+        // verify()/verifyIdentity() independently prevent downgrade installation.
+        if (release.versionCode < highestCode) throw new StaleReleaseException();
         if (release.versionCode == highestCode && highestSha256 != null && !highestSha256.isEmpty()) {
             if (!highestSha256.matches("[a-fA-F0-9]{64}") || highestSize < 1 || !release.sha256.equalsIgnoreCase(highestSha256) || release.size != highestSize) throw new IntegrityException("同一版本的安装包校验值发生变化，已停止更新");
         }

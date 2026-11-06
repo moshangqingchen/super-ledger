@@ -153,7 +153,9 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
   if (!path.isAbsolute(userDataDirectory) || !publicKey) throw new Error('更新器配置不完整。');
   const directory = path.join(userDataDirectory, 'updates'), preferences = path.join(directory, 'update-state.json');
   let closed = false, checking = null, downloading = null, installing = false, controller, candidate = null, readyFile = null;
-  let phase = 'idle', error = '', operation = '', downloadedBytes = 0, lastCheckedAt = null, deferredVersion = '', deferredUntil = 0, highestVersion = currentVersion;
+  // This high-water mark tracks signed releases seen from the update feed.
+  // A newer locally installed build must not make an older public release an error.
+  let phase = 'idle', error = '', operation = '', downloadedBytes = 0, lastCheckedAt = null, deferredVersion = '', deferredUntil = 0, highestVersion = '';
   function ensureDirectory() {
     fs.mkdirSync(userDataDirectory, { recursive: true });
     if (fs.existsSync(directory) && fs.lstatSync(directory).isSymbolicLink()) throw new Error('更新目录不能是目录链接。');
@@ -165,7 +167,7 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8192) throw new Error('invalid preferences');
     const saved = JSON.parse(fs.readFileSync(preferences, 'utf8'));
     if (typeof saved.deferredVersion === 'string' && VERSION.test(saved.deferredVersion) && Number.isSafeInteger(saved.deferredUntil) && saved.deferredUntil <= now() + PROMPT_COOLDOWN_MS) { deferredVersion = saved.deferredVersion; deferredUntil = saved.deferredUntil; }
-    if (typeof saved.highestVersion === 'string' && VERSION.test(saved.highestVersion) && compareVersions(saved.highestVersion, highestVersion) > 0) highestVersion = saved.highestVersion;
+    if (typeof saved.highestVersion === 'string' && VERSION.test(saved.highestVersion)) highestVersion = saved.highestVersion;
   } catch { /* A missing/broken reminder preference cannot authorize an update. */ }
   const status = () => ({ enabled: Boolean(enabled) && !closed, currentVersion, phase, error, operation, lastCheckedAt, availableVersion: candidate?.version || null, notes: candidate?.notes || '', downloadedBytes, totalBytes: candidate?.size || 0, ready: Boolean(readyFile), deferredUntil });
   function emit() { try { onStatus(status()); } catch { /* UI listeners cannot change update state. */ } }
@@ -188,7 +190,7 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
         if (closed) throw cancelled();
         if (result.statusCode !== 200) throw new Error('更新清单不允许重定向。');
         const update = verifySignedManifest(JSON.parse(result.body.toString('utf8')), publicKey);
-        if (compareVersions(update.version, highestVersion) < 0) throw new Error('更新清单版本早于已验证版本，已拒绝回退。');
+        if (highestVersion && compareVersions(update.version, highestVersion) < 0) throw new Error('更新清单版本早于已验证版本，已拒绝回退。');
         highestVersion = update.version; lastCheckedAt = now();
         if (compareVersions(update.version, currentVersion) <= 0) { candidate = null; readyFile = null; downloadedBytes = 0; phase = 'idle'; }
         else {

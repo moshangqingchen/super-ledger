@@ -27,7 +27,7 @@ function fixture(t, options = {}) {
   return { service, directory, calls, setHandler: next => { handler = next; }, setTime: next => { instant = new Date(next); }, now: () => instant };
 }
 function fiat(date = '2026-11-05') {
-  return FIAT_CODES.map(quote => ({ date, base: 'CNY', quote, rate: quote === 'USD' ? 0.14 : quote === 'JPY' ? 22 : 1 }));
+  return FIAT_CODES.map(quote => ({ date, base: 'CNY', quote, rate: quote === 'USD' ? 0.14 : quote === 'JPY' ? 22 : quote === 'TRY' ? 5 : 1 }));
 }
 function kraken(price = '0.99844000') { return { error: [], result: { USDTZUSD: { c: [price, '100'] } } }; }
 
@@ -38,6 +38,7 @@ test('daily rates invert ECB quotes exactly and cross USDT market price without 
   assert.deepEqual(f.calls, [FIAT_URL, USDT_URL]);
   assert.equal(state.rates.USD.cnyRate, '7.14285714');
   assert.equal(state.rates.JPY.cnyRate, '0.04545455');
+  assert.equal(state.rates.TRY.cnyRate, '0.2');
   assert.equal(state.rates.USDT.cnyRate, '7.13171429');
   assert.notEqual(state.rates.USDT.cnyRate, state.rates.USD.cnyRate);
   assert.equal(state.rates.USDT.source, 'Kraken × ECB');
@@ -58,6 +59,26 @@ test('daily rates invert ECB quotes exactly and cross USDT market price without 
   f.setTime(state.nextAttemptAt);
   await f.service.refresh();
   assert.equal(f.calls.length, 4, 'the next local day permits another automatic fetch');
+});
+
+test('a pre-TRY cache refreshes on upgrade even when its same-day deadline has not elapsed', async t => {
+  const f = fixture(t);
+  await f.service.refresh();
+  const file = path.join(f.directory, RATE_CACHE_FILENAME);
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete saved.rates.TRY;
+  fs.writeFileSync(file, JSON.stringify(saved));
+  f.setTime('2026-11-05T18:01:00.000Z');
+  const calls = [];
+  const upgraded = createRateService({ dataDirectory: f.directory, now: f.now, requestJson: url => {
+    calls.push(url);
+    return url === FIAT_URL ? fiat() : kraken();
+  } });
+  t.after(() => upgraded.close());
+  assert.equal(upgraded.status().nextAttemptAt, null);
+  const state = await upgraded.refresh();
+  assert.deepEqual(calls, [FIAT_URL, USDT_URL]);
+  assert.equal(state.rates.TRY.cnyRate, '0.2');
 });
 
 test('concurrent refreshes join one request and forced refreshes respect a short cooldown', async t => {
@@ -163,7 +184,7 @@ test('cache input is validated per currency and corrupt cache files are preserve
   fs.writeFileSync(file, JSON.stringify(saved));
   const sanitized = createRateService({ dataDirectory: f.directory, now: f.now, enabled: false });
   t.after(() => sanitized.close());
-  assert.deepEqual(Object.keys(sanitized.status().rates).sort(), ['AUD', 'CAD', 'CHF', 'GBP', 'KRW', 'SGD', 'USDT']);
+  assert.deepEqual(Object.keys(sanitized.status().rates).sort(), ['AUD', 'CAD', 'CHF', 'GBP', 'KRW', 'SGD', 'TRY', 'USDT']);
   assert.equal(sanitized.status().nextAttemptAt, null);
   fs.writeFileSync(file, '{invalid-json');
   const corrupt = createRateService({ dataDirectory: f.directory, now: f.now, enabled: false });

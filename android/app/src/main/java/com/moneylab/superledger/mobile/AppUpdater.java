@@ -43,6 +43,22 @@ public final class AppUpdater {
     private final File directory;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final UpdatePolicy.OpenLifecycle openLifecycle = new UpdatePolicy.OpenLifecycle();
+    private final UpdatePolicy.CheckGate checkGate = new UpdatePolicy.CheckGate();
+    private final UpdatePolicy.InstallPermission installPermission = new UpdatePolicy.InstallPermission();
+    private WeakReference<Activity> permissionOwner = new WeakReference<>(null);
+    private boolean activityOpened;
+    private final PackageInstaller.SessionCallback installCallback = new PackageInstaller.SessionCallback() {
+        @Override public void onCreated(int sessionId) {}
+        @Override public void onBadgingChanged(int sessionId) {}
+        @Override public void onProgressChanged(int sessionId, float progress) {}
+        @Override public void onActiveChanged(int sessionId, boolean active) {
+            if (sessionId == preferences.getInt("activeSessionId", -1)) worker.execute(() -> { recoverInstallSession(); notifyChanged(); });
+        }
+        @Override public void onFinished(int sessionId, boolean success) {
+            finishInstallSession(sessionId, success ? PackageInstaller.STATUS_SUCCESS : PackageInstaller.STATUS_FAILURE);
+        }
+    };
     private WeakReference<Listener> listener = new WeakReference<>(null);
     private UpdatePolicy.Release candidate;
     private byte[] candidateEnvelope;
@@ -60,21 +76,48 @@ public final class AppUpdater {
     private AppUpdater(Context context) {
         this.context = context; preferences = context.getSharedPreferences("app-updates", Context.MODE_PRIVATE);
         directory = new File(context.getFilesDir(), "updates");
+        // A previous process cannot own a future Activity permission result.
+        preferences.edit().remove("awaitingInstallPermission").apply();
+        context.getPackageManager().getPackageInstaller().registerSessionCallback(installCallback, main);
         worker.execute(() -> {
             try { restoreDownloaded(); }
             catch (Exception error) { synchronized (this) { phase = "idle"; message = "可手动检查新版，当前账本不受影响。"; } }
-            finally { synchronized (this) { busy = false; } notifyChanged(); }
-            check(false);
+            finally {
+                recoverInstallSession();
+                UpdatePolicy.CheckReason pending;
+                synchronized (this) { busy = false; pending = checkGate.restored(); }
+                notifyChanged(); if (pending != null) requestCheck(pending);
+            }
         });
     }
-    public synchronized void attach(Listener next) { listener = new WeakReference<>(next); notifyChanged(); }
+    private void opened() {
+        synchronized (this) {
+            activityOpened = true; Activity owner = permissionOwner.get();
+            if (installPermission.releaseIfOwnerGone(owner != null, owner != null && owner.isDestroyed(), owner != null && owner.isChangingConfigurations())) permissionOwner.clear();
+        }
+        if (preferences.getInt("activeSessionId", -1) >= 0) worker.execute(() -> { recoverInstallSession(); notifyChanged(); });
+        requestCheck(UpdatePolicy.CheckReason.OPEN);
+    }
+    public void onActivityStarted() { if (openLifecycle.onStart()) opened(); }
+    public void onActivityStopped(boolean temporary) { openLifecycle.onStop(temporary); }
+    public void onLauncherIntent() { if (openLifecycle.onLauncherIntent()) opened(); }
+    public void onSecondaryActivityStarted(boolean reopened) {
+        boolean cold; synchronized (this) { cold = !activityOpened; }
+        if (cold || reopened) { openLifecycle.openedElsewhere(); opened(); }
+    }
+    public synchronized void attach(Listener next) {
+        listener = new WeakReference<>(next);
+        Activity owner = permissionOwner.get();
+        if (installPermission.isWaiting() && owner != null && owner.isChangingConfigurations() && next instanceof Activity) permissionOwner = new WeakReference<>((Activity) next);
+        notifyChanged();
+    }
     public synchronized void detach(Listener previous) { if (listener.get() == previous) listener.clear(); }
     private void notifyChanged() { main.post(() -> { Listener target; synchronized (this) { target = listener.get(); } if (target != null) target.onUpdaterChanged(); }); }
     public synchronized Snapshot snapshot() {
         Snapshot state = new Snapshot(); state.phase = phase; state.message = message; state.version = candidate == null ? "" : candidate.version; state.size = candidate == null ? 0 : candidate.size;
         state.notes = candidate == null ? "" : candidate.notes;
         state.sourceMode = getSourceMode(); state.sourceLabel = sourceLabel;
-        state.downloaded = downloaded; state.busy = busy || phase.equals("installing"); state.canDownload = !state.busy && candidate != null && readyFile == null; state.canInstall = !state.busy && candidate != null && readyFile != null;
+        state.downloaded = downloaded; state.busy = busy || phase.equals("installing") || installPermission.isWaiting(); state.canDownload = !state.busy && candidate != null && readyFile == null; state.canInstall = !state.busy && candidate != null && readyFile != null;
         state.checkedAt = preferences.getLong("lastCheckAt", 0); return state;
     }
     public synchronized UpdatePolicy.Release consumeOffer() { if (!offerPending || busy || candidate == null) return null; offerPending = false; return candidate; }
@@ -132,7 +175,7 @@ public final class AppUpdater {
     }
     private void restoreDownloaded() throws Exception {
         AtomicFile metadata = metadataFile(); File base = metadata.getBaseFile();
-        if (!base.exists() && !new File(base.getPath() + ".bak").exists()) { synchronized (this) { phase = "idle"; message = "将在启动时定期检查公开版本。"; } return; }
+        if (!base.exists() && !new File(base.getPath() + ".bak").exists()) { synchronized (this) { phase = "idle"; message = "每次打开应用会自动检查公开版本。"; } return; }
         byte[] bytes; try (InputStream input = metadata.openRead()) { bytes = readLimited(input, UpdatePolicy.MAX_MANIFEST_BYTES); }
         UpdatePolicy.Release release = UpdatePolicy.readVerifiedRelease(bytes, publicKey());
         if (!release.certificateSha256.equals(certificate(installedInfo()))) throw new Exception("更新清单的签名身份与当前应用不一致");
@@ -145,12 +188,14 @@ public final class AppUpdater {
         synchronized (this) { candidate = release; candidateEnvelope = bytes; readyFile = ready ? apk : null; phase = ready ? "ready" : "available"; message = ready ? "安装包已校验，可继续覆盖更新。" : "发现新版 " + release.version + "，可选择下载更新。"; }
     }
     public void check(boolean manual) {
+        requestCheck(manual ? UpdatePolicy.CheckReason.MANUAL : UpdatePolicy.CheckReason.PERIODIC);
+    }
+    private void requestCheck(UpdatePolicy.CheckReason reason) {
         final UpdateSourceClient.Session session; final String sourceMode;
         synchronized (this) {
-            if (busy || phase.equals("installing")) return;
             long now = System.currentTimeMillis(), last = preferences.getLong("lastCheckAt", 0);
-            if (!UpdatePolicy.shouldCheck(now, last, manual)) return;
-            preferences.edit().putLong("lastCheckAt", now).apply(); busy = true; phase = "checking"; message = "正在检查公开更新版本…"; downloaded = 0;
+            if (!checkGate.request(reason, busy || phase.equals("installing") || installPermission.isWaiting(), now, last)) return;
+            busy = true; phase = "checking"; message = "正在检查公开更新版本…"; downloaded = 0;
             session = new UpdateSourceClient.Session(); activeSession = session; sourceMode = getSourceMode();
         }
         notifyChanged();
@@ -171,8 +216,9 @@ public final class AppUpdater {
                     rememberVerified(release);
                     synchronized (this) { candidate = release; candidateEnvelope = bytes; readyFile = ready ? apk : null; offerPending = true; phase = ready ? "ready" : "available"; message = "发现新版 " + release.version + (ready ? "，安装包已准备好。" : "，可选择下载更新。"); }
                 }
+                preferences.edit().putLong("lastCheckAt", System.currentTimeMillis()).apply();
             } catch (Exception error) { synchronized (this) { phase = readyFile != null ? "ready" : candidate != null ? "available" : "idle"; message = "检查更新未完成：" + safeMessage(error) + "。当前版本与账本不受影响，可稍后重试。"; } }
-            finally { synchronized (this) { if (activeSession == session) activeSession = null; busy = false; } notifyChanged(); }
+            finally { synchronized (this) { if (activeSession == session) activeSession = null; busy = false; checkGate.finished(); } notifyChanged(); }
         });
     }
     private static String safeMessage(Exception error) { String value = error.getMessage(); if (value == null || value.length() > 240) return "网络或版本验证失败"; return value; }
@@ -245,17 +291,21 @@ public final class AppUpdater {
         UpdatePolicy.verifyIdentity(release, archive.packageName, archive.versionName, versionCode(archive), archive.applicationInfo.minSdkVersion, certificate(archive), certificate(current), versionCode(current), Build.VERSION.SDK_INT);
     }
     public void requestInstall(Activity activity) throws Exception {
-        synchronized (this) { if (busy || phase.equals("installing") || readyFile == null || candidate == null) throw new Exception("安装包尚未准备好，或系统正在处理上一次安装"); }
+        synchronized (this) { if (busy || phase.equals("installing") || installPermission.isWaiting() || readyFile == null || candidate == null) throw new Exception("安装包尚未准备好，或系统正在处理上一次安装"); }
         if (!context.getPackageManager().canRequestPackageInstalls()) {
-            preferences.edit().putBoolean("awaitingInstallPermission", true).apply();
+            if (!installPermission.begin()) return;
+            synchronized (this) { permissionOwner = new WeakReference<>(activity); }
             synchronized (this) { message = "请允许超级账本安装更新，返回后会继续系统安装确认。"; }
-            activity.startActivityForResult(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + context.getPackageName())), INSTALL_PERMISSION_REQUEST); notifyChanged(); return;
+            try { activity.startActivityForResult(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + context.getPackageName())), INSTALL_PERMISSION_REQUEST); }
+            catch (RuntimeException error) { installPermission.cancel(); synchronized (this) { permissionOwner.clear(); message = "无法打开系统安装授权，请稍后重新点「安装更新」。"; } throw error; }
+            finally { notifyChanged(); }
+            return;
         }
         beginInstall();
     }
     public void permissionReturned() {
-        if (!preferences.getBoolean("awaitingInstallPermission", false)) return;
-        preferences.edit().putBoolean("awaitingInstallPermission", false).apply();
+        if (!installPermission.returned()) return;
+        synchronized (this) { permissionOwner.clear(); }
         if (context.getPackageManager().canRequestPackageInstalls()) beginInstall();
         else { synchronized (this) { phase = "ready"; message = "安装权限尚未开启。安装包已保留，可在需要时点「安装更新」重试。"; } notifyChanged(); }
     }
@@ -265,10 +315,11 @@ public final class AppUpdater {
         notifyChanged(); worker.execute(() -> {
             int sessionId = -1;
             try {
+                UpdatePolicy.InstallRecovery recovery = recoverInstallSession();
+                if (recovery == UpdatePolicy.InstallRecovery.WAIT || recovery == UpdatePolicy.InstallRecovery.COMPLETE) return;
                 verifyApk(apk, release);
                 if (!context.getPackageManager().canRequestPackageInstalls()) throw new Exception("系统尚未允许本应用安装更新");
-                PackageInstaller installer = context.getPackageManager().getPackageInstaller(); int old = preferences.getInt("activeSessionId", -1);
-                if (old >= 0) { try { installer.abandonSession(old); } catch (Exception ignored) {} }
+                PackageInstaller installer = context.getPackageManager().getPackageInstaller();
                 PackageInstaller.SessionParams parameters = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
                 parameters.setAppPackageName(context.getPackageName()); parameters.setAppLabel("超级账本"); parameters.setSize(release.size); parameters.setInstallReason(PackageManager.INSTALL_REASON_USER);
                 if (Build.VERSION.SDK_INT >= 31) parameters.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED);
@@ -280,37 +331,55 @@ public final class AppUpdater {
                     int flags = PendingIntent.FLAG_UPDATE_CURRENT; if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
                     PendingIntent pending = PendingIntent.getBroadcast(context, sessionId, result, flags); session.commit(pending.getIntentSender());
                 }
-                synchronized (this) { message = "安装已交给安卓系统，等待你确认。若取消，可稍后再次安装。"; }
-                checkInstallOutcomeLater();
+                synchronized (this) { if (sessionId == preferences.getInt("activeSessionId", -1)) message = "安装已交给安卓系统，等待你确认。若取消，可稍后再次安装。"; }
             } catch (Exception error) {
-                if (sessionId >= 0) { try { context.getPackageManager().getPackageInstaller().abandonSession(sessionId); } catch (Exception ignored) {} }
+                if (sessionId >= 0) {
+                    UpdatePolicy.InstallRecovery recovery = recoverInstallSession();
+                    if (recovery == UpdatePolicy.InstallRecovery.WAIT || recovery == UpdatePolicy.InstallRecovery.COMPLETE) return;
+                }
                 clearActiveSession(); synchronized (this) { phase = "ready"; message = "安装未完成：" + safeMessage(error) + "。当前应用与账本保留。"; }
             } finally { synchronized (this) { busy = false; } notifyChanged(); }
         });
     }
-    private void clearActiveSession() { preferences.edit().remove("activeSessionId").remove("installVersionCode").remove("installStartedAt").putBoolean("awaitingInstallPermission", false).apply(); }
+    private void clearActiveSession() { installPermission.cancel(); permissionOwner.clear(); preferences.edit().remove("activeSessionId").remove("installVersionCode").remove("installStartedAt").remove("awaitingInstallPermission").apply(); }
     public void installerReturned() {
         synchronized (this) { if (phase.equals("installing")) message = "正在等待安卓系统返回安装结果，取消安装不会删除账本。"; }
-        notifyChanged(); checkInstallOutcomeLater();
+        notifyChanged(); worker.execute(() -> { recoverInstallSession(); notifyChanged(); });
     }
-    private void checkInstallOutcomeLater() {
-        main.postDelayed(() -> worker.execute(() -> {
-            int sessionId = preferences.getInt("activeSessionId", -1); if (sessionId < 0) return;
-            try {
-                long targetCode = preferences.getLong("installVersionCode", Long.MAX_VALUE);
-                if (installedVersionCode() >= targetCode) {
-                    clearActiveSession(); synchronized (this) { candidate = null; candidateEnvelope = null; readyFile = null; phase = "idle"; message = "新版已安装，账本保留在本机。"; } notifyChanged(); return;
+    private UpdatePolicy.InstallRecovery recoverInstallSession() {
+        int sessionId = preferences.getInt("activeSessionId", -1);
+        if (sessionId < 0) return UpdatePolicy.InstallRecovery.NONE;
+        try {
+            PackageInstaller installer = context.getPackageManager().getPackageInstaller();
+            PackageInstaller.SessionInfo info = installer.getSessionInfo(sessionId);
+            UpdatePolicy.InstallRecovery recovery = UpdatePolicy.recoverInstallation(installedVersionCode(), preferences.getLong("installVersionCode", 0), info != null, info != null && info.isActive(), info != null && info.isSealed());
+            synchronized (this) {
+                if (sessionId != preferences.getInt("activeSessionId", -1)) return UpdatePolicy.InstallRecovery.NONE;
+                if (recovery == UpdatePolicy.InstallRecovery.WAIT) {
+                    phase = "installing"; message = "已有更新正在由安卓系统处理，请继续或取消系统安装确认。";
+                } else if (recovery == UpdatePolicy.InstallRecovery.COMPLETE) {
+                    clearActiveSession(); candidate = null; candidateEnvelope = null; readyFile = null; pendingConfirmation = null; installRequested = false; phase = "idle"; message = "新版已安装，账本保留在本机。";
+                } else {
+                    // Only an uncommitted, inactive session can be discarded.
+                    if (info != null) installer.abandonSession(sessionId);
+                    clearActiveSession(); pendingConfirmation = null; installRequested = false; phase = readyFile != null ? "ready" : candidate != null ? "available" : "idle";
+                    message = "上次安装已结束，当前应用与账本保留。可再次确认安装更新。";
                 }
-                PackageInstaller.SessionInfo info = context.getPackageManager().getPackageInstaller().getSessionInfo(sessionId);
-                long elapsed = System.currentTimeMillis() - preferences.getLong("installStartedAt", 0);
-                if (info == null || elapsed > 120000 || elapsed < 0) {
-                    if (info == null) clearActiveSession();
-                    synchronized (this) { phase = readyFile == null ? "available" : "ready"; message = "系统尚未完成更新。当前版本和账本保留，可点击「安装更新」重试。"; }
-                    notifyChanged(); return;
-                }
-                checkInstallOutcomeLater();
-            } catch (Exception error) { synchronized (this) { phase = readyFile == null ? "available" : "ready"; message = "无法确认系统安装结果，请查看当前版本，必要时再次安装。"; } notifyChanged(); }
-        }), 3000);
+            }
+            return recovery;
+        } catch (Exception error) {
+            synchronized (this) { if (sessionId != preferences.getInt("activeSessionId", -1)) return UpdatePolicy.InstallRecovery.NONE; phase = "installing"; message = "暂时无法确认系统安装状态，已有安装任务保留；重新打开后会再次确认。"; }
+            return UpdatePolicy.InstallRecovery.WAIT;
+        }
+    }
+    private void finishInstallSession(int sessionId, int status) {
+        synchronized (this) {
+            if (sessionId != preferences.getInt("activeSessionId", -1)) return;
+            clearActiveSession(); pendingConfirmation = null; installRequested = false;
+            if (status == PackageInstaller.STATUS_SUCCESS) { candidate = null; candidateEnvelope = null; readyFile = null; phase = "idle"; message = "新版已安装，重新打开即可使用。账本保留在本机。"; }
+            else { phase = readyFile != null ? "ready" : candidate != null ? "available" : "idle"; message = status == PackageInstaller.STATUS_FAILURE_ABORTED ? "已取消安装，当前版本与账本保留，可随时重试。" : status == PackageInstaller.STATUS_FAILURE_STORAGE ? "系统存储空间不足，安装包已保留，请清理空间后重试。" : "系统未完成安装，当前版本与账本保留，可重试。"; }
+        }
+        notifyChanged();
     }
     public void handleInstallResult(Intent intent) {
         if (!INSTALL_RESULT.equals(intent.getAction()) || intent.getData() == null) return;
@@ -322,11 +391,7 @@ public final class AppUpdater {
             @SuppressWarnings("deprecation") Intent confirmation = intent.getParcelableExtra(Intent.EXTRA_INTENT);
             synchronized (this) { pendingConfirmation = confirmation; phase = confirmation == null ? "ready" : "installing"; message = confirmation == null ? "系统未提供安装确认界面，请重试。" : "请在安卓系统界面确认安装更新。"; }
         } else {
-            clearActiveSession(); synchronized (this) {
-                pendingConfirmation = null; installRequested = false;
-                if (status == PackageInstaller.STATUS_SUCCESS) { candidate = null; candidateEnvelope = null; readyFile = null; phase = "idle"; message = "新版已安装，重新打开即可使用。账本保留在本机。"; }
-                else { phase = readyFile == null ? "available" : "ready"; message = status == PackageInstaller.STATUS_FAILURE_ABORTED ? "已取消安装，当前版本与账本保留，可随时重试。" : status == PackageInstaller.STATUS_FAILURE_STORAGE ? "系统存储空间不足，安装包已保留，请清理空间后重试。" : "系统未完成安装（状态 " + status + "），当前版本与账本保留，可重试。"; }
-            }
+            finishInstallSession(sessionId, status); return;
         }
         notifyChanged();
     }
