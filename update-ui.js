@@ -8,6 +8,35 @@ export function formatUpdateBytes(value) {
   return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 }
 
+export function formatUpdateRemaining(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '待估算';
+  const total = Math.ceil(seconds);
+  if (total < 60) return `约 ${total} 秒`;
+  if (total < 3600) return `约 ${Math.ceil(total / 60)} 分钟`;
+  const minutes = Math.ceil(total / 60);
+  return `约 ${Math.floor(minutes / 60)} 小时${minutes % 60 ? ` ${minutes % 60} 分钟` : ''}`;
+}
+
+const WAITING_AFTER_MS = 8000;
+const nonnegative = value => Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+
+/** Only a current, measured speed can produce an estimate; waiting is not a failure. */
+export function updateTransferDetails(status = {}, idleForMs = 0) {
+  const downloaded = nonnegative(status.downloadedBytes), total = nonnegative(status.totalBytes);
+  const retry = Number.isSafeInteger(status.retryAttempt) && status.retryAttempt > 0 ? status.retryAttempt : 0;
+  const pending = { speed: '—', remaining: '待估算' };
+  if (retry) return { ...pending, state: 'retrying', label: '重试中', message: `正在等待第 ${retry} 次自动重试，可以继续后台等待或取消下载。` };
+  if (total > 0 && downloaded >= total) return { ...pending, state: 'verifying', label: '校验中', remaining: '下载完成', message: '下载完成，正在校验安装包；校验通过后才能安装。' };
+  if (idleForMs >= WAITING_AFTER_MS) return { ...pending, state: 'waiting', label: '等待中', message: downloaded > 0 ? '暂未收到新数据，正在等待下载继续；仍可后台等待或取消。' : '正在等待下载源响应；仍可后台等待或取消。' };
+  const speed = nonnegative(status.bytesPerSecond);
+  if (speed > 0) return {
+    state: 'downloading', label: '下载中', speed: `${formatUpdateBytes(speed)}/s`,
+    remaining: total > downloaded ? formatUpdateRemaining((total - downloaded) / speed) : '待估算',
+    message: '正在下载，剩余时间会随当前速度调整。'
+  };
+  return { ...pending, state: 'connecting', label: '下载中', message: downloaded > 0 ? '正在计算下载速度，收到更多数据后会显示剩余时间。' : '正在连接下载源，收到数据后会显示速度与剩余时间。' };
+}
+
 export function releaseHighlights(notes, limit = 3) {
   const paragraphs = String(notes || '').replace(/\r\n?/g, '\n').split(/\n+/).map(text => text
     .replace(/^\s*(?:#{1,6}\s+|[-*•]\s+|\d+[.)、]\s*)/, '').replace(/\*\*/g, '').trim()).filter(Boolean);
@@ -32,6 +61,7 @@ export function createUpdateUI({ desktop, icon = () => '', onStatus = () => {}, 
   let status = initialStatus || { phase: 'idle', currentVersion: '', enabled: Boolean(desktop?.checkForUpdates) };
   let opened = false, installConfirm = false, pendingPrompt = null, lastFocus = null, lastFocusAction = '', previousOverflow = '', detailsOpen = false;
   let latestAction = 'check', destroyed = false, cancelPending = false;
+  let lastProgressAt = Date.now(), progressTimer = null;
   const running = new Set(), unsubscribe = [];
   let root = document.getElementById('update-root');
   if (!root) { root = document.createElement('div'); root.id = 'update-root'; document.body.append(root); }
@@ -39,15 +69,29 @@ export function createUpdateUI({ desktop, icon = () => '', onStatus = () => {}, 
   const glyph = (name, size = 20) => `<span class="update-glyph" aria-hidden="true">${icon(name, size)}</span>`;
   const version = value => value ? `v${String(value).replace(/^v/i, '')}` : '—';
   const actionButton = (action, label, primary = false, disabled = false, extra = '') => `<button type="button" class="update-button ${primary ? 'update-button--primary' : 'update-button--secondary'} ${extra}" data-update-action="${action}"${disabled ? ' disabled' : ''}>${label}</button>`;
-  const progressPercent = () => status.totalBytes > 0 ? Math.max(0, Math.min(100, Math.floor(status.downloadedBytes / status.totalBytes * 100))) : 0;
+  const progressPercent = () => nonnegative(status.totalBytes) > 0 ? Math.max(0, Math.min(100, Math.floor(nonnegative(status.downloadedBytes) / nonnegative(status.totalBytes) * 100))) : 0;
   const progressText = () => `${formatUpdateBytes(status.downloadedBytes)}${status.totalBytes > 0 ? ` / ${formatUpdateBytes(status.totalBytes)}` : ''}`;
-  const progress = () => `<div class="update-progress-wrap"><div class="update-progress-caption"><span data-update-bytes>${progressText()}</span><strong data-update-percent>${status.totalBytes > 0 ? `${progressPercent()}%` : '准备中'}</strong></div><div class="update-progress" role="progressbar" aria-label="更新下载进度" aria-valuemin="0" aria-valuemax="100" ${status.totalBytes > 0 ? `aria-valuenow="${progressPercent()}"` : ''}><span style="width:${progressPercent()}%"></span></div></div>`;
+  const transferDetails = () => updateTransferDetails(status, Math.max(0, Date.now() - lastProgressAt));
+  const progress = () => {
+    const transfer = transferDetails();
+    return `<div class="update-progress-wrap" data-update-transfer-state="${transfer.state}"><div class="update-progress-caption"><span data-update-bytes>${progressText()}</span><strong data-update-percent>${status.totalBytes > 0 ? `${progressPercent()}%` : '准备中'}</strong></div><div class="update-progress" role="progressbar" aria-label="更新下载进度" aria-valuemin="0" aria-valuemax="100" ${status.totalBytes > 0 ? `aria-valuenow="${progressPercent()}"` : ''}><span style="width:${progressPercent()}%"></span></div><div class="update-transfer-metrics"><span>速度 <strong data-update-speed>${transfer.speed}</strong></span><span>预计剩余 <strong data-update-eta>${transfer.remaining}</strong></span></div><p class="update-transfer-status" data-update-transfer-status role="status" aria-live="polite">${transfer.message}</p></div>`;
+  };
   const latestText = () => checkedTime(status.lastCheckedAt) ? `上次检查 ${checkedTime(status.lastCheckedAt)}` : '可以随时检查新版本';
+
+  function receiveStatus(next) {
+    if (next.phase === 'downloading' && (status.phase !== 'downloading' || next.availableVersion !== status.availableVersion || nonnegative(next.downloadedBytes) !== nonnegative(status.downloadedBytes) || next.retryAttempt !== status.retryAttempt)) lastProgressAt = Date.now();
+    status = { ...next };
+    if (!destroyed && status.phase === 'downloading') {
+      if (progressTimer === null) progressTimer = window.setInterval(patchProgress, 1000);
+    } else if (progressTimer !== null) {
+      window.clearInterval(progressTimer); progressTimer = null;
+    }
+  }
 
   function settingsContent(value) {
     const current = value && typeof value === 'object' ? value : status;
     // The optional argument is useful during the app's first render, before the first IPC event.
-    if (current !== status) status = current;
+    if (current !== status) receiveStatus(current);
     const phase = status.phase || 'idle', available = Boolean(status.availableVersion);
     let label = '版本更新', detail = '新变化，会在这里和你见面。', badge = '', actions = '';
     if (status.enabled === false) {
@@ -56,7 +100,7 @@ export function createUpdateUI({ desktop, icon = () => '', onStatus = () => {}, 
       label = '正在检查新版本'; detail = '稍等一下，正在获取版本信息。'; badge = '<span class="update-chip is-muted">检查中</span>';
       actions = actionButton('show', '查看进度');
     } else if (phase === 'downloading') {
-      label = `正在下载 ${escapeHTML(version(status.availableVersion))}`; detail = '可以继续记账，下载完成后由你决定何时安装。'; badge = '<span class="update-chip">下载中</span>';
+      label = `正在下载 ${escapeHTML(version(status.availableVersion))}`; detail = '可以继续记账，下载完成后由你决定何时安装。'; badge = `<span class="update-chip" data-update-download-label>${transferDetails().label}</span>`;
       actions = actionButton('show', '查看下载', true);
     } else if (phase === 'ready') {
       label = `新版本 ${escapeHTML(version(status.availableVersion))} 已下载`; detail = '安装包已校验，准备好后即可升级。'; badge = '<span class="update-chip is-success">准备就绪</span>';
@@ -158,9 +202,21 @@ export function createUpdateUI({ desktop, icon = () => '', onStatus = () => {}, 
   }
 
   function patchProgress() {
+    if (destroyed || status.phase !== 'downloading') return;
+    const transfer = transferDetails();
     for (const host of [root, document.getElementById('desktop-update-panel')].filter(Boolean)) {
-      for (const element of host.querySelectorAll('[data-update-bytes]')) element.textContent = progressText();
-      for (const element of host.querySelectorAll('[data-update-percent]')) element.textContent = status.totalBytes > 0 ? `${progressPercent()}%` : '准备中';
+      const patches = {
+        '[data-update-bytes]': progressText(),
+        '[data-update-percent]': status.totalBytes > 0 ? `${progressPercent()}%` : '准备中',
+        '[data-update-speed]': transfer.speed,
+        '[data-update-eta]': transfer.remaining,
+        '[data-update-transfer-status]': transfer.message,
+        '[data-update-download-label]': transfer.label
+      };
+      for (const [selector, text] of Object.entries(patches)) for (const element of host.querySelectorAll(selector)) {
+        if (element.textContent !== text) element.textContent = text;
+      }
+      for (const element of host.querySelectorAll('[data-update-transfer-state]')) element.dataset.updateTransferState = transfer.state;
       for (const element of host.querySelectorAll('.update-progress')) {
         if (status.totalBytes > 0) element.setAttribute('aria-valuenow', progressPercent()); else element.removeAttribute('aria-valuenow');
         element.firstElementChild.style.width = `${progressPercent()}%`;
@@ -172,7 +228,7 @@ export function createUpdateUI({ desktop, icon = () => '', onStatus = () => {}, 
     if (destroyed || !next || typeof next !== 'object') return;
     const changed = stableStatus(status) !== stableStatus(next);
     const oldVersion = status.availableVersion;
-    status = { ...next };
+    receiveStatus(next);
     if (oldVersion !== status.availableVersion) detailsOpen = false;
     if (status.phase !== 'ready') installConfirm = false;
     onStatus(status);
@@ -236,7 +292,7 @@ export function createUpdateUI({ desktop, icon = () => '', onStatus = () => {}, 
     if (status.phase === 'downloading' || running.has('downloadUpdate')) { show({ manual: true }); return; }
     if (status.ready || status.phase === 'ready') { show({ manual: true }); return; }
     if (!status.availableVersion) return check();
-    update({ ...status, phase: 'downloading', error: '', downloadedBytes: 0, operation: 'download' });
+    update({ ...status, phase: 'downloading', error: '', downloadedBytes: 0, bytesPerSecond: 0, retryAttempt: 0, operation: 'download' });
     show({ manual: true });
     return invoke('downloadUpdate', 'download');
   }
@@ -297,11 +353,13 @@ export function createUpdateUI({ desktop, icon = () => '', onStatus = () => {}, 
   window.addEventListener('focus', flushPrompt);
   if (desktop?.onUpdateStatusChanged) unsubscribe.push(desktop.onUpdateStatusChanged(update));
   if (desktop?.onUpdatePrompt) unsubscribe.push(desktop.onUpdatePrompt(options => show(options || {})));
+  receiveStatus(status);
 
   return {
     settingsContent, update, show, check, download, cancel, install, defer: () => close(), flushPrompt,
     destroy() {
       close({ defer: false }); destroyed = true;
+      if (progressTimer !== null) { window.clearInterval(progressTimer); progressTimer = null; }
       observer.disconnect();
       for (const off of unsubscribe) if (typeof off === 'function') off();
       document.removeEventListener('click', onClick);

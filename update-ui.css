@@ -71,6 +71,11 @@
 .update-progress-caption strong { color: #6b55d9; font-weight: 600; }
 .update-progress { width: 100%; height: 7px; border-radius: 20px; overflow: hidden; background: #eeebf8; }
 .update-progress > span { display: block; height: 100%; background: linear-gradient(90deg, #9b85ed, #6f5be1); border-radius: inherit; transition: width .18s linear; }
+.update-transfer-metrics { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; margin-top: 11px; color: #8a849b; font-size: 11px; line-height: 1.7; font-variant-numeric: tabular-nums; }
+.update-transfer-metrics strong { margin-left: 5px; color: #706781; font-weight: 500; }
+.update-transfer-status { min-height: 1.7em; margin: 7px 0 0; color: #8d859d; font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+[data-update-transfer-state="retrying"] .update-transfer-status, [data-update-transfer-state="waiting"] .update-transfer-status { color: #9b753e; }
+[data-update-transfer-state="retrying"] .update-progress > span, [data-update-transfer-state="waiting"] .update-progress > span { opacity: .65; }
 .update-download-box { padding: 32px 0 10px; }
 .update-download-box > p { margin: 17px 0 0; font-size: 12px; line-height: 1.7; color: #9992a7; }
 .update-state-box { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 33px 0 18px; }

@@ -1,11 +1,11 @@
 # 手机记账与扫码同步
 
-电脑版 1.8.5 · 安卓版 1.3.4（Android 8.0 及以上）。首个适配目标为 vivo X200 Ultra，实际通知样式、付款页面与后台策略仍需在你的手机上验证。新版手机完整账本同步需要电脑 1.7.0 及以上。
+电脑版 1.8.8 · 安卓版 1.3.5（Android 8.0 及以上）。首个适配目标为 vivo X200 Ultra，实际通知样式、付款页面与后台策略仍需在你的手机上验证。新版手机完整账本同步需要电脑 1.7.0 及以上。
 
 ## 第一次使用
 
-1. 从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/latest) 下载 Windows 安装包 `SuperLedger-Setup-1.8.5.exe`。安装更新沿用原本地账本。不要卸载后删除数据目录。
-2. 点击电脑顶部「手机同步」→「获取安卓安装包」，将 `SuperLedger-Mobile-1.3.4.apk` 传到手机并安装。也可直接从 Releases 下载 APK。
+1. 从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/latest) 下载 Windows 安装包 `SuperLedger-Setup-1.8.8.exe`。覆盖安装会继续使用本地账本。
+2. 从同一发布页下载 `SuperLedger-Mobile-1.3.5.apk`，传到手机并安装。Windows 安装包也内附该 APK。
 3. 让手机和电脑处于同一 Wi-Fi/局域网，或让电脑连接手机热点。电脑可以使用同一路由器下的网线连接。
 4. 电脑打开「手机同步」，手机打开「同步」→「扫一扫，开始同步」。首次会把电脑账本带入手机；手机已独立创建的账户和记录会合并，不按账户名称猜测对应关系。二维码十分钟有效，关闭同步面板即停止连接；使用手机 App 扫码，普通相机不能代替 App 同步。
 5. 在手机「设置」开启自动采集，并手动授予「通知使用权」。选择需要的支付/银行应用；为通知不含银行卡尾号的来源设置默认记账账户。微信支付也可能走银行卡，不会擅自当作微信零钱。
