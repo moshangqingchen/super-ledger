@@ -22,14 +22,10 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
-import java.net.HttpURLConnection;
-import java.net.URI;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PublicKey;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import javax.net.ssl.HttpsURLConnection;
 
 /** Public-release updater. It never opens, reads, or uploads the user's ledger. */
 public final class AppUpdater {
@@ -53,6 +49,7 @@ public final class AppUpdater {
     private File readyFile;
     private boolean busy = true, offerPending, installRequested;
     private volatile boolean cancelDownload;
+    private UpdateTransport.Operation activeTransfer;
     private String phase = "checking", message = "正在读取更新状态…";
     private long downloaded;
     private Intent pendingConfirmation;
@@ -109,16 +106,18 @@ public final class AppUpdater {
         synchronized (this) { candidate = release; candidateEnvelope = bytes; readyFile = ready ? apk : null; phase = ready ? "ready" : "available"; message = ready ? "安装包已校验，可继续覆盖更新。" : "发现新版 " + release.version + "，可选择下载更新。"; }
     }
     public void check(boolean manual) {
+        final UpdateTransport.Operation operation;
         synchronized (this) {
             if (busy || phase.equals("installing")) return;
             long now = System.currentTimeMillis(), last = preferences.getLong("lastCheckAt", 0);
             if (!UpdatePolicy.shouldCheck(now, last, manual)) return;
             preferences.edit().putLong("lastCheckAt", now).apply(); busy = true; phase = "checking"; message = "正在检查 GitHub 上的公开版本…"; downloaded = 0;
+            operation = new UpdateTransport.Operation(); activeTransfer = operation;
         }
         notifyChanged();
         worker.execute(() -> {
             try {
-                byte[] bytes = fetchManifest(); UpdatePolicy.Release release = UpdatePolicy.verify(bytes, publicKey(), installedVersionCode(), Build.VERSION.SDK_INT);
+                byte[] bytes = UpdateTransport.fetchManifest(operation); UpdatePolicy.Release release = UpdatePolicy.verify(bytes, publicKey(), installedVersionCode(), Build.VERSION.SDK_INT);
                 if (release == null) {
                     synchronized (this) { candidate = null; candidateEnvelope = null; readyFile = null; offerPending = false; phase = "idle"; message = "当前已是最新版本。"; }
                 } else {
@@ -129,75 +128,67 @@ public final class AppUpdater {
                     synchronized (this) { candidate = release; candidateEnvelope = bytes; readyFile = ready ? apk : null; offerPending = true; phase = ready ? "ready" : "available"; message = "发现新版 " + release.version + (ready ? "，安装包已准备好。" : "，可选择下载更新。"); }
                 }
             } catch (Exception error) { synchronized (this) { phase = readyFile != null ? "ready" : candidate != null ? "available" : "idle"; message = "检查更新未完成：" + safeMessage(error) + "。当前版本与账本不受影响，可稍后重试。"; } }
-            finally { synchronized (this) { busy = false; } notifyChanged(); }
+            finally { synchronized (this) { if (activeTransfer == operation) activeTransfer = null; busy = false; } notifyChanged(); }
         });
     }
     private static String safeMessage(Exception error) { String value = error.getMessage(); if (value == null || value.length() > 240) return "网络或版本验证失败"; return value; }
-    private static HttpsURLConnection connection(String url) throws Exception {
-        // Uses Android's normal HTTPS / system proxy configuration. Never bypass an external proxy.
-        HttpsURLConnection connection = (HttpsURLConnection) new URL(url).openConnection();
-        connection.setInstanceFollowRedirects(false); connection.setConnectTimeout(15000); connection.setReadTimeout(20000); connection.setUseCaches(false);
-        connection.setRequestProperty("Accept-Encoding", "identity"); connection.setRequestProperty("User-Agent", "SuperLedger-Mobile-Updater"); return connection;
-    }
-    private byte[] fetchManifest() throws Exception {
-        HttpsURLConnection connection = connection(UpdatePolicy.MANIFEST_URL);
-        try {
-            connection.setRequestProperty("Accept", "application/json"); int status = connection.getResponseCode();
-            if (status != 200) throw new Exception(status == 404 ? "公开更新清单暂未发布" : "版本服务返回状态 " + status);
-            if (connection.getContentLengthLong() > UpdatePolicy.MAX_MANIFEST_BYTES) throw new Exception("版本清单超过允许大小");
-            try (InputStream input = connection.getInputStream()) { return readLimited(input, UpdatePolicy.MAX_MANIFEST_BYTES); }
-        } finally { connection.disconnect(); }
-    }
     public void download() {
-        final UpdatePolicy.Release release; final byte[] envelope;
+        final UpdatePolicy.Release release; final byte[] envelope; final UpdateTransport.Operation operation;
         synchronized (this) {
             if (busy || candidate == null) return;
             if (readyFile != null) { installRequested = true; notifyChanged(); return; }
-            release = candidate; envelope = candidateEnvelope.clone(); busy = true; cancelDownload = false; phase = "downloading"; message = "正在下载并校验安装包…"; downloaded = 0; offerPending = false;
+            release = candidate; envelope = candidateEnvelope.clone(); busy = true; cancelDownload = false; phase = "downloading"; message = "正在连接 GitHub 下载服务器…"; downloaded = 0; offerPending = false;
+            operation = new UpdateTransport.Operation(); activeTransfer = operation;
         }
         notifyChanged();
         worker.execute(() -> {
             File partial = null;
             try {
                 ensureDirectory(); if (directory.getUsableSpace() > 0 && directory.getUsableSpace() < release.size * 2 + 1024 * 1024) throw new Exception("存储空间不足，请留出安装包大小两倍以上的空间");
-                partial = new File(directory, "download-" + release.versionCode + ".part.apk"); downloadFile(release, partial); if (cancelDownload) throw new Exception("下载已取消");
+                // A cancelled DNS/socket task may return late: never let it share
+                // a temporary filename with a later retry.
+                partial = new File(directory, "download-" + release.versionCode + "-" + java.util.UUID.randomUUID() + ".part.apk");
+                UpdateTransport.download(release, partial, operation, new UpdateTransport.Listener() {
+                    @Override public void onStage(String stage) {
+                        synchronized (AppUpdater.this) { if (activeTransfer != operation || cancelDownload) return; message = stage; }
+                        notifyChanged();
+                    }
+                    @Override public void onProgress(long bytes) {
+                        synchronized (AppUpdater.this) { if (activeTransfer != operation || cancelDownload) return; downloaded = bytes; }
+                        notifyChanged();
+                    }
+                });
+                if (cancelDownload) throw new Exception("下载已取消");
+                synchronized (this) { downloaded = release.size; message = "下载完成，正在校验安装包…"; } notifyChanged();
                 verifyApk(partial, release); if (cancelDownload) throw new Exception("下载已取消");
                 File target = artifactFile(release); if (target.exists() && !target.delete()) throw new Exception("无法替换旧的更新缓存");
                 if (!partial.renameTo(target)) throw new Exception("无法保存更新安装包"); partial = null; saveMetadata(envelope);
-                synchronized (this) { readyFile = target; phase = "ready"; message = "下载与校验完成，等待系统确认覆盖更新。"; installRequested = true; }
+                synchronized (this) {
+                    // Order cancellation and readiness atomically, including a
+                    // cancellation arriving during the final disk verification.
+                    if (cancelDownload || activeTransfer != operation) throw new Exception("下载已取消");
+                    readyFile = target; phase = "ready"; message = "下载与校验完成，等待系统确认覆盖更新。"; installRequested = true;
+                }
             } catch (Exception error) { synchronized (this) { phase = "available"; message = safeMessage(error) + "。已有应用和账本未改动，可重新下载。"; installRequested = false; } }
-            finally { if (partial != null && partial.isFile()) partial.delete(); synchronized (this) { busy = false; } notifyChanged(); }
+            finally { if (partial != null && partial.isFile()) partial.delete(); synchronized (this) { if (activeTransfer == operation) activeTransfer = null; busy = false; } notifyChanged(); }
         });
     }
-    public void cancelDownload() { cancelDownload = true; synchronized (this) { if (phase.equals("downloading")) message = "正在取消下载，已有账本不受影响…"; } notifyChanged(); }
-    private void downloadFile(UpdatePolicy.Release release, File outputFile) throws Exception {
-        String address = release.url; long startedAt = System.currentTimeMillis();
-        for (int redirects = 0; redirects <= 5; redirects++) {
-            UpdatePolicy.validateDownloadUrl(address, redirects == 0); if (cancelDownload) throw new Exception("下载已取消");
-            HttpsURLConnection connection = connection(address);
-            try {
-                connection.setRequestProperty("Accept", "application/octet-stream"); int status = connection.getResponseCode();
-                if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
-                    String location = connection.getHeaderField("Location"); if (location == null || redirects == 5) throw new Exception("下载跳转次数或地址无效");
-                    address = new URI(address).resolve(location).toString(); UpdatePolicy.validateDownloadUrl(address, false); continue;
-                }
-                if (status != 200) throw new Exception("下载服务返回状态 " + status);
-                String encoding = connection.getContentEncoding(); if (encoding != null && !encoding.isEmpty() && !encoding.equalsIgnoreCase("identity")) throw new Exception("安装包传输编码不符合要求");
-                long declared = connection.getContentLengthLong(); if (declared >= 0 && declared != release.size) throw new Exception("安装包大小与签名清单不一致");
-                long total = 0, lastNotification = 0;
-                try (InputStream input = connection.getInputStream(); FileOutputStream output = new FileOutputStream(outputFile, false)) {
-                    byte[] bytes = new byte[65536]; int count;
-                    while ((count = input.read(bytes)) >= 0) {
-                        if (cancelDownload) throw new Exception("下载已取消"); if (System.currentTimeMillis() - startedAt > 10 * 60 * 1000L) throw new Exception("下载超时，请稍后重试");
-                        total += count; if (total > release.size || total > UpdatePolicy.MAX_APK_BYTES) throw new Exception("安装包超过签名清单声明的大小"); output.write(bytes, 0, count);
-                        if (System.currentTimeMillis() - lastNotification > 400) { lastNotification = System.currentTimeMillis(); synchronized (this) { downloaded = total; } notifyChanged(); }
-                    }
-                    output.flush(); output.getFD().sync();
-                }
-                if (total != release.size) throw new Exception("安装包下载不完整"); synchronized (this) { downloaded = total; } return;
-            } finally { connection.disconnect(); }
+    public void cancelDownload() {
+        UpdateTransport.Operation operation;
+        synchronized (this) {
+            if (!phase.equals("downloading")) return;
+            cancelDownload = true; operation = activeTransfer; message = "正在取消下载，已有账本不受影响…";
         }
-        throw new Exception("下载跳转过多");
+        if (operation != null) operation.cancel();
+        notifyChanged();
+    }
+    public void openDownloadInBrowser(Activity activity) throws Exception {
+        final String address;
+        synchronized (this) { if (candidate == null) throw new Exception("请先检查并验证新版信息"); address = candidate.url; }
+        UpdatePolicy.validateDownloadUrl(address, true);
+        cancelDownload();
+        try { activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(address))); }
+        catch (android.content.ActivityNotFoundException error) { throw new Exception("没有找到浏览器，可将电脑下载的安装包传到手机，直接覆盖安装，无需卸载"); }
     }
     @SuppressWarnings("deprecation") private static String certificate(PackageInfo info) throws Exception {
         Signature[] signers;

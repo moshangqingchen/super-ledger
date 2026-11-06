@@ -494,10 +494,14 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
             updatePanel.addView(text(title, 18, INK, true)); updatePanel.addView(label(update.message));
             if (update.phase.equals("downloading")) {
                 updateProgressLabel = text("", 13, PURPLE, true); updatePanel.addView(updateProgressLabel);
-                updateProgressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); updateProgressBar.setMax(1000); updateProgressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(PURPLE)); updateProgressBar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(LINE));
+                updateProgressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); updateProgressBar.setMax(1000); updateProgressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(PURPLE)); updateProgressBar.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(PURPLE)); updateProgressBar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(LINE));
                 LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(-1,dp(8)); barParams.topMargin=dp(9); barParams.bottomMargin=dp(5); updatePanel.addView(updateProgressBar,barParams);
                 actionPair(updatePanel,"查看下载",()->mobileUpdates.show(),"取消下载",()->updater.cancelDownload());
             } else if (update.canInstall || update.canDownload) addButton(updatePanel,"查看更新",true,()->mobileUpdates.show());
+            if (update.canDownload || update.phase.equals("downloading")) {
+                addButton(updatePanel,"浏览器下载",false,()->updater.openDownloadInBrowser(this));
+                updatePanel.addView(label("若手机仍无法下载，可把电脑下载的官方 APK 传到手机，直接覆盖安装，无需卸载。"));
+            }
             Button check = button(update.busy ? "正在处理更新…" : "检查更新", false, () -> mobileUpdates.check()); check.setEnabled(!update.busy);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1,-2); params.topMargin=dp(10); updatePanel.addView(check,params);
             divider(updatePanel); updatePanel.addView(text("Android v" + currentVersion() + (update.version.isEmpty() ? "" : "   →   v" + update.version),12,MUTED,false));
@@ -506,8 +510,9 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         }
         if (updateProgressLabel != null) {
             int percentage = update.size > 0 ? (int)Math.min(100, Math.max(0, update.downloaded * 100 / update.size)) : 0;
-            updateProgressLabel.setText(String.format(Locale.CHINA,"%.1f / %.1f MB · %d%%",update.downloaded/1048576.0,update.size/1048576.0,percentage));
-            if (updateProgressBar != null) { updateProgressBar.setIndeterminate(update.size <= 0); updateProgressBar.setProgress(percentage * 10); }
+            boolean connecting = update.downloaded <= 0;
+            updateProgressLabel.setText(connecting ? "正在连接下载服务器…" : String.format(Locale.CHINA,"%.1f / %.1f MB · %d%%",update.downloaded/1048576.0,update.size/1048576.0,percentage));
+            if (updateProgressBar != null) { updateProgressBar.setIndeterminate(connecting || update.size <= 0); updateProgressBar.setProgress(percentage * 10); }
         }
     }
     private List<JSONObject> cnyAccounts(JSONObject state) throws Exception { List<JSONObject> accounts = new ArrayList<>(); JSONArray array = state.getJSONArray("accounts"); for (int i = 0; i < array.length(); i++) if (array.getJSONObject(i).optString("currency", "CNY").equals("CNY")) accounts.add(array.getJSONObject(i)); return accounts; }

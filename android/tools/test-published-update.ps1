@@ -6,7 +6,7 @@
 $ErrorActionPreference = 'Stop'
 $Tools = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Android = Split-Path -Parent $Tools
-if(!$Apk) { $Apk = Join-Path $Android 'release\SuperLedger-Mobile-1.3.0.apk' }
+if(!$Apk) { $Apk = Join-Path $Android 'release\SuperLedger-Mobile-1.3.1.apk' }
 $Source = Join-Path $Android 'app\src\main\java\com\moneylab\superledger\mobile\UpdatePolicy.java'
 $Key = Join-Path $Android 'app\src\main\res\raw\update_public_key.der'
 $Jar = Join-Path $Tools 'lib\json-20240303.jar'

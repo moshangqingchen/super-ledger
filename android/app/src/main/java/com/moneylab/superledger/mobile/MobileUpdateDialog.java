@@ -162,10 +162,21 @@ public final class MobileUpdateDialog {
     }
     private void patchProgress(AppUpdater.Snapshot state) {
         if (progress == null || progressLabel == null) return;
-        progress.setIndeterminate(state.size <= 0); progress.setProgress(UpdatePresentation.percent(state.downloaded, state.size));
-        progressLabel.setText(UpdatePresentation.bytes(state.downloaded) + " / " + UpdatePresentation.bytes(state.size) + "  ·  " + UpdatePresentation.percent(state.downloaded, state.size) + "%");
+        boolean connecting = state.downloaded <= 0;
+        progress.setIndeterminate(connecting || state.size <= 0); progress.setProgress(UpdatePresentation.percent(state.downloaded, state.size));
+        progressLabel.setText(connecting ? "正在连接下载服务器…" : UpdatePresentation.bytes(state.downloaded) + " / " + UpdatePresentation.bytes(state.size) + "  ·  " + UpdatePresentation.percent(state.downloaded, state.size) + "%");
     }
     private void startDownload() { localError = ""; confirmInstall = false; updater.download(); refresh(); }
+    private void openBrowser() {
+        localError = "";
+        try { updater.openDownloadInBrowser(activity); dismiss(); }
+        catch (Exception error) { localError = error.getMessage() == null ? "暂时无法打开浏览器，请稍后重试。" : error.getMessage(); render(updater.snapshot()); }
+    }
+    private void browserFallback(LinearLayout parent) {
+        addButton(parent, "浏览器下载", false, "browser", this::openBrowser);
+        gap(parent, 10);
+        parent.addView(text("连接不畅时可试试浏览器。若仍无法下载，也可把电脑下载的官方 APK 传到手机，直接覆盖安装，无需卸载。", 11, MobileStyle.MUTED, false));
+    }
     private void install() {
         if (!updater.snapshot().canInstall) { refresh(); return; }
         if (host == null || !host.canInstall()) { localError = "请先完成账本同步，再安装更新。"; confirmInstall = false; render(updater.snapshot()); return; }
@@ -206,7 +217,7 @@ public final class MobileUpdateDialog {
             gap(content, 24); ProgressBar spinner = new ProgressBar(activity); spinner.setIndeterminateTintList(ColorStateList.valueOf(MobileStyle.ACCENT)); LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(30), dp(30)); params.gravity = Gravity.CENTER_HORIZONTAL; content.addView(spinner, params); gap(content, 15);
         } else if (downloading) {
             gap(content, 20); progressLabel = text("", 13, MobileStyle.ACCENT, true); content.addView(progressLabel);
-            progress = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal); progress.setMax(100); progress.setProgressTintList(ColorStateList.valueOf(MobileStyle.ACCENT)); progress.setProgressBackgroundTintList(ColorStateList.valueOf(MobileStyle.SOFT));
+            progress = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal); progress.setMax(100); progress.setProgressTintList(ColorStateList.valueOf(MobileStyle.ACCENT)); progress.setIndeterminateTintList(ColorStateList.valueOf(MobileStyle.ACCENT)); progress.setProgressBackgroundTintList(ColorStateList.valueOf(MobileStyle.SOFT));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(8)); params.topMargin = dp(11); params.bottomMargin = dp(10); content.addView(progress, params); patchProgress(state);
         } else if (state.canDownload || state.canInstall) notes(content, state);
         if (!confirmInstall && !state.message.isEmpty() && !checking && !installing) {
@@ -223,12 +234,14 @@ public final class MobileUpdateDialog {
         else if (downloading) {
             addButton(content, "后台下载", true, "background", this::dismiss);
             Button cancel = button(cancelRequested ? "正在取消…" : "取消下载", false, "cancel", () -> { cancelRequested = true; updater.cancelDownload(); refresh(); }); cancel.setEnabled(!cancelRequested); LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2); params.topMargin = dp(10); content.addView(cancel, params);
+            browserFallback(content);
         } else if (state.canInstall) {
             addButton(content, "准备安装", true, "install", this::install); addButton(content, "稍后安装", false, "close", this::dismiss);
         } else if (state.canDownload) {
             addButton(content, "下载更新", true, "download", this::startDownload);
             if (state.message.startsWith("检查更新未完成")) addButton(content, "重新检查", false, "check", this::check);
             addButton(content, "稍后提醒", false, "close", this::dismiss);
+            browserFallback(content);
         } else {
             if (!latest) addButton(content, "检查更新", true, "check", this::check);
             addButton(content, latest ? "继续记账" : "稍后再说", latest, "close", this::dismiss);
