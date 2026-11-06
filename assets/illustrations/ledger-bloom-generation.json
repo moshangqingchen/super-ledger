@@ -1,0 +1,36 @@
+{
+  "status": "completed",
+  "tool": "built-in image_gen.imagegen",
+  "model": "Not exposed by the tool; latest built-in route requested",
+  "providerGroup": "Not exposed",
+  "asyncSupport": "Not confirmable: tool schema exposes no submit/status/job/idempotency interface",
+  "requestedDimensionsInPrompt": "1024x1024",
+  "sizeParameter": "Not exposed",
+  "qualityParameter": "Not exposed",
+  "requestedCount": 1,
+  "requestedOutputFormatInPrompt": "PNG",
+  "transparent_background": true,
+  "promptFile": "assets/illustrations/ledger-bloom.prompt.txt",
+  "cost": "Unavailable: tool exposes neither billing nor usage; not claimed free",
+  "currency": "Unavailable",
+  "actualMode": "RGBA",
+  "actualOutputFormat": "PNG",
+  "outputFile": "assets/illustrations/ledger-bloom.png",
+  "bytes": 1091941,
+  "resultFields": [
+    "image_url",
+    "output_hint"
+  ],
+  "billedUsage": "Not exposed",
+  "postProcessing": "None; original PNG bytes copied unchanged",
+  "generationCalls": 1,
+  "sourceAndCopySha256Match": true,
+  "sha256": "685B4B7F2C170A27F0864D1B7BC9C828AA6D266A656DF9AA377EC719126D75A3",
+  "actualCount": 1,
+  "completedAtUtc": "2026-11-06T03:08:34.5492501Z",
+  "actualDimensions": "1254x1254",
+  "alphaExtrema": [
+    0,
+    255
+  ]
+}

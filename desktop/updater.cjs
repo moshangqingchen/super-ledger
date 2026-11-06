@@ -153,7 +153,7 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
   if (!path.isAbsolute(userDataDirectory) || !publicKey) throw new Error('更新器配置不完整。');
   const directory = path.join(userDataDirectory, 'updates'), preferences = path.join(directory, 'update-state.json');
   let closed = false, checking = null, downloading = null, installing = false, controller, candidate = null, readyFile = null;
-  let phase = 'idle', error = '', downloadedBytes = 0, lastCheckedAt = null, deferredVersion = '', deferredUntil = 0, highestVersion = currentVersion;
+  let phase = 'idle', error = '', operation = '', downloadedBytes = 0, lastCheckedAt = null, deferredVersion = '', deferredUntil = 0, highestVersion = currentVersion;
   function ensureDirectory() {
     fs.mkdirSync(userDataDirectory, { recursive: true });
     if (fs.existsSync(directory) && fs.lstatSync(directory).isSymbolicLink()) throw new Error('更新目录不能是目录链接。');
@@ -167,7 +167,7 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
     if (typeof saved.deferredVersion === 'string' && VERSION.test(saved.deferredVersion) && Number.isSafeInteger(saved.deferredUntil) && saved.deferredUntil <= now() + PROMPT_COOLDOWN_MS) { deferredVersion = saved.deferredVersion; deferredUntil = saved.deferredUntil; }
     if (typeof saved.highestVersion === 'string' && VERSION.test(saved.highestVersion) && compareVersions(saved.highestVersion, highestVersion) > 0) highestVersion = saved.highestVersion;
   } catch { /* A missing/broken reminder preference cannot authorize an update. */ }
-  const status = () => ({ enabled: Boolean(enabled) && !closed, currentVersion, phase, error, lastCheckedAt, availableVersion: candidate?.version || null, notes: candidate?.notes || '', downloadedBytes, totalBytes: candidate?.size || 0, ready: Boolean(readyFile), deferredUntil });
+  const status = () => ({ enabled: Boolean(enabled) && !closed, currentVersion, phase, error, operation, lastCheckedAt, availableVersion: candidate?.version || null, notes: candidate?.notes || '', downloadedBytes, totalBytes: candidate?.size || 0, ready: Boolean(readyFile), deferredUntil });
   function emit() { try { onStatus(status()); } catch { /* UI listeners cannot change update state. */ } }
   function persist() {
     ensureDirectory();
@@ -181,7 +181,7 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
     if (checking) return checking;
     if (downloading || installing) return status();
     checking = Promise.resolve().then(async () => {
-      phase = 'checking'; error = ''; emit();
+      phase = 'checking'; operation = 'check'; error = ''; emit();
       controller = new AbortController();
       try {
         const result = await request(MANIFEST_URL, { signal: controller.signal, maxBytes: MAX_MANIFEST_BYTES, timeoutMs: 20000 });
@@ -209,7 +209,7 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
     const update = { ...candidate };
     downloading = Promise.resolve().then(async () => {
       let temporary, fd;
-      phase = 'downloading'; error = ''; downloadedBytes = 0; controller = new AbortController(); emit();
+      phase = 'downloading'; operation = 'download'; error = ''; downloadedBytes = 0; controller = new AbortController(); emit();
       try {
         ensureDirectory();
         const target = path.join(directory, `SuperLedger-Setup-${update.version}.exe`);
@@ -260,7 +260,7 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
   async function install() {
     available();
     if (installing || downloading || checking || !readyFile || !candidate) throw new Error('请先下载并验证新版本。');
-    installing = true; phase = 'installing'; error = ''; emit();
+    installing = true; phase = 'installing'; operation = 'install'; error = ''; emit();
     try {
       if (compareVersions(candidate.version, currentVersion) <= 0) throw new Error('不能安装相同或更早版本。');
       try { await verifyInstaller(readyFile, candidate); }

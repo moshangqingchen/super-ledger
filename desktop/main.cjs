@@ -8,6 +8,7 @@ const { execFile } = require('node:child_process');
 const { migrateLegacyData } = require('./migrate.cjs');
 const { assertSafeExport } = require('./fs-safety.cjs');
 const { createUpdater, CHECK_INTERVAL_MS } = require('./updater.cjs');
+const { createUpdateController } = require('./update-controller.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_ID = 'com.moneylab.superledger';
@@ -24,7 +25,7 @@ app.commandLine.appendSwitch('disable-background-networking');
 const dataDirectory = path.join(app.getPath('userData'), 'data');
 const protectedDirectories = [app.getPath('userData')];
 let mainWindow, tray, server, origin = '', quitting = false, alreadyClosing = false;
-let updater, updateTimer, updateStartupTimer, updatePromptBusy = false, downloadPromptBusy = false, installPromptBusy = false;
+let updater, updateController, updateTimer, updateStartupTimer;
 const sessionToken = randomBytes(32).toString('hex');
 const preferencesFile = path.join(app.getPath('userData'), 'desktop-settings.json');
 let preferences = { keepInTray: true };
@@ -48,9 +49,10 @@ function configureIpc() {
   ipcMain.handle('ledger:info',event=>{trusted(event);return info();});
   ipcMain.handle('ledger:update-status',event=>{trusted(event);return updater.status();});
   ipcMain.handle('ledger:update-check',async event=>{trusted(event);await checkUpdates(true);return updater.status();});
-  ipcMain.handle('ledger:update-download',async event=>{trusted(event);await downloadUpdate();return updater.status();});
+  ipcMain.handle('ledger:update-download',async event=>{trusted(event);return updateController.download();});
   ipcMain.handle('ledger:update-cancel',event=>{trusted(event);return updater.cancelDownload();});
-  ipcMain.handle('ledger:update-install',async event=>{trusted(event);await offerInstall();return updater.status();});
+  ipcMain.handle('ledger:update-install',async event=>{trusted(event);return updateController.install();});
+  ipcMain.handle('ledger:update-defer',event=>{trusted(event);return updateController.defer();});
   ipcMain.handle('ledger:preferences',(event,value)=>{
     trusted(event);if(!value||typeof value.keepInTray!=='boolean')throw new Error('设置格式无效');
     preferences.keepInTray=value.keepInTray;savePreferences();updateTray();return info();
@@ -124,78 +126,31 @@ function initializeUpdater() {
     publicKey:fs.readFileSync(path.join(ROOT,'assets','update-public-key.pem'),'utf8'),
     enabled:app.isPackaged&&process.platform==='win32'&&!ISOLATED_MODE,
     onStatus:publishUpdateStatus});
+  updateController=createUpdateController({updater,
+    isVisible:()=>!quitting&&Boolean(mainWindow&&!mainWindow.isDestroyed()&&mainWindow.isVisible()&&!mainWindow.isMinimized()),
+    hasOpenEditor,
+    notify:value=>{if(mainWindow&&!mainWindow.isDestroyed()&&!quitting)mainWindow.webContents.send('ledger:update-prompt',value);},
+    quit:()=>{quitting=true;app.quit();},
+  });
 }
 async function hasOpenEditor() {
   if(!mainWindow||mainWindow.isDestroyed())return true;
   try{return await mainWindow.webContents.executeJavaScript('Boolean(document.querySelector(".modal form"))');}
   catch{return true;}
 }
-async function updateMessage(options) {
-  if(!mainWindow||mainWindow.isDestroyed()||quitting)return {response:options.cancelId??1};
-  return dialog.showMessageBox(mainWindow,{title:'超级账本 · 应用更新',noLink:true,...options});
-}
-async function offerInstall() {
-  if(installPromptBusy||!updater?.status().ready||quitting)return;
-  installPromptBusy=true;
-  try{
-    if(await hasOpenEditor()){
-      await updateMessage({type:'info',message:'新版本已下载，请先保存正在编辑的内容',detail:'当前有打开的编辑表单。请返回完成保存，再到「账本设置 → 应用更新」点击安装。',buttons:['返回保存'],defaultId:0,cancelId:0});
-      return;
-    }
-    const value=updater.status();
-    const choice=await updateMessage({type:'question',message:`安装超级账本 ${value.availableVersion}？`,detail:'将正常退出当前应用，覆盖升级已安装的超级账本，完成后重新打开。账本仍保存在应用数据目录。请确认需要的内容已经保存。',buttons:['退出并安装','稍后安装'],defaultId:1,cancelId:1});
-    if(choice.response!==0){updater.defer();return;}
-    // A form can be opened while a download is running. Recheck immediately
-    // before spawning, and never abandon an open editor to install an update.
-    if(await hasOpenEditor())return;
-    await updater.install();
-    quitting=true;app.quit();
-  }catch(error){await updateMessage({type:'error',message:'暂时无法安装更新',detail:error.message,buttons:['知道了'],defaultId:0,cancelId:0});}
-  finally{installPromptBusy=false;}
-}
-async function downloadUpdate() {
-  if(downloadPromptBusy||quitting)return;
-  downloadPromptBusy=true;
-  const progressDialog=new AbortController();let finished=false;
-  try{
-    const value=updater.status();
-    if(!value.availableVersion)throw new Error('请先检查可用更新。');
-    const progress=updateMessage({type:'info',message:`正在下载超级账本 ${value.availableVersion}`,detail:'下载完成后会再次询问是否退出安装。你可以继续使用账本，也可在设置中查看进度或取消下载。',buttons:['取消下载','后台下载'],defaultId:1,cancelId:1,signal:progressDialog.signal});
-    void progress.then(choice=>{if(!finished&&choice.response===0)updater.cancelDownload();}).catch(()=>{});
-    const result=await updater.download();
-    finished=true;progressDialog.abort();
-    if(result.ready)await offerInstall();
-    else if(result.phase==='error')await updateMessage({type:'error',message:'更新未能下载完成',detail:result.error,buttons:['知道了'],defaultId:0,cancelId:0});
-  }catch(error){await updateMessage({type:'error',message:'暂时无法下载更新',detail:error.message,buttons:['知道了'],defaultId:0,cancelId:0});}
-  finally{finished=true;progressDialog.abort();downloadPromptBusy=false;}
-}
 async function offerUpdate(manual=false) {
-  if(!updater||updatePromptBusy||downloadPromptBusy||installPromptBusy||quitting)return;
-  const value=updater.status();
-  if(!value.enabled||!['available','ready'].includes(value.phase)||!value.availableVersion)return;
-  if(!manual&&(!updater.shouldPrompt()||!mainWindow?.isVisible()||await hasOpenEditor()))return;
-  updatePromptBusy=true;
-  try{
-    if(value.ready){await offerInstall();return;}
-    const choice=await updateMessage({type:'info',message:`发现新版本 ${value.availableVersion}`,detail:`当前版本 ${value.currentVersion}\n\n${value.notes||'包含功能改进与问题修复。'}\n\n下载前会验证发布签名，下载后会校验安装包。`,buttons:['下载更新','稍后提醒'],defaultId:1,cancelId:1});
-    if(choice.response===0)await downloadUpdate();else updater.defer();
-  }catch(error){if(manual)await updateMessage({type:'error',message:'更新暂不可用',detail:error.message,buttons:['知道了'],defaultId:0,cancelId:0});}
-  finally{updatePromptBusy=false;}
+  if(!updateController||quitting)return;
+  return updateController.offer(manual);
 }
 async function checkUpdates(manual=false) {
-  if(!updater||quitting)return;
-  try{
-    const result=await updater.check();
-    if(result.phase==='error'){
-      if(manual)await updateMessage({type:'warning',message:'未能检查更新',detail:result.error,buttons:['知道了'],defaultId:0,cancelId:0});
-    }else if(['available','ready'].includes(result.phase))await offerUpdate(manual);
-    else if(manual&&result.phase==='idle')await updateMessage({type:'info',message:'当前已经是最新版本',detail:`超级账本 ${result.currentVersion}`,buttons:['知道了'],defaultId:0,cancelId:0});
-  }catch(error){if(manual)await updateMessage({type:'warning',message:'当前无法检查更新',detail:error.message,buttons:['知道了'],defaultId:0,cancelId:0});}
+  if(!updateController||quitting)return;
+  return updateController.check(manual);
 }
 function scheduleUpdates() {
   if(!updater.status().enabled)return;
-  updateStartupTimer=setTimeout(()=>{void checkUpdates(false);},12000);updateStartupTimer.unref();
-  updateTimer=setInterval(()=>{void checkUpdates(false);},CHECK_INTERVAL_MS);updateTimer.unref();
+  const check=()=>{void checkUpdates(false).catch(error=>log(`Update check: ${error.message}`));};
+  updateStartupTimer=setTimeout(check,12000);updateStartupTimer.unref();
+  updateTimer=setInterval(check,CHECK_INTERVAL_MS);updateTimer.unref();
 }
 async function configureSession(appSession) {
   await appSession.setProxy({mode:'fixed_servers',proxyRules:'http://127.0.0.1:10090',proxyBypassRules:'<local>'});
@@ -216,9 +171,9 @@ function createWindow(appSession) {
   const area=screen.getPrimaryDisplay().workAreaSize;
   mainWindow=new BrowserWindow({
     width:Math.min(1420,area.width-60),height:Math.min(1040,area.height-50),minWidth:960,minHeight:680,
-    title:UI_TEST_MODE?'超级账本 · 测试窗口':'超级账本',show:false,backgroundColor:'#f8f8f5',autoHideMenuBar:true,
+    title:UI_TEST_MODE?'超级账本 · 测试窗口':'超级账本',show:false,backgroundColor:'#f7f8fc',autoHideMenuBar:true,
     icon:path.join(ROOT,'assets','app-icon.ico'),titleBarStyle:'hidden',
-    titleBarOverlay:{color:'#f8f8f5',symbolColor:'#777586',height:36},
+    titleBarOverlay:{color:'#f7f8fc',symbolColor:'#777586',height:36},
     webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false,session:appSession}
   });
   mainWindow.setMenu(null);
@@ -229,6 +184,8 @@ function createWindow(appSession) {
   mainWindow.webContents.on('render-process-gone',(_event,details)=>log(`Renderer stopped: ${details.reason}`));
   mainWindow.on('close',event=>{if(!quitting&&!TEST_MODE&&preferences.keepInTray&&tray){event.preventDefault();mainWindow.hide();}});
   mainWindow.on('closed',()=>{mainWindow=null;});
+  mainWindow.on('focus',()=>{void offerUpdate(false);});
+  mainWindow.webContents.on('did-finish-load',()=>updateController?.resetPrompt());
   mainWindow.once('ready-to-show',()=>{if(!TEST_MODE)mainWindow.show();});
   return mainWindow.loadURL(origin+'/');
 }

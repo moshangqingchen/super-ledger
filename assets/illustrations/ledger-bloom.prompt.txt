@@ -1,0 +1,9 @@
+Use case: stylized-concept
+Asset type: one small decorative illustration for a clean personal finance desktop application for a young adult.
+Primary request: A tasteful, premium, airy 3D illustration of a softly rounded lilac wallet with one translucent pale aqua bank card tucked inside, a single soft silver coin, and a tiny fresh mint-green sprout beside it. The card is blank, without digits or text. The composition suggests calm everyday money management and gradual growth.
+Style/medium: polished soft 3D product illustration, satin lilac ceramic-like wallet, frosted translucent glass card, finely controlled soft studio lighting, smooth natural shadows. Contemporary and refined, not childish, not cartoon mascot, no glossy plastic clutter.
+Composition/framing: compact balanced single-object cluster, centered, three-quarter view, complete uncropped silhouette, generous transparent margin on all sides; use approximately 70 percent of the square canvas. Must remain legible when displayed at 160-220 pixels wide.
+Color palette: periwinkle #8D83F7, pale lavender #E6E1FF, pale aqua #BFEDEB, mint #ACDEC7, small brushed silver accent. Quiet soft color, dark violet details only for subtle depth.
+Backdrop: genuinely transparent alpha background. No ground plane, no frame, no colored rectangle, no scene or horizon. Only a faint tight natural contact shadow beneath the object cluster, with transparency around it.
+Text: none. No letters, numbers, currency glyphs, brand logos, watermark, UI panels or charts.
+Output request: one square image, requested 1024 x 1024 pixels, PNG with transparent background. Use the currently available built-in image generation model. Preserve its native generated pixels; no local compositing or post-generation illustration edits.
