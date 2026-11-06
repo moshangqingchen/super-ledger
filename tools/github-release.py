@@ -83,7 +83,7 @@ def main():
     sub.add_parser("create-repo")
     sub.add_parser("repo")
     new = sub.add_parser("create-release")
-    new.add_argument("tag"); new.add_argument("--body-file", required=True)
+    new.add_argument("tag"); new.add_argument("--body-file", required=True); new.add_argument("--name")
     get = sub.add_parser("release"); get.add_argument("tag")
     upload = sub.add_parser("upload"); upload.add_argument("release_id", type=int); upload.add_argument("file"); upload.add_argument("--name")
     assets = sub.add_parser("assets"); assets.add_argument("release_id", type=int)
@@ -102,7 +102,7 @@ def main():
         value = request(token, "GET", API_ROOT)
         output = {key: value.get(key) for key in ("full_name", "html_url", "clone_url", "private", "default_branch")}
     elif args.action == "create-release":
-        value = request(token, "POST", API_ROOT + "/releases", {"tag_name": args.tag, "target_commitish": "main", "name": "超级账本 " + args.tag, "body": Path(args.body_file).read_text(encoding="utf-8-sig"), "draft": True, "prerelease": False})
+        value = request(token, "POST", API_ROOT + "/releases", {"tag_name": args.tag, "target_commitish": "main", "name": args.name or ("超级账本 " + args.tag), "body": Path(args.body_file).read_text(encoding="utf-8-sig"), "draft": True, "prerelease": False})
         output = compact_release(value)
     elif args.action == "release":
         output = compact_release(request(token, "GET", API_ROOT + "/releases/tags/" + quote(args.tag, safe="")))

@@ -38,7 +38,7 @@ public final class AppUpdater {
     private static AppUpdater instance;
     public interface Listener { void onUpdaterChanged(); }
     public static final class Snapshot {
-        public String phase, message, version;
+        public String phase, message, version, notes;
         public long size, downloaded, checkedAt;
         public boolean busy, canDownload, canInstall;
     }
@@ -74,6 +74,7 @@ public final class AppUpdater {
     private void notifyChanged() { main.post(() -> { Listener target; synchronized (this) { target = listener.get(); } if (target != null) target.onUpdaterChanged(); }); }
     public synchronized Snapshot snapshot() {
         Snapshot state = new Snapshot(); state.phase = phase; state.message = message; state.version = candidate == null ? "" : candidate.version; state.size = candidate == null ? 0 : candidate.size;
+        state.notes = candidate == null ? "" : candidate.notes;
         state.downloaded = downloaded; state.busy = busy || phase.equals("installing"); state.canDownload = !state.busy && candidate != null && readyFile == null; state.canInstall = !state.busy && candidate != null && readyFile != null;
         state.checkedAt = preferences.getLong("lastCheckAt", 0); return state;
     }

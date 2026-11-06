@@ -63,3 +63,16 @@ Windows 在用户点击「退出并安装」且没有打开的编辑表单后，
 这里的清单签名不等于 Windows Authenticode 发布者签名。当前桌面安装包仍未配置 Windows 发布者证书。APK 与更新清单的私钥始终留在本机，不写入 CI 配置或公开仓库。
 
 关闭的应用不会为更新自行启动。检查/下载失败不会改动账本；同一个版本选择稍后后会暂缓提醒，可随时在设置手动检查。
+
+## 只更新 Android
+
+Android 独立发布使用 `android-v<手机版本>` 标签。保留公开清单中已签名的整个 Windows 段（版本、原安装包 URL、哈希和说明），不会给电脑重复推送同版本更新。不要重新生成 Windows 1.8.0 安装包。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File android/build.ps1
+node tools/create-android-update-manifest.mjs --base-manifest updates/stable.json --android android/release/SuperLedger-Mobile-1.3.0.apk --android-version 1.3.0 --android-code 10300 --notes release/release-notes-android-1.3.0.md --output release/stable-android-1.3.0.json
+powershell -NoProfile -ExecutionPolicy Bypass -File android/tools/test-published-update.ps1 -Manifest release/stable-android-1.3.0.json -Apk android/release/SuperLedger-Mobile-1.3.0.apk -PreviousCode 10200
+python tools/github-release.py create-release android-v1.3.0 --name "超级账本 · Android 1.3.0" --body-file release/release-notes-android-1.3.0.md
+```
+
+先提交源码，再创建草稿。上传新 APK、候选签名清单和 SHA256SUMS；为方便 `releases/latest` 同时提供两端下载，可附上上一版 Windows 安装包的原始文件，不能用重新打包的同版本替换它。核验远端 digest/size、发布草稿且 APK 公共下载可用后，再把候选清单复制到 `updates/stable.json` 提交推送。最后用实际 Android 更新策略确认旧手机版本收到新版、同版本不重复提示，用实际 Windows 更新器确认电脑版本保持不变。

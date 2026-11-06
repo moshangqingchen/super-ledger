@@ -1,7 +1,7 @@
-param(
+﻿param(
   [switch]$Check,
-  [string]$VersionName = '1.2.0',
-  [int]$VersionCode = 10200
+  [string]$VersionName = '1.3.0',
+  [int]$VersionCode = 10300
 )
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -63,7 +63,9 @@ $Compiled = Join-Path $Build 'resources.zip'
 $Unsigned = Join-Path $Build 'unsigned.apk'
 $Aligned = Join-Path $Build 'aligned.apk'
 $Output = Join-Path $Release ('SuperLedger-Mobile-' + $VersionName + '.apk')
-Run $Aapt2 @('compile','--dir',(Join-Path $Sources 'res'),'-o',$Compiled)
+# Keep generated artwork byte-for-byte; AAPT2's default PNG processing can alter
+# transparent pixels even when the source image itself is copied unchanged.
+Run $Aapt2 @('compile','--no-crunch','--dir',(Join-Path $Sources 'res'),'-o',$Compiled)
 Run $Aapt2 @('link','-o',$Unsigned,'-I',$AndroidJar,'--manifest',(Join-Path $Sources 'AndroidManifest.xml'),'--java',$Gen,'--min-sdk-version','26','--target-sdk-version','35','--version-code',([string]$VersionCode),'--version-name',$VersionName,'--auto-add-overlay',$Compiled)
 $SourceFiles = @((Get-ChildItem -LiteralPath (Join-Path $Sources 'java') -Filter '*.java' -Recurse).FullName) + @((Get-ChildItem -LiteralPath $Gen -Filter '*.java' -Recurse).FullName)
 if(!$SourceFiles.Count) { throw 'No Android Java sources found.' }

@@ -1,13 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#6254D9</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorAccent">#6B5CF0</item>
+        <item name="android:colorControlActivated">#6B5CF0</item>
+        <item name="android:colorControlNormal">#798096</item>
+        <item name="android:colorButtonNormal">#EFEDFF</item>
+        <item name="android:textColorPrimary">#20233B</item>
+        <item name="android:textColorSecondary">#798096</item>
+        <item name="android:colorEdgeEffect">#C8C1FF</item>
+        <item name="android:alertDialogTheme">@style/LedgerDialogTheme</item>
+        <item name="android:buttonStyle">@style/LedgerButton</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#F7F6F2</item>
-        <item name="android:navigationBarColor">#F7F6F2</item>
+        <item name="android:statusBarColor">#F7F8FC</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#F7F6F2</item>
+        <item name="android:windowBackground">#F7F8FC</item>
+    </style>
+    <style name="LedgerDialogTheme" parent="android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorAccent">#6B5CF0</item>
+        <item name="android:colorControlActivated">#6B5CF0</item>
+        <item name="android:textColorPrimary">#20233B</item>
+        <item name="android:textColorSecondary">#798096</item>
+        <item name="android:windowMinWidthMajor">85%</item>
+        <item name="android:windowMinWidthMinor">92%</item>
+    </style>
+    <style name="LedgerButton" parent="android:style/Widget.Material.Button">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:letterSpacing">0</item>
     </style>
 </resources>
