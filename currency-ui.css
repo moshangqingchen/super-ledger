@@ -1,0 +1,170 @@
+/* Currency is part of an account's identity; totals remain clearly labelled CNY. */
+.currency-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-column: 1 / -1;
+  gap: 14px;
+  padding: 17px;
+  border: 1px solid #e6e1f5;
+  border-radius: 15px;
+  background: #f7f5fc;
+}
+.currency-fields .field { min-width: 0; }
+.currency-fields label { color: #55516b; }
+.currency-fields input,
+.currency-fields select { background: #fff; }
+.currency-fields input[inputmode="decimal"] {
+  font-variant-numeric: tabular-nums;
+}
+.currency-hint {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.8;
+  margin: 0;
+}
+.currency-hint strong { color: #686078; font-weight: 600; }
+.currency-fields > .field:only-of-type { grid-column: 1 / -1; }
+.currency-fields.is-cny > .field:first-child { grid-column: 1 / -1; }
+.currency-fields input[readonly] {
+  color: #5b4d9f;
+  border-color: #e0daf5;
+  background: #f0edfa;
+  cursor: default;
+}
+.fx-account-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  grid-column: 1 / -1;
+  min-width: 0;
+  color: #74658d;
+  font-size: 11px;
+  line-height: 1.8;
+}
+.fx-account-status-text { overflow-wrap: anywhere; }
+.fx-account-status.has-error { color: #a16b43; }
+.fx-refresh-btn { flex-shrink: 0; white-space: nowrap; }
+.fx-settings-panel { grid-column: 1 / -1; }
+.fx-settings-panel .panel-head { align-items: flex-start; gap: 16px; }
+.fx-settings-panel .panel-head h2 { display: flex; align-items: center; gap: 8px; }
+.fx-panel-subtitle { margin: 7px 0 0; color: var(--muted); font-size: 11px; }
+.fx-settings-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin-bottom: 18px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+.fx-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  color: #6853b5;
+  background: #f1edff;
+}
+.fx-status-pill i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.fx-status-pill.has-error { color: #9b7045; background: #fbf2e8; }
+.fx-rates-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.fx-rate-item { min-width: 0; padding: 15px; background: #faf9fd; border: 1px solid #eeeaf7; border-radius: 12px; }
+.fx-rate-item > div { display: flex; align-items: baseline; gap: 8px; }
+.fx-rate-item b { color: #6550b8; font-size: 12px; letter-spacing: .03em; }
+.fx-rate-item span { color: var(--muted); font-size: 10px; }
+.fx-rate-item strong { display: block; margin-top: 10px; color: #4e4762; font-size: 13px; font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.fx-rate-item small { display: block; margin-top: 7px; color: #93899f; font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
+.fx-source-errors { padding: 11px 14px; margin-top: 14px; border: 1px solid #f0dfc8; border-radius: 10px; color: #916f4c; background: #fffbf4; font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; }
+.fx-source-errors p { margin: 0; }
+.fx-source-errors b { font-weight: 600; }
+.fx-privacy-note { margin: 15px 0 0; color: var(--muted); font-size: 11px; line-height: 1.9; }
+.currency-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  vertical-align: middle;
+  padding: 3px 7px;
+  margin-left: 6px;
+  border: 1px solid #e6e0f6;
+  border-radius: 6px;
+  background: #f3efff;
+  color: #6d58ba;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.5;
+  letter-spacing: .025em;
+  white-space: nowrap;
+}
+.account-cny-value {
+  margin: -9px 0 17px;
+  color: #80788e;
+  font-size: 12px;
+  line-height: 1.7;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+.account-cny-value .money {
+  color: #6f657d;
+  font-weight: 550;
+}
+.currency-summary-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: #8b8298;
+  font-size: 11px;
+  line-height: 1.8;
+  margin: 9px 0 0;
+  letter-spacing: 0;
+}
+.currency-summary-note > svg { margin-top: 3px; }
+.transfer-receive-field {
+  padding: 16px;
+  border: 1px solid #ded7f3;
+  border-radius: 14px;
+  background: #f6f3ff;
+}
+.transfer-receive-field > label { color: #6b58a2; font-weight: 650; }
+.transfer-receive-field input {
+  background: #fff;
+  font-variant-numeric: tabular-nums;
+}
+.transfer-receive-field .hint { margin-top: 0; }
+.transaction-fx-note {
+  display: block;
+  margin-top: 4px;
+  color: #8a8296;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.7;
+  letter-spacing: 0;
+  white-space: normal;
+}
+.currency-fields[hidden],
+.currency-fields [hidden],
+.currency-hint[hidden],
+.currency-badge[hidden],
+.account-cny-value[hidden],
+.currency-summary-note[hidden],
+.transfer-receive-field[hidden],
+.transaction-fx-note[hidden] { display: none !important; }
+.fx-account-status[hidden],
+.fx-account-status [hidden],
+.fx-settings-panel [hidden] { display: none !important; }
+
+@media (max-width: 540px) {
+  .currency-fields { grid-template-columns: minmax(0, 1fr); padding: 14px; gap: 12px; }
+  .currency-fields .field,
+  .currency-fields .currency-hint { grid-column: 1; }
+  .currency-badge { margin-left: 4px; padding: 2px 6px; }
+  .currency-summary-note { font-size: 11px; }
+  .transfer-receive-field { padding: 13px; }
+  .fx-rates-list { grid-template-columns: minmax(0, 1fr); }
+  .fx-account-status { align-items: flex-start; }
+  .fx-settings-panel .panel-head { flex-wrap: wrap; }
+}

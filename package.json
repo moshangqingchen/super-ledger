@@ -1,0 +1,95 @@
+{
+  "name": "money-lab-local-ledger",
+  "version": "1.6.0",
+  "private": true,
+  "type": "module",
+  "description": "超级账本 Windows 桌面应用 · 收支、资产与会员订阅管理",
+  "main": "desktop/main.cjs",
+  "author": "Money Lab",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node desktop/launch.cjs",
+    "start:web": "node server.mjs",
+    "build:desktop": "node desktop/build.cjs",
+    "build:dir": "node desktop/build.cjs --dir",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "build": {
+    "appId": "com.moneylab.superledger",
+    "productName": "超级账本",
+    "electronVersion": "43.3.0",
+    "asar": true,
+    "npmRebuild": false,
+    "nodeGypRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/main.cjs",
+      "desktop/preload.cjs",
+      "desktop/migrate.cjs",
+      "desktop/fs-safety.cjs",
+      "desktop/updater.cjs",
+      "desktop/legacy-locations.json",
+      "index.html",
+      "app.js",
+      "styles.css",
+      "engine.mjs",
+      "server.mjs",
+      "subscription-catalog.mjs",
+      "assets/alpine-goal.png",
+      "assets/app-icon.png",
+      "assets/app-icon.ico",
+      "assets/brands/**/*",
+      "package.json",
+      "account-presets.mjs",
+      "bank-catalog.mjs",
+      "dashboard.css",
+      "currencies.mjs",
+      "currency-ui.css",
+      "exchange-rates.mjs",
+      "mobile-sync.mjs",
+      "mobile-sync-ui.js",
+      "mobile-sync.css",
+      "assets/vendor/**/*",
+      "assets/update-public-key.pem"
+    ],
+    "extraResources": [
+      { "from": "android/release/SuperLedger-Mobile-1.1.0.apk", "to": "mobile/SuperLedger-Mobile-1.1.0.apk" },
+      { "from": "desktop/enable-mobile-sync.ps1", "to": "mobile/enable-mobile-sync.ps1" },
+      { "from": "docs/mobile-sync-guide.md", "to": "mobile/使用说明.md" }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/app-icon.ico",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "selectPerMachineByDefault": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "超级账本",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "artifactName": "超级账本-安装-${version}.${ext}",
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ],
+      "language": "2052"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawn } = require('node:child_process');
+const root=path.resolve(__dirname,'..');
+const packaged=path.join(root,'release','win-unpacked','超级账本.exe');
+const toolroot=process.env.LEDGER_DESKTOP_TOOLROOT||path.join(root,'node_modules');
+const binary=fs.existsSync(packaged)?packaged:path.join(toolroot,'electron','dist','electron.exe');
+if(!fs.existsSync(binary))throw new Error('没有找到桌面运行环境。请安装 release 目录中的安装包。');
+const args=binary===packaged?[]:[root];
+const environment={...process.env};delete environment.ELECTRON_RUN_AS_NODE;
+const child=spawn(binary,args,{cwd:root,stdio:'inherit',env:environment,windowsHide:false});
+child.on('error',e=>{console.error(e.message);process.exitCode=1;});
+child.on('exit',code=>{process.exitCode=code||0;});

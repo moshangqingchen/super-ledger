@@ -1,0 +1,6 @@
+/tools/downloads/
+/tools/sdk/
+/tools/lib/*.jar
+/.signing/
+/build/
+/release/

@@ -1,0 +1,103 @@
+/**
+ * Local, browser-safe subscription presets. These are editable labels, not live offers.
+ * No prices or account entitlements are inferred from a selected service/tier.
+ * Sources were checked on 2026-11-05; every tier must remain manually editable in UI.
+ * `color` is a presentation accent; logo assets are maintained separately.
+ */
+export const subscriptionCatalog = [
+  {
+    id: 'chatgpt',
+    name: 'ChatGPT',
+    aliases: ['gpt', 'GPT', 'OpenAI'],
+    logo: '/assets/brands/chatgpt.png',
+    color: '#171717',
+    tiers: ['Go', 'Plus', 'Pro 100', 'Pro 200', 'Pro 500'],
+    sources: [
+      { title: 'Pricing | ChatGPT Learn', url: 'https://learn.chatgpt.com/docs/pricing' },
+      { title: 'Meet dots | ChatGPT Learn', url: 'https://learn.chatgpt.com/docs/dots' },
+    ],
+    verifiedDate: '2026-11-05',
+  },
+  {
+    id: 'claude',
+    name: 'Claude',
+    aliases: ['claude', 'Anthropic'],
+    logo: '/assets/brands/claude.svg',
+    color: '#D97757',
+    tiers: ['Pro', 'Max', 'Ultra'],
+    sources: [{ title: 'Pricing | Claude', url: 'https://claude.com/pricing' }],
+    verifiedDate: '2026-11-05',
+  },
+  {
+    id: 'gemini',
+    name: 'Gemini',
+    aliases: ['gemini', 'Google AI', 'Google One'],
+    logo: '/assets/brands/gemini.png',
+    color: '#4285F4',
+    tiers: ['Google AI Plus', 'Google AI Pro', 'Google AI Ultra 5x', 'Google AI Ultra 20x'],
+    sources: [{ title: 'Google AI plans with Cloud Storage - Google One', url: 'https://one.google.com/about/google-ai-plans/' }],
+    verifiedDate: '2026-11-05',
+  },
+  {
+    id: 'ttvoice',
+    name: 'TT语音',
+    aliases: ['tt语音', 'TT', 'tt'],
+    logo: '/assets/brands/ttvoice.png',
+    color: '#5E69F5',
+    tiers: ['超级玩家', '超级玩家SVIP'],
+    sources: [{ title: 'TT语音“超级玩家”服务协议', url: 'https://activity.52tt.com/yy-act/rules/choajiwanjfuwuxieyi/' }],
+    verifiedDate: '2026-11-05',
+  },
+  {
+    id: 'kugou',
+    name: '酷狗音乐',
+    aliases: ['酷狗', 'Kugou'],
+    logo: '/assets/brands/kugou.ico',
+    color: '#009DF4',
+    tiers: ['豪华VIP', '超级VIP', '音乐包'],
+    sources: [{ title: '酷狗音乐会员服务协议', url: 'https://h5.kugou.com/voo/v-a019d10d/index.html' }],
+    verifiedDate: '2026-11-05',
+  },
+  {
+    id: 'baidu',
+    name: '百度网盘',
+    aliases: ['百度云', '百度云盘', 'Baidu Netdisk'],
+    logo: '/assets/brands/baidu.ico',
+    color: '#2F7DF4',
+    tiers: ['会员', '超级会员'],
+    sources: [{ title: '百度网盘 App - App Store（开发者发布的订阅与内购项目）', url: 'https://apps.apple.com/cn/app/id547166701' }],
+    verifiedDate: '2026-11-05',
+  },
+  {
+    id: 'netease',
+    name: '网易云音乐',
+    aliases: ['网易云', 'NetEase Cloud Music'],
+    logo: '/assets/brands/netease.ico',
+    color: '#E6343B',
+    tiers: ['黑胶VIP', '黑胶SVIP', '音乐包'],
+    sources: [{ title: '网易云音乐-数亿音乐畅听 App - App Store（开发者发布的订阅说明）', url: 'https://apps.apple.com/cn/app/id590338362' }],
+    verifiedDate: '2026-11-05',
+  },
+  {
+    id: 'bilibili',
+    name: '哔哩哔哩',
+    aliases: ['B站', 'bilibili', '哔哩哔哩大会员'],
+    logo: '/assets/brands/bilibili.ico',
+    color: '#FB7299',
+    tiers: ['大会员'],
+    sources: [{ title: 'bilibili 大会员服务协议', url: 'https://www.bilibili.com/html/big_protocol.html' }],
+    verifiedDate: '2026-11-05',
+  },
+  {
+    id: 'icloud',
+    name: 'iCloud+',
+    aliases: ['iCloud', 'icloud', '苹果云盘'],
+    logo: '/assets/brands/icloud.png',
+    color: '#479FF8',
+    tiers: ['50GB', '200GB', '2TB', '6TB', '12TB'],
+    sources: [{ title: 'iCloud+ - Apple（中国大陆）', url: 'https://www.apple.com.cn/icloud/' }],
+    verifiedDate: '2026-11-05',
+  },
+];
+
+export const catalog = subscriptionCatalog;
