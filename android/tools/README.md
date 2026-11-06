@@ -75,10 +75,14 @@ node .\android\tools\test-android-interop.mjs
 ```
 
 `test-unit.ps1` is fully offline after dependencies are installed. It compiles the
-actual production parser/store plus their Java main-based tests into a fresh
-build directory, then runs `PaymentParserTest` (27 checks), `LedgerStoreTest`
-(13 checks) and `UpdatePolicyTest` (40 checks). The integration script also runs
-these suites before local network tests.
+actual production business logic plus its Java main-based tests into a fresh
+build directory, then runs `PaymentParserTest`, `PaymentRoutingTest`,
+`PaymentPageParserTest`, `MobileLedgerTest`, `LedgerStoreTest` and
+`UpdatePolicyTest`. The test output reports current counts. Receipt and page
+fixtures are explicitly synthetic, not payment-app compatibility captures.
+See [payment recognition scope](../../docs/payment-recognition.md) for default-off
+accessibility behavior and the remaining real-device validation limits. The
+integration script also runs these suites before local network tests.
 
 This starts the real Node backend on an isolated test ledger and an existing
 private IPv4 interface, then uses the actual Java client to pair, exchange
