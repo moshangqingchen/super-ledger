@@ -32,6 +32,14 @@ public final class UpdateTransportTest {
         catch (AssertionError error) { throw error; }
         catch (Exception error) { check(error.getMessage() != null && !error.getMessage().contains("private-test-value"), "No temporary asset tokens in errors"); return error.getMessage(); }
     }
+    private static void integrityFailure(Task action, String label) throws Exception {
+        try { action.run(); throw new AssertionError("Expected integrity rejection"); }
+        catch (AssertionError error) { throw error; }
+        catch (Exception error) {
+            check(error instanceof UpdatePolicy.IntegrityException, label);
+            check(error.getMessage() != null && !error.getMessage().contains("private-test-value"), "No temporary asset tokens in errors");
+        }
+    }
     private static void until(Condition condition, String description) throws Exception {
         long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
         while (!condition.ready() && System.nanoTime() < end) Thread.sleep(5);
@@ -92,10 +100,10 @@ public final class UpdateTransportTest {
             UpdateTransport.download(APK, BYTES.length, file(directory, "redirect"), new UpdateTransport.Operation(), new Events(), address -> { addresses.add(address); return addresses.size() == 1 ? redirect : target; }, NORMAL);
             check(addresses.equals(Arrays.asList(APK, CDN)), "Only validated GitHub to permitted CDN redirect is opened");
             Fake foreign = new Fake(); foreign.status = 302; foreign.location = "https://untrusted.invalid/file.apk"; AtomicInteger opens = new AtomicInteger();
-            check(failure(() -> UpdateTransport.download(APK, BYTES.length, file(directory, "foreign"), new UpdateTransport.Operation(), null, address -> { opens.incrementAndGet(); return foreign; }, NORMAL)).contains("未授权"), "Foreign redirect rejected");
+            integrityFailure(() -> UpdateTransport.download(APK, BYTES.length, file(directory, "foreign"), new UpdateTransport.Operation(), null, address -> { opens.incrementAndGet(); return foreign; }, NORMAL), "Foreign redirect rejected");
             check(opens.get() == 1, "Unapproved redirect is rejected before opening it");
             Fake insecure = new Fake(); insecure.status = 302; insecure.location = "http://github.com/test.apk";
-            check(failure(() -> download(insecure, file(directory, "insecure"), new UpdateTransport.Operation(), null, NORMAL)).contains("HTTPS"), "HTTPS downgrade rejected");
+            integrityFailure(() -> download(insecure, file(directory, "insecure"), new UpdateTransport.Operation(), null, NORMAL), "HTTPS downgrade rejected");
             AtomicInteger redirects = new AtomicInteger();
             check(failure(() -> UpdateTransport.download(APK, BYTES.length, file(directory, "redirect-loop"), new UpdateTransport.Operation(), null, address -> { redirects.incrementAndGet(); Fake c = new Fake(); c.status = 302; c.location = CDN; return c; }, NORMAL)).contains("跳转"), "Redirect loop rejected");
             check(redirects.get() == 6, "At most five redirects followed");

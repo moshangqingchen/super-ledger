@@ -15,6 +15,7 @@ import java.security.interfaces.RSAPublicKey;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Base64;
 import java.util.Locale;
+import java.util.List;
 
 /** Pure Java policy shared by Android runtime and offline host regression tests. */
 public final class UpdatePolicy {
@@ -24,16 +25,26 @@ public final class UpdatePolicy {
     public static final int MAX_MANIFEST_BYTES = 128 * 1024;
     public static final long MAX_APK_BYTES = 128L * 1024 * 1024;
     private UpdatePolicy() {}
+    public static final class IntegrityException extends Exception {
+        public IntegrityException(String message) { super(message); }
+        public IntegrityException(String message, Throwable cause) { super(message, cause); }
+    }
+    public static final class StaleReleaseException extends Exception {
+        public StaleReleaseException() { super("此更新源的版本较旧，正在尝试其他来源"); }
+    }
     public static boolean shouldCheck(long now, long lastCheck, boolean manual) { return manual || lastCheck <= 0 || now < lastCheck || now - lastCheck >= 6L * 60 * 60 * 1000; }
     public static final class Release {
         public final String version, url, sha256, notes, packageName, certificateSha256;
         public final long versionCode, size;
         public final int minSdk;
+        public final List<UpdateSources.Endpoint> sources;
         private Release(JSONObject android) throws Exception {
             version = requiredString(android, "version", 80);
             if (!version.matches("[0-9]+\\.[0-9]+\\.[0-9]+(?:-[A-Za-z0-9.-]+)?")) throw new Exception("更新版本号格式无效");
             versionCode = strictInteger(android, "versionCode", 1, Integer.MAX_VALUE);
             url = requiredString(android, "url", 4096); validateDownloadUrl(url, true);
+            if (android.has("sources") && !(android.opt("sources") instanceof org.json.JSONArray)) throw new IntegrityException("更新源列表格式无效");
+            sources = UpdateSources.parseSources(url, android.optJSONArray("sources"));
             sha256 = requiredHash(android, "sha256"); certificateSha256 = requiredHash(android, "certificateSha256");
             packageName = requiredString(android, "packageName", 180); if (!PACKAGE_NAME.equals(packageName)) throw new Exception("更新包不属于超级账本手机版");
             size = strictInteger(android, "size", 1, MAX_APK_BYTES);
@@ -58,8 +69,13 @@ public final class UpdatePolicy {
         PublicKey key = KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(der));
         if (!(key instanceof RSAPublicKey) || ((RSAPublicKey) key).getModulus().bitLength() < 2048) throw new Exception("应用更新公钥强度无效"); return key;
     }
-    /** Returns null for a correctly signed release that is not newer than this installation. */
-    public static Release verify(byte[] envelopeBytes, PublicKey key, long installedVersionCode, int deviceSdk) throws Exception {
+    /** Parse all authenticated releases, including older ones, before applying a persisted version fence. */
+    public static Release readVerifiedRelease(byte[] envelopeBytes, PublicKey key) throws Exception {
+        try { return parseVerifiedRelease(envelopeBytes, key); }
+        catch (IntegrityException error) { throw error; }
+        catch (Exception error) { throw new IntegrityException(error.getMessage() == null ? "更新清单验证失败" : error.getMessage(), error); }
+    }
+    private static Release parseVerifiedRelease(byte[] envelopeBytes, PublicKey key) throws Exception {
         if (envelopeBytes == null || envelopeBytes.length == 0 || envelopeBytes.length > MAX_MANIFEST_BYTES) throw new Exception("更新清单过大或为空");
         JSONObject envelope = new JSONObject(utf8(envelopeBytes));
         if (strictInteger(envelope, "schema", 1, 1) != 1) throw new Exception("更新清单版本不兼容");
@@ -75,10 +91,22 @@ public final class UpdatePolicy {
         String publishedAt = requiredString(manifest, "publishedAt", 80);
         if (!publishedAt.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{1,9})?Z")) throw new Exception("更新时间格式无效");
         JSONObject android = manifest.optJSONObject("android"); if (android == null) throw new Exception("更新清单缺少手机版信息");
-        Release release = new Release(android);
+        return new Release(android);
+    }
+    /** Returns null for a correctly signed release that is not newer than this installation. */
+    public static Release verify(byte[] envelopeBytes, PublicKey key, long installedVersionCode, int deviceSdk) throws Exception {
+        Release release = readVerifiedRelease(envelopeBytes, key);
         if (release.versionCode <= installedVersionCode) return null;
         if (release.minSdk > deviceSdk) throw new Exception("新版需要更高的安卓系统，当前版本仍可正常使用");
         return release;
+    }
+    /** Only a stale signed mirror can be retried; a changed artifact at the same version is an integrity error. */
+    public static void validateVersionFence(Release release, long installedCode, long highestCode, String highestSha256, long highestSize) throws Exception {
+        if (release == null || installedCode < 0 || highestCode < 0 || highestSize < 0 || ((highestSha256 == null || highestSha256.isEmpty()) && highestSize != 0)) throw new IntegrityException("已保存的版本校验状态无效");
+        if (release.versionCode < Math.max(installedCode, highestCode)) throw new StaleReleaseException();
+        if (release.versionCode == highestCode && highestSha256 != null && !highestSha256.isEmpty()) {
+            if (!highestSha256.matches("[a-fA-F0-9]{64}") || highestSize < 1 || !release.sha256.equalsIgnoreCase(highestSha256) || release.size != highestSize) throw new IntegrityException("同一版本的安装包校验值发生变化，已停止更新");
+        }
     }
     public static URI validateDownloadUrl(String value, boolean initial) throws Exception {
         if (value == null || value.length() > 12000 || value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) throw new Exception("更新下载地址无效");

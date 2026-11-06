@@ -18,6 +18,7 @@ public final class UpdatePolicyTest {
     private interface Throwing { void run() throws Exception; }
     private static void check(boolean condition, String label) { checks++; if (!condition) throw new AssertionError(label); }
     private static void rejects(Throwing work, String label) throws Exception { boolean rejected = false; try { work.run(); } catch (Exception expected) { rejected = true; } check(rejected, label); }
+    private static void rejectsAs(Class<?> type, Throwing work, String label) throws Exception { try { work.run(); throw new AssertionError(label); } catch (Exception error) { check(type.isInstance(error), label); } }
     private static JSONObject manifest() throws Exception {
         return new JSONObject().put("schema", 1).put("repository", UpdatePolicy.REPOSITORY).put("publishedAt", "2026-11-06T12:00:00.000Z")
             .put("android", new JSONObject().put("version", "1.1.0").put("versionCode", 10100).put("url", "https://github.com/" + UpdatePolicy.REPOSITORY + "/releases/download/v1.6.0/SuperLedger-Mobile-1.1.0.apk")
@@ -72,6 +73,25 @@ public final class UpdatePolicyTest {
         check(UpdatePolicy.shouldCheck(now, now - 6L * 60 * 60 * 1000, false), "six-hour check permitted");
         check(UpdatePolicy.shouldCheck(now, now - 1000, true), "manual check bypasses interval");
         check(UpdatePolicy.shouldCheck(now, now + 10000, false), "clock rollback does not disable future checking");
+        check(UpdatePolicy.readVerifiedRelease(envelope(manifest()), keys.getPublic()).versionCode == 10100, "verified older release remains inspectable before installed-version filtering");
+        check(release.sources.size() == 3 && release.sources.get(0).id.equals("gh-proxy"), "old signed metadata receives registered fallback routes");
+        check(UpdateSources.downloadEndpoints(release, "github").size() == 1 && UpdateSources.downloadEndpoints(release, "github").get(0).url.equals(release.url), "manual GitHub selection uses canonical URL");
+        rejects(() -> release.sources.clear(), "source list cannot be changed after verification");
+        org.json.JSONArray declared = new org.json.JSONArray();
+        for (UpdateSources.Endpoint endpoint : release.sources) declared.put(new JSONObject().put("id", endpoint.id).put("url", endpoint.url));
+        JSONObject multi = manifest(); multi.getJSONObject("android").put("sources", declared);
+        check(verify(multi).sources.size() == 3, "signed registered source list accepted");
+        JSONObject badSources = manifest(); badSources.getJSONObject("android").put("sources", "https://untrusted.invalid");
+        rejectsAs(UpdatePolicy.IntegrityException.class, () -> verify(badSources), "invalid source list is a non-retryable integrity failure");
+        rejectsAs(UpdatePolicy.IntegrityException.class, () -> UpdatePolicy.readVerifiedRelease(tampered.toString().getBytes(StandardCharsets.UTF_8), keys.getPublic()), "bad signature is typed as integrity, never stale or transport failure");
+        UpdatePolicy.validateVersionFence(release, 10000, 10100, release.sha256, release.size); check(true, "matching version and immutable artifact accepted");
+        UpdatePolicy.validateVersionFence(release, 10100, 0, "", 0); check(true, "same installed version remains valid for latest-version suppression");
+        UpdatePolicy.validateVersionFence(release, 10000, 10000, "", 0); check(true, "newer authenticated release accepted without old fingerprint");
+        rejectsAs(UpdatePolicy.StaleReleaseException.class, () -> UpdatePolicy.validateVersionFence(release, 10200, 0, "", 0), "older than installation is a retryable stale mirror");
+        rejectsAs(UpdatePolicy.StaleReleaseException.class, () -> UpdatePolicy.validateVersionFence(release, 10000, 10200, release.sha256, release.size), "older than highest verified release is stale even before installation");
+        rejectsAs(UpdatePolicy.IntegrityException.class, () -> UpdatePolicy.validateVersionFence(release, 10000, 10100, "0000000000000000000000000000000000000000000000000000000000000000", release.size), "same version with different hash is not a retryable old mirror");
+        rejectsAs(UpdatePolicy.IntegrityException.class, () -> UpdatePolicy.validateVersionFence(release, 10000, 10100, release.sha256, release.size + 1), "same version with different size is rejected");
+        rejectsAs(UpdatePolicy.IntegrityException.class, () -> UpdatePolicy.validateVersionFence(release, 10000, 10100, "", release.size), "inconsistent saved fingerprint is rejected");
         System.out.println("UpdatePolicy: " + checks + " offline checks passed (no network, no installer)");
     }
 }

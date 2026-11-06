@@ -93,7 +93,7 @@ public final class MobileUpdateDialog {
         AppUpdater.Snapshot state = updater.snapshot();
         if (!state.canInstall) confirmInstall = false;
         if (!"downloading".equals(state.phase)) cancelRequested = false;
-        String key = state.phase + "|" + state.version + "|" + state.notes + "|" + state.message + "|" + state.busy + "|" + state.canInstall + "|" + state.checkedAt + "|" + confirmInstall + "|" + cancelRequested + "|" + localError;
+        String key = state.phase + "|" + state.version + "|" + state.notes + "|" + state.message + "|" + state.busy + "|" + state.canInstall + "|" + state.checkedAt + "|" + state.sourceMode + "|" + state.sourceLabel + "|" + confirmInstall + "|" + cancelRequested + "|" + localError;
         if (!key.equals(lastKey)) render(state); else patchProgress(state);
     }
     public void dismiss() { if (dialog != null) dialog.dismiss(); }
@@ -125,6 +125,12 @@ public final class MobileUpdateDialog {
         try { return "v" + activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0).versionName; }
         catch (Exception ignored) { return "当前安装版本"; }
     }
+    private String sourceDescription(AppUpdater.Snapshot state) {
+        String mode = state.sourceMode;
+        String selected = "github".equals(mode) ? "GitHub 官方" : "gh-proxy".equals(mode) ? "备用线路一 · GH-Proxy" : "ghfast".equals(mode) ? "备用线路二 · GHFast" : "自动切换";
+        if (state.sourceLabel == null || state.sourceLabel.isEmpty()) return "更新线路 · " + selected;
+        return (state.busy ? "当前线路 · " : "最近使用 · ") + state.sourceLabel + ("auto".equals(mode) ? "（自动切换）" : "");
+    }
     private void versionStrip(LinearLayout content, AppUpdater.Snapshot state) {
         LinearLayout strip = row(); strip.setPadding(dp(15), dp(15), dp(15), dp(15));
         strip.setBackground(MobileStyle.outlined(activity, 0xFFF8F8FE, MobileStyle.LINE, 15));
@@ -137,6 +143,7 @@ public final class MobileUpdateDialog {
         }
         content.addView(strip); gap(content, 9);
         content.addView(text(state.size > 0 ? "Android · " + UpdatePresentation.bytes(state.size) : "Android 手机版", 11, MobileStyle.MUTED, false));
+        gap(content, 6); content.addView(text(sourceDescription(state), 11, MobileStyle.MUTED, false));
     }
     private void notes(LinearLayout parent, AppUpdater.Snapshot state) {
         String value = state.notes == null ? "" : state.notes.trim();
@@ -175,7 +182,7 @@ public final class MobileUpdateDialog {
     private void browserFallback(LinearLayout parent) {
         addButton(parent, "浏览器下载", false, "browser", this::openBrowser);
         gap(parent, 10);
-        parent.addView(text("连接不畅时可试试浏览器。若仍无法下载，也可把电脑下载的官方 APK 传到手机，直接覆盖安装，无需卸载。", 11, MobileStyle.MUTED, false));
+        parent.addView(text("浏览器使用所选线路。若仍不畅，可先取消下载，在设置里更换线路重试，无需卸载。", 11, MobileStyle.MUTED, false));
     }
     private void install() {
         if (!updater.snapshot().canInstall) { refresh(); return; }
@@ -193,7 +200,7 @@ public final class MobileUpdateDialog {
         if (dialog == null || disposed) return;
         int oldScroll = scroll == null ? 0 : scroll.getScrollY();
         Object focusTag = dialog.getCurrentFocus() == null ? null : dialog.getCurrentFocus().getTag();
-        lastKey = state.phase + "|" + state.version + "|" + state.notes + "|" + state.message + "|" + state.busy + "|" + state.canInstall + "|" + state.checkedAt + "|" + confirmInstall + "|" + cancelRequested + "|" + localError;
+        lastKey = state.phase + "|" + state.version + "|" + state.notes + "|" + state.message + "|" + state.busy + "|" + state.canInstall + "|" + state.checkedAt + "|" + state.sourceMode + "|" + state.sourceLabel + "|" + confirmInstall + "|" + cancelRequested + "|" + localError;
         progress = null; progressLabel = null;
         LinearLayout content = column(); content.setPadding(dp(23), dp(20), dp(23), dp(22));
         content.setBackground(MobileStyle.surface(activity, Color.WHITE, 24));
@@ -220,7 +227,7 @@ public final class MobileUpdateDialog {
             progress = new ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal); progress.setMax(100); progress.setProgressTintList(ColorStateList.valueOf(MobileStyle.ACCENT)); progress.setIndeterminateTintList(ColorStateList.valueOf(MobileStyle.ACCENT)); progress.setProgressBackgroundTintList(ColorStateList.valueOf(MobileStyle.SOFT));
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(8)); params.topMargin = dp(11); params.bottomMargin = dp(10); content.addView(progress, params); patchProgress(state);
         } else if (state.canDownload || state.canInstall) notes(content, state);
-        if (!confirmInstall && !state.message.isEmpty() && !checking && !installing) {
+        if (!confirmInstall && !state.message.isEmpty() && !installing) {
             gap(content, 14); content.addView(text(state.message, 12, MobileStyle.MUTED, false));
         }
         if (!localError.isEmpty()) { gap(content, 14); TextView error = text(localError, 13, 0xFFAD595F, false); error.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); content.addView(error); }

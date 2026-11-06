@@ -19,8 +19,10 @@ export function androidUpdatePayload({ baseEnvelope, publicKey, version, version
   if (!Buffer.isBuffer(apkBytes) || apkBytes.length < 1000 || apkBytes.length > 128 * 1024 * 1024 || apkBytes[0] !== 0x50 || apkBytes[1] !== 0x4b) throw new Error('Expected a bounded APK ZIP artifact.');
   if (typeof notes !== 'string' || !notes.trim() || notes.length > 4000 || notes.includes('\0')) throw new Error('Android release notes are missing or invalid.');
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(publishedAt)) throw new Error('Invalid release timestamp.');
-  return { ...base, publishedAt, android: { ...previous, version, versionCode,
-    url: `https://github.com/${repository}/releases/download/android-v${version}/SuperLedger-Mobile-${version}.apk`,
+  const url = `https://github.com/${repository}/releases/download/android-v${version}/SuperLedger-Mobile-${version}.apk`;
+  // Rebuild every route for this immutable release; never inherit old mirror URLs.
+  const sources = [{ id: 'gh-proxy', url: `https://gh-proxy.org/${url}` }, { id: 'ghfast', url: `https://ghfast.top/${url}` }, { id: 'github', url }];
+  return { ...base, publishedAt, android: { ...previous, version, versionCode, url, sources,
     size: apkBytes.length, sha256: createHash('sha256').update(apkBytes).digest('hex'), notes: notes.trim() } };
 }
 

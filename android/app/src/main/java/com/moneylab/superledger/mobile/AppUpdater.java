@@ -34,7 +34,7 @@ public final class AppUpdater {
     private static AppUpdater instance;
     public interface Listener { void onUpdaterChanged(); }
     public static final class Snapshot {
-        public String phase, message, version, notes;
+        public String phase, message, version, notes, sourceMode, sourceLabel;
         public long size, downloaded, checkedAt;
         public boolean busy, canDownload, canInstall;
     }
@@ -49,7 +49,8 @@ public final class AppUpdater {
     private File readyFile;
     private boolean busy = true, offerPending, installRequested;
     private volatile boolean cancelDownload;
-    private UpdateTransport.Operation activeTransfer;
+    private UpdateSourceClient.Session activeSession;
+    private String sourceLabel = "自动选择";
     private String phase = "checking", message = "正在读取更新状态…";
     private long downloaded;
     private Intent pendingConfirmation;
@@ -72,12 +73,47 @@ public final class AppUpdater {
     public synchronized Snapshot snapshot() {
         Snapshot state = new Snapshot(); state.phase = phase; state.message = message; state.version = candidate == null ? "" : candidate.version; state.size = candidate == null ? 0 : candidate.size;
         state.notes = candidate == null ? "" : candidate.notes;
+        state.sourceMode = getSourceMode(); state.sourceLabel = sourceLabel;
         state.downloaded = downloaded; state.busy = busy || phase.equals("installing"); state.canDownload = !state.busy && candidate != null && readyFile == null; state.canInstall = !state.busy && candidate != null && readyFile != null;
         state.checkedAt = preferences.getLong("lastCheckAt", 0); return state;
     }
     public synchronized UpdatePolicy.Release consumeOffer() { if (!offerPending || busy || candidate == null) return null; offerPending = false; return candidate; }
     public synchronized boolean consumeInstallRequest() { if (!installRequested || busy || readyFile == null) return false; installRequested = false; return true; }
     public synchronized Intent consumeConfirmation() { Intent result = pendingConfirmation; pendingConfirmation = null; return result; }
+    public String getSourceMode() {
+        String mode = preferences.getString("sourceMode", "auto");
+        return mode != null && mode.matches("auto|github|gh-proxy|ghfast") ? mode : "auto";
+    }
+    public synchronized void setSourceMode(String mode) throws Exception {
+        if (busy || phase.equals("installing")) throw new Exception("请先取消或完成当前更新，再更换线路");
+        UpdateSources.manifestEndpoints(mode);
+        preferences.edit().putString("sourceMode", mode).apply();
+        sourceLabel = mode.equals("auto") ? "自动选择" : UpdateSources.manifestEndpoints(mode).get(0).label;
+        notifyChanged();
+    }
+    private long highestCode() { return preferences.getLong("highestVerifiedCode", 0); }
+    private void rememberVerified(UpdatePolicy.Release release) {
+        if (release.versionCode < highestCode()) return;
+        preferences.edit().putLong("highestVerifiedCode", release.versionCode).putString("highestVerifiedSha256", release.sha256).putLong("highestVerifiedSize", release.size).apply();
+    }
+    private void validateRemembered(UpdatePolicy.Release release, long installedCode) throws Exception {
+        UpdatePolicy.validateVersionFence(release, installedCode, highestCode(), preferences.getString("highestVerifiedSha256", ""), preferences.getLong("highestVerifiedSize", 0));
+    }
+    private UpdateTransport.Listener transferListener(UpdateSourceClient.Session session, boolean downloading) {
+        return new UpdateTransport.Listener() {
+            @Override public void onStage(String stage) {
+                synchronized (AppUpdater.this) {
+                    if (activeSession != session || session.isCancelled() || downloading && cancelDownload) return;
+                    message = stage; UpdateSources.Endpoint source = session.currentSource(); if (source != null) sourceLabel = source.label;
+                }
+                notifyChanged();
+            }
+            @Override public void onProgress(long bytes) {
+                synchronized (AppUpdater.this) { if (activeSession != session || session.isCancelled() || downloading && cancelDownload) return; if (downloading) downloaded = bytes; }
+                notifyChanged();
+            }
+        };
+    }
     private PublicKey publicKey() throws Exception { try (InputStream input = context.getResources().openRawResource(R.raw.update_public_key)) { return UpdatePolicy.publicKey(readLimited(input, 8192)); } }
     @SuppressWarnings("deprecation") private PackageInfo installedInfo() throws Exception { return context.getPackageManager().getPackageInfo(context.getPackageName(), Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES); }
     @SuppressWarnings("deprecation") private static long versionCode(PackageInfo info) { return Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode; }
@@ -98,67 +134,65 @@ public final class AppUpdater {
         AtomicFile metadata = metadataFile(); File base = metadata.getBaseFile();
         if (!base.exists() && !new File(base.getPath() + ".bak").exists()) { synchronized (this) { phase = "idle"; message = "将在启动时定期检查公开版本。"; } return; }
         byte[] bytes; try (InputStream input = metadata.openRead()) { bytes = readLimited(input, UpdatePolicy.MAX_MANIFEST_BYTES); }
-        UpdatePolicy.Release release = UpdatePolicy.verify(bytes, publicKey(), installedVersionCode(), Build.VERSION.SDK_INT);
-        if (release == null) { clearActiveSession(); synchronized (this) { candidate = null; candidateEnvelope = null; readyFile = null; phase = "idle"; message = "当前版本已安装，账本保留在本机。"; } return; }
+        UpdatePolicy.Release release = UpdatePolicy.readVerifiedRelease(bytes, publicKey());
         if (!release.certificateSha256.equals(certificate(installedInfo()))) throw new Exception("更新清单的签名身份与当前应用不一致");
+        long installedCode = installedVersionCode();
+        if (release.versionCode <= installedCode) { clearActiveSession(); synchronized (this) { candidate = null; candidateEnvelope = null; readyFile = null; phase = "idle"; message = "当前版本已安装，账本保留在本机。"; } return; }
+        if (release.minSdk > Build.VERSION.SDK_INT) throw new Exception("新版需要更高的安卓系统，当前版本仍可正常使用");
+        validateRemembered(release, installedCode); rememberVerified(release);
         File apk = artifactFile(release); boolean ready = false;
         if (apk.isFile()) { try { verifyApk(apk, release); ready = true; } catch (Exception ignored) { /* Never install a stale or altered cached APK. */ } }
         synchronized (this) { candidate = release; candidateEnvelope = bytes; readyFile = ready ? apk : null; phase = ready ? "ready" : "available"; message = ready ? "安装包已校验，可继续覆盖更新。" : "发现新版 " + release.version + "，可选择下载更新。"; }
     }
     public void check(boolean manual) {
-        final UpdateTransport.Operation operation;
+        final UpdateSourceClient.Session session; final String sourceMode;
         synchronized (this) {
             if (busy || phase.equals("installing")) return;
             long now = System.currentTimeMillis(), last = preferences.getLong("lastCheckAt", 0);
             if (!UpdatePolicy.shouldCheck(now, last, manual)) return;
-            preferences.edit().putLong("lastCheckAt", now).apply(); busy = true; phase = "checking"; message = "正在检查 GitHub 上的公开版本…"; downloaded = 0;
-            operation = new UpdateTransport.Operation(); activeTransfer = operation;
+            preferences.edit().putLong("lastCheckAt", now).apply(); busy = true; phase = "checking"; message = "正在检查公开更新版本…"; downloaded = 0;
+            session = new UpdateSourceClient.Session(); activeSession = session; sourceMode = getSourceMode();
         }
         notifyChanged();
         worker.execute(() -> {
             try {
-                byte[] bytes = UpdateTransport.fetchManifest(operation); UpdatePolicy.Release release = UpdatePolicy.verify(bytes, publicKey(), installedVersionCode(), Build.VERSION.SDK_INT);
-                if (release == null) {
+                long installedCode = installedVersionCode();
+                UpdateSourceClient.ManifestResult result = UpdateSourceClient.checkManifest(sourceMode, publicKey(), installedCode, highestCode(), preferences.getString("highestVerifiedSha256", ""), preferences.getLong("highestVerifiedSize", 0), certificate(installedInfo()), Build.VERSION.SDK_INT, session, transferListener(session, false));
+                byte[] bytes = result.envelope; UpdatePolicy.Release release = result.release;
+                synchronized (this) { sourceLabel = result.source.label; }
+                if (release.versionCode <= installedCode) {
+                    rememberVerified(release);
                     synchronized (this) { candidate = null; candidateEnvelope = null; readyFile = null; offerPending = false; phase = "idle"; message = "当前已是最新版本。"; }
                 } else {
                     if (!release.certificateSha256.equals(certificate(installedInfo()))) throw new Exception("更新清单的签名身份与当前应用不一致");
                     File apk = artifactFile(release); boolean ready = false;
                     if (apk.isFile()) { try { verifyApk(apk, release); ready = true; } catch (Exception ignored) {} }
                     saveMetadata(bytes);
+                    rememberVerified(release);
                     synchronized (this) { candidate = release; candidateEnvelope = bytes; readyFile = ready ? apk : null; offerPending = true; phase = ready ? "ready" : "available"; message = "发现新版 " + release.version + (ready ? "，安装包已准备好。" : "，可选择下载更新。"); }
                 }
             } catch (Exception error) { synchronized (this) { phase = readyFile != null ? "ready" : candidate != null ? "available" : "idle"; message = "检查更新未完成：" + safeMessage(error) + "。当前版本与账本不受影响，可稍后重试。"; } }
-            finally { synchronized (this) { if (activeTransfer == operation) activeTransfer = null; busy = false; } notifyChanged(); }
+            finally { synchronized (this) { if (activeSession == session) activeSession = null; busy = false; } notifyChanged(); }
         });
     }
     private static String safeMessage(Exception error) { String value = error.getMessage(); if (value == null || value.length() > 240) return "网络或版本验证失败"; return value; }
     public void download() {
-        final UpdatePolicy.Release release; final byte[] envelope; final UpdateTransport.Operation operation;
+        final UpdatePolicy.Release release; final byte[] envelope; final UpdateSourceClient.Session session; final String sourceMode;
         synchronized (this) {
             if (busy || candidate == null) return;
             if (readyFile != null) { installRequested = true; notifyChanged(); return; }
-            release = candidate; envelope = candidateEnvelope.clone(); busy = true; cancelDownload = false; phase = "downloading"; message = "正在连接 GitHub 下载服务器…"; downloaded = 0; offerPending = false;
-            operation = new UpdateTransport.Operation(); activeTransfer = operation;
+            release = candidate; envelope = candidateEnvelope.clone(); busy = true; cancelDownload = false; phase = "downloading"; message = "正在选择安装包下载线路…"; downloaded = 0; offerPending = false;
+            session = new UpdateSourceClient.Session(); activeSession = session; sourceMode = getSourceMode();
         }
         notifyChanged();
         worker.execute(() -> {
             File partial = null;
             try {
                 ensureDirectory(); if (directory.getUsableSpace() > 0 && directory.getUsableSpace() < release.size * 2 + 1024 * 1024) throw new Exception("存储空间不足，请留出安装包大小两倍以上的空间");
-                // A cancelled DNS/socket task may return late: never let it share
-                // a temporary filename with a later retry.
-                partial = new File(directory, "download-" + release.versionCode + "-" + java.util.UUID.randomUUID() + ".part.apk");
-                UpdateTransport.download(release, partial, operation, new UpdateTransport.Listener() {
-                    @Override public void onStage(String stage) {
-                        synchronized (AppUpdater.this) { if (activeTransfer != operation || cancelDownload) return; message = stage; }
-                        notifyChanged();
-                    }
-                    @Override public void onProgress(long bytes) {
-                        synchronized (AppUpdater.this) { if (activeTransfer != operation || cancelDownload) return; downloaded = bytes; }
-                        notifyChanged();
-                    }
-                });
+                partial = UpdateSourceClient.download(release, directory, sourceMode, session, transferListener(session, true));
                 if (cancelDownload) throw new Exception("下载已取消");
+                UpdateSources.Endpoint workingSource = session.currentSource();
+                if (workingSource != null) preferences.edit().putString("lastWorkingSource", workingSource.id).apply();
                 synchronized (this) { downloaded = release.size; message = "下载完成，正在校验安装包…"; } notifyChanged();
                 verifyApk(partial, release); if (cancelDownload) throw new Exception("下载已取消");
                 File target = artifactFile(release); if (target.exists() && !target.delete()) throw new Exception("无法替换旧的更新缓存");
@@ -166,26 +200,34 @@ public final class AppUpdater {
                 synchronized (this) {
                     // Order cancellation and readiness atomically, including a
                     // cancellation arriving during the final disk verification.
-                    if (cancelDownload || activeTransfer != operation) throw new Exception("下载已取消");
+                    if (cancelDownload || session.isCancelled() || activeSession != session) throw new Exception("下载已取消");
                     readyFile = target; phase = "ready"; message = "下载与校验完成，等待系统确认覆盖更新。"; installRequested = true;
                 }
             } catch (Exception error) { synchronized (this) { phase = "available"; message = safeMessage(error) + "。已有应用和账本未改动，可重新下载。"; installRequested = false; } }
-            finally { if (partial != null && partial.isFile()) partial.delete(); synchronized (this) { if (activeTransfer == operation) activeTransfer = null; busy = false; } notifyChanged(); }
+            finally { if (partial != null && partial.isFile()) partial.delete(); synchronized (this) { if (activeSession == session) activeSession = null; busy = false; } notifyChanged(); }
         });
     }
     public void cancelDownload() {
-        UpdateTransport.Operation operation;
+        UpdateSourceClient.Session session;
         synchronized (this) {
             if (!phase.equals("downloading")) return;
-            cancelDownload = true; operation = activeTransfer; message = "正在取消下载，已有账本不受影响…";
+            cancelDownload = true; session = activeSession; message = "正在取消下载，已有账本不受影响…";
         }
-        if (operation != null) operation.cancel();
+        if (session != null) session.cancel();
         notifyChanged();
     }
     public void openDownloadInBrowser(Activity activity) throws Exception {
         final String address;
-        synchronized (this) { if (candidate == null) throw new Exception("请先检查并验证新版信息"); address = candidate.url; }
-        UpdatePolicy.validateDownloadUrl(address, true);
+        synchronized (this) {
+            if (candidate == null) throw new Exception("请先检查并验证新版信息");
+            java.util.List<UpdateSources.Endpoint> sources = UpdateSources.downloadEndpoints(candidate, getSourceMode());
+            UpdateSources.Endpoint chosen = sources.get(0);
+            if (getSourceMode().equals("auto")) {
+                String last = preferences.getString("lastWorkingSource", "");
+                for (UpdateSources.Endpoint source : sources) if (source.id.equals(last)) { chosen = source; break; }
+            }
+            address = chosen.url; UpdateSources.validateDownloadUrl(address, candidate.url, true);
+        }
         cancelDownload();
         try { activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(address))); }
         catch (android.content.ActivityNotFoundException error) { throw new Exception("没有找到浏览器，可将电脑下载的安装包传到手机，直接覆盖安装，无需卸载"); }

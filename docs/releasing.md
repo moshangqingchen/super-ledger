@@ -76,3 +76,5 @@ python tools/github-release.py create-release android-v1.3.0 --name "超级账�
 ```
 
 先提交源码，再创建草稿。上传新 APK、候选签名清单和 SHA256SUMS；为方便 `releases/latest` 同时提供两端下载，可附上上一版 Windows 安装包的原始文件，不能用重新打包的同版本替换它。核验远端 digest/size、发布草稿且 APK 公共下载可用后，再把候选清单复制到 `updates/stable.json` 提交推送。最后用实际 Android 更新策略确认旧手机版本收到新版、同版本不重复提示，用实际 Windows 更新器确认电脑版本保持不变。
+
+Android 1.3.2 起，`create-android-update-manifest.mjs` 每次根据新版本重建 `android.sources`，依次为 GH-Proxy、GHFast 和 GitHub；原 `android.url` 保持 GitHub，兼容旧版。两个免费中转会读取同一公开发布文件，不需另设账号或重复上传。正式发布 APK 后，应逐条完整回下载核验长度与哈希，再最后推送签名清单，并验证各清单入口的实际版本。若同目录有其他桌面发布工作，签名前和推送清单前都要确认基础清单没有改变，避免覆盖对方已发布的平台版本。免费中转不是自有 CDN，不能保证所有运营商与时间段的可用性。

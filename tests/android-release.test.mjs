@@ -34,3 +34,15 @@ test('empty artifacts and oversized or non-text release notes are rejected befor
   for (const change of [{ apkBytes: Buffer.alloc(1024) }, { apkBytes: Buffer.from('PK') }, { notes: '' }, { notes: 'x'.repeat(4001) }, { notes: 'bad\0notes' }, { publishedAt: 'not-a-date' }])
     assert.throws(() => androidUpdatePayload({ ...options(), ...change }));
 });
+test('each release rebuilds signed routes for the same new APK and never inherits old mirror destinations', () => {
+  const result = androidUpdatePayload({ ...options(), version: '1.3.2', versionCode: 10302,
+    baseEnvelope: envelope({ android: { ...android, sources: [{ id: 'old', url: 'https://untrusted.invalid/old.apk' }] } }) });
+  const canonical = 'https://github.com/moshangqingchen/super-ledger/releases/download/android-v1.3.2/SuperLedger-Mobile-1.3.2.apk';
+  assert.equal(result.android.url, canonical, 'older installed clients still receive the original GitHub URL');
+  assert.deepEqual(result.android.sources, [
+    { id: 'gh-proxy', url: 'https://gh-proxy.org/' + canonical },
+    { id: 'ghfast', url: 'https://ghfast.top/' + canonical },
+    { id: 'github', url: canonical }
+  ]);
+  assert.deepEqual(result.windows, windows);
+});

@@ -477,16 +477,32 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         }
         addButton(sources, "添加其他银行 / 短信应用", false, this::chooseSourceApp);
         LinearLayout help = card(); sectionTitle(help,"vivo 手机使用提示","settings"); help.addView(label("请在系统设置中允许超级账本后台运行和自启动，避免省电清理导致漏记。设置名称以你的系统版本为准。若「通知使用权」不可选，查看应用信息菜单中的受限设置提示。\n\n付款应用需要实际发出含金额的通知。现金、未显示金额的通知及系统隐藏的信息需要手工补记或在电脑对账。银行短信可选择短信应用作为来源，前提是通知显示银行交易内容。")); addButton(help, "打开本应用系统设置", false, () -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))));
-        LinearLayout privacy = card(); sectionTitle(privacy,"本地优先，随时可控","shield"); privacy.addView(label("手机记录保存在应用私有目录，关闭系统云备份。账本只通过扫码连接的局域网传输，并使用临时配对密钥加密。更新功能会通过手机的正常 HTTPS / 系统代理设置请求指定 GitHub 仓库的公开版本与安装包，不读取或上传账本。卸载应用会删除手机数据，请先完成电脑同步或导出备份；正常覆盖升级保留数据。\n\n手机版 " + getPackageManager().getPackageInfo(getPackageName(), 0).versionName + " · 支持多币种账户、收入支出、账户转账、订阅、预算和心愿。所显示余额由期初余额与账单计算，应用不会读取银行真实余额，也不会发起付款。"));
+        LinearLayout privacy = card(); sectionTitle(privacy,"本地优先，随时可控","shield"); privacy.addView(label("手机记录保存在应用私有目录，关闭系统云备份。账本只通过扫码连接的局域网传输，并使用临时配对密钥加密。更新功能会通过手机的正常 HTTPS / 系统代理设置，从 GitHub 或所选免费中转线路请求公开版本与安装包，仍需校验原签名，不读取或上传账本。卸载应用会删除手机数据，请先完成电脑同步或导出备份；正常覆盖升级保留数据。\n\n手机版 " + getPackageManager().getPackageInfo(getPackageName(), 0).versionName + " · 支持多币种账户、收入支出、账户转账、订阅、预算和心愿。所显示余额由期初余额与账单计算，应用不会读取银行真实余额，也不会发起付款。"));
     }
     private void renderUpdates() {
         if (updater == null) return;
         updatePanel = card(); refreshUpdateCard(updater.snapshot());
     }
     private String currentVersion() { try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception ignored) { return "—"; } }
+    private String updateSourceName(String mode) {
+        if ("github".equals(mode)) return "GitHub 官方";
+        if ("gh-proxy".equals(mode)) return "备用线路一 · GH-Proxy";
+        if ("ghfast".equals(mode)) return "备用线路二 · GHFast";
+        return "自动切换";
+    }
+    private void chooseUpdateSource() throws Exception {
+        if (updater.snapshot().busy) throw new Exception("请先完成或取消当前更新，再更换线路");
+        String[] modes = {"auto", "github", "gh-proxy", "ghfast"};
+        String[] names = {"自动切换（推荐）", "GitHub 官方", "备用线路一 · GH-Proxy", "备用线路二 · GHFast"};
+        int current = Math.max(0, Arrays.asList(modes).indexOf(updater.getSourceMode()));
+        dialogBuilder().setTitle("选择更新线路").setSingleChoiceItems(names, current, (dialog, selected) -> act(() -> {
+            updater.setSourceMode(modes[selected]); dialog.dismiss(); refreshUpdateCard(updater.snapshot());
+            toast("更新线路已设为" + updateSourceName(modes[selected]));
+        })).setNegativeButton("取消", null).show();
+    }
     private void refreshUpdateCard(AppUpdater.Snapshot update) {
         if (updatePanel == null) return;
-        String key = update.phase + "|" + update.version + "|" + update.message + "|" + update.busy + "|" + update.canInstall + "|" + update.canDownload + "|" + update.checkedAt;
+        String key = update.phase + "|" + update.version + "|" + update.message + "|" + update.busy + "|" + update.canInstall + "|" + update.canDownload + "|" + update.checkedAt + "|" + update.sourceMode + "|" + update.sourceLabel;
         if (!key.equals(updateCardKey)) {
             updateCardKey = key; updatePanel.removeAllViews(); updateProgressLabel = null; updateProgressBar = null;
             sectionTitle(updatePanel, "应用更新", "download");
@@ -500,10 +516,14 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
             } else if (update.canInstall || update.canDownload) addButton(updatePanel,"查看更新",true,()->mobileUpdates.show());
             if (update.canDownload || update.phase.equals("downloading")) {
                 addButton(updatePanel,"浏览器下载",false,()->updater.openDownloadInBrowser(this));
-                updatePanel.addView(label("若手机仍无法下载，可把电脑下载的官方 APK 传到手机，直接覆盖安装，无需卸载。"));
+                updatePanel.addView(label("浏览器使用所选线路；连接不畅时，可先取消，再更换线路重试。"));
             }
             Button check = button(update.busy ? "正在处理更新…" : "检查更新", false, () -> mobileUpdates.check()); check.setEnabled(!update.busy);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1,-2); params.topMargin=dp(10); updatePanel.addView(check,params);
+            Button route = button("更新线路：" + updateSourceName(update.sourceMode) + "  ›", false, this::chooseUpdateSource); route.setEnabled(!update.busy);
+            LinearLayout.LayoutParams routeParams = new LinearLayout.LayoutParams(-1,-2); routeParams.topMargin=dp(10); updatePanel.addView(route,routeParams);
+            if (update.sourceLabel != null && !update.sourceLabel.isEmpty()) updatePanel.addView(text((update.busy ? "当前线路 · " : "最近使用 · ") + update.sourceLabel,11,MUTED,false));
+            gap(updatePanel,7); updatePanel.addView(text("免费中转仅请求公开更新文件，安装前仍会校验；线路可用性可能变化。",11,MUTED,false));
             divider(updatePanel); updatePanel.addView(text("Android v" + currentVersion() + (update.version.isEmpty() ? "" : "   →   v" + update.version),12,MUTED,false));
             updatePanel.addView(text("上次检查 " + (update.checkedAt==0?"尚未检查":when(update.checkedAt)),11,MUTED,false));
             gap(updatePanel,7); updatePanel.addView(text("覆盖升级，保留现有账本与设置。",11,MUTED,false));
