@@ -1,6 +1,6 @@
 {
   "name": "money-lab-local-ledger",
-  "version": "1.8.5",
+  "version": "1.8.6",
   "private": true,
   "type": "module",
   "description": "超级账本 Windows 桌面应用 · 收支、资产与会员订阅管理",
@@ -36,6 +36,8 @@
       "desktop/legacy-locations.json",
       "index.html",
       "app.js",
+      "icon-select.js",
+      "icon-select.css",
       "update-ui.js",
       "update-ui.css",
       "fresh-ui.css",

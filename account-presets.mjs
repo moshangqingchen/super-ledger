@@ -8,7 +8,7 @@ export const accountPresets = [
   { id: 'bank-card', name: '银行卡', type: '银行卡', color: '#849fda', icon: 'bankCard' },
   { id: 'cash', name: '现金', type: '现金', color: '#c8a66c', icon: 'cash' },
   { id: 'virtual-card', name: '虚拟卡', type: '虚拟卡', color: '#a28ad6', icon: 'virtualCard' },
-  { id: 'apple-balance', name: 'Apple 余额', type: 'Apple 账户余额', color: '#77728f', icon: 'gift' },
+  { id: 'apple-balance', name: 'Apple 余额', type: 'Apple 账户余额', color: '#77728f', logo: '/assets/brands/apple.svg', icon: 'gift' },
 ];
 
 /** Region/currency labels for bookkeeping, not a catalogue of gift-card face values. */

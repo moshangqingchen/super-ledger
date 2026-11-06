@@ -1,0 +1,81 @@
+/* Shared branded selectors. The native control remains the form's source of truth. */
+.icon-select { position: relative; width: 100%; min-width: 0; }
+.icon-select-native { display: none !important; }
+.icon-select-trigger { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 48px; padding: 8px 11px; border: 1px solid #e2e3ef; border-radius: 11px; background: #fff; color: #555b74; text-align: left; font: inherit; font-size: 13px; cursor: pointer; transition: border-color .16s, box-shadow .16s, background .16s; }
+.icon-select-trigger:hover:not(:disabled) { border-color: #bcb0df; background: #fdfcff; }
+.icon-select-trigger:focus-visible, .icon-select-trigger[aria-expanded="true"] { outline: none; border-color: #ad9bdc; box-shadow: 0 0 0 3px #9e89cc19; }
+.icon-select-trigger:disabled { background: #f7f7fb; color: #8a8da0; cursor: not-allowed; opacity: .65; }
+.icon-select-value { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.icon-select-art { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; }
+.icon-select-art .account-logo, .icon-select-art .service-logo, .icon-select-art .service-icon, .picker-symbol { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; margin: 0; border-radius: 10px; }
+.icon-select-art .account-logo { background: color-mix(in srgb, var(--account-accent, #9c8ac6) 8%, white); box-shadow: inset 0 0 0 1px #62647c08; }
+.icon-select-art .service-logo { background: #f7f7fb; box-shadow: inset 0 0 0 1px #62647c08; }
+.icon-select-art img, .picker-symbol img { display: block; width: 22px; height: 22px; object-fit: contain; }
+.icon-select-art .account-logo svg { width: 21px; height: 21px; }
+.picker-symbol { color: #8a76b2; background: #f1edf9; }
+.picker-symbol.tone-mint { color: #4b9182; background: #eaf5f0; }
+.picker-symbol.tone-peach { color: #b38464; background: #fbf0e7; }
+.picker-symbol.tone-neutral { color: #686878; background: #f3f3f7; }
+.currency-symbol { font-weight: 700; font-size: 13px; letter-spacing: -.03em; }
+.icon-select-text { display: flex; flex-direction: column; flex: 1; gap: 3px; min-width: 0; }
+.icon-select-title { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; line-height: 1.5; font-weight: 600; }
+.icon-select-subtitle { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #858b9e; font-size: 10px; font-weight: 400; line-height: 1.45; }
+.icon-select-badge { flex-shrink: 0; padding: 3px 6px; border: 1px solid #e7e5f2; border-radius: 6px; background: #f8f7fc; color: #8b80aa; font-size: 9px; font-weight: 650; letter-spacing: .04em; line-height: 1.3; }
+.icon-select-chevron { flex: 0 0 6px; width: 6px; height: 6px; margin: -4px 4px 0 2px; border-right: 1.5px solid #9791aa; border-bottom: 1.5px solid #9791aa; transform: rotate(45deg); transition: transform .15s; }
+[aria-expanded="true"] > .icon-select-chevron { transform: translateY(3px) rotate(225deg); }
+.icon-select-popover { position: fixed; inset: auto; box-sizing: border-box; margin: 0; padding: 8px; border: 1px solid #e5e0f0; border-radius: 15px; background: #fff; color: #555b74; box-shadow: 0 12px 40px #40345626, 0 3px 10px #4034560b; overflow: hidden; z-index: 120; }
+.icon-select-popover::backdrop { background: transparent; }
+.icon-select-popover:not([hidden]) { display: flex; flex-direction: column; }
+.icon-select-popover[hidden] { display: none !important; }
+.icon-select-search { display: block; width: 100%; min-width: 0; padding: 10px 12px !important; margin-bottom: 7px; border: 1px solid #ece8f4; border-radius: 9px; background: #faf9fd !important; color: #555b74; font-size: 12px !important; }
+.icon-select-search:focus { outline: none; border-color: #bbaade; box-shadow: 0 0 0 2px #b8a7dc14; }
+.icon-select-search[hidden] { display: none; }
+.icon-select-list { flex: 1 1 auto; min-height: 0; max-height: 330px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #d4cce5 transparent; padding: 1px 2px; }
+.icon-select-search { flex-shrink: 0; }
+.icon-select-option { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 49px; padding: 8px 9px; margin: 2px 0; border: 1px solid transparent; border-radius: 10px; background: transparent; color: #555b74; text-align: left; font: inherit; cursor: pointer; }
+.icon-select-option:hover:not(:disabled), .icon-select-option.is-active:not(:disabled) { background: #f7f4fc; border-color: #eee7f8; }
+.icon-select-option[aria-selected="true"] { background: #f0ebfa; border-color: #e3d9f3; }
+.icon-select-option[aria-selected="true"] .icon-select-title { color: #7d64a9; }
+.icon-select-option:focus-visible { outline: 2px solid #b4a0da; outline-offset: -2px; }
+.icon-select-option:disabled { opacity: .45; cursor: not-allowed; }
+.icon-select-check { display: grid; place-items: center; flex: 0 0 17px; width: 17px; color: #997dc2; font-size: 14px; font-weight: 700; }
+.icon-select-empty { padding: 22px 12px; color: #8d879e; font-size: 12px; text-align: center; }
+.filter-row > .icon-select { width: 225px; max-width: 100%; }
+.filter-row .icon-select-trigger { min-height: 42px; padding: 5px 9px; }
+.filter-row .icon-select-subtitle { display: none; }
+.linked-account-actions > .icon-select { flex: 1 1 220px; }
+.tier-picker-row > .icon-select { min-width: 0; }
+.linked-account-fields .icon-select-trigger { min-height: 43px; padding: 6px 7px; gap: 5px; }
+.linked-account-fields .icon-select-value { gap: 6px; }
+.linked-account-fields .icon-select-art, .linked-account-fields .picker-symbol { width: 25px; height: 25px; flex-basis: 25px; border-radius: 8px; }
+.linked-account-fields .icon-select-title { font-size: 11px; }
+.field label:has(.form-field-icon) { display: flex; align-items: center; gap: 6px; }
+.form-field-icon { display: inline-flex; flex: 0 0 14px; color: #a094ba; }
+.subscription-section-title h3:has(.form-section-icon) { display: flex; align-items: center; gap: 9px; }
+.form-section-icon { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 10px; color: #9580b8; background: #f3effa; }
+.subscription-section-title:has(.form-section-icon) p { margin-left: 41px; }
+.illustrated-form-heading { display: grid; grid-template-columns: 46px minmax(0,1fr); column-gap: 12px; align-items: center; }
+.illustrated-form-heading .form-heading-icon { grid-column: 1; grid-row: 1 / 3; width: 46px; height: 46px; display: grid; place-items: center; border: 1px solid #e5dcf3; border-radius: 15px; background: linear-gradient(140deg,#f4effb,#f9f7fc); color: #9981bd; }
+.illustrated-form-heading h2, .illustrated-form-heading p { grid-column: 2; }
+.illustrated-form-heading p { margin-top: 4px; }
+.subscription-payment-account { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.subscription-payment-account > span:last-child { overflow-wrap: anywhere; min-width: 0; }
+.subscription-payment-account .account-logo { width: 31px; height: 31px; border-radius: 9px; flex: 0 0 31px; }
+.subscription-payment-account .account-logo img { width: 21px; height: 21px; }
+.subscription-payment-account .account-logo svg { width: 20px; height: 20px; }
+@media (max-width: 600px) {
+  .icon-select-trigger { padding: 8px; gap: 7px; }
+  .icon-select-value { gap: 7px; }
+  .icon-select-title { font-size: 11px; }
+  .icon-select-art, .icon-select-art .account-logo, .icon-select-art .service-logo, .icon-select-art .service-icon, .picker-symbol { width: 28px; height: 28px; flex-basis: 28px; border-radius: 8px; }
+  .icon-select-badge { padding: 3px 4px; font-size: 8px; }
+  .icon-select-chevron { margin-right: 2px; }
+  .icon-select-popover .icon-select-title { font-size: 12px; }
+  .filter-row > .icon-select { flex: 1; width: auto; }
+  .illustrated-form-heading { grid-template-columns: 39px minmax(0,1fr); column-gap: 9px; }
+  .illustrated-form-heading .form-heading-icon { width: 39px; height: 39px; border-radius: 12px; }
+  .subscription-section-title:has(.form-section-icon) p { margin-left: 0; }
+}
+@media (max-width: 480px) {
+  #subscription-form > .form-grid { grid-template-columns: minmax(0,1fr); }
+}

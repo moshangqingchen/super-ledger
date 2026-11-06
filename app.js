@@ -1,5 +1,6 @@
 import { createMobileSyncUI, mobileSyncSettingsCard } from './mobile-sync-ui.js';
 import { createUpdateUI } from './update-ui.js';
+import { createIconSelects } from './icon-select.js';
 import { getBalances, getCnyBalances, getNetWorth, transactionCnyAmount, moneyToCents, localDate, nextSubscriptionDue, setSubscriptionActive, addMonthsDue, validateState, subscriptionAccountTypes, subscriptionExpiryStatus } from './engine.mjs';
 import { subscriptionCatalog } from './subscription-catalog.mjs';
 import { accountPresets, accountPreset, accountLabel, appleBalanceRegions, appleBalanceRegion, isAppleBalance } from './account-presets.mjs';
@@ -10,11 +11,16 @@ let desktopInfo = null;
 let updateStatus = null;
 let updateUI;
 let mobileSync;
+let iconSelects;
 
 
 const $ = (s, root = document) => root.querySelector(s);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const icons = {
+  mail:'<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m3 7 9 6 9-6"/>',
+  user:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
+  globe:'<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/>',
+  palette:'<path d="M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1-3.7 1.8 1.8 0 0 1 1-3.3h3a3 3 0 0 0 3-3c0-5-4-8-9-8Z"/><path d="M7 10h.01M10 7h.01M15 7h.01M6 14h.01"/>',
   gift:'<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M5 12v9h14v-9M12 8v13M12 8H8a3 3 0 1 1 3-3l1 3Zm0 0h4a3 3 0 1 0-3-3l-1 3Z"/>',
   phone:'<rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 5h4m-3 14h2"/>',
   bankCard:'<rect x="2" y="4" width="20" height="16" rx="3"/><path d="M2 9h20M6 15h4m4 0h3"/>',
@@ -202,7 +208,7 @@ function subscriptionPayment(accountId,fee,{editing=false,currentBalances=balanc
  const code=accountCurrency(account),current=currentBalances[accountId],valid=Number.isSafeInteger(fee)&&fee>0,shortfall=valid?Math.max(0,fee-current):0;
  const masked=hidden&&!editing,money=value=>'<b class="money"'+(masked?' aria-label="金额已隐藏"':'')+'>'+(masked?'••••':esc(value))+'</b>';
  const status=valid?(shortfall>0?'shortfall':'enough'):'pending';
- return '<section class="subscription-payment" data-funding="'+status+'" aria-label="扣款账户与余额"><div class="subscription-payment-heading"><span>'+icon('wallet',15)+' 扣款账户</span><small>'+code+'</small></div><div class="subscription-payment-account">'+esc(accountLabel(account))+'</div><div class="subscription-payment-amounts"><div><span>当前账本余额</span>'+money(formatMoney(current,code))+'</div><div><span>本次费用</span>'+(valid?money(formatMoney(fee,code)):'<b class="subscription-payment-empty">待填写</b>')+'</div></div><div class="subscription-payment-result"><span>'+icon(status==='enough'?'check':'info',14)+(valid?(shortfall>0?'余额不足':'余额充足'):'填写费用后核对余额')+'</span>'+(shortfall>0?'<span>还差 '+money(subscriptionDifferenceMoney(shortfall,code))+'</span>':'')+'</div><p class="subscription-payment-note">按当前余额比较一笔费用，未预扣未来费用。</p></section>';
+ return '<section class="subscription-payment" data-funding="'+status+'" aria-label="扣款账户与余额"><div class="subscription-payment-heading"><span>'+icon('wallet',15)+' 扣款账户</span><small>'+code+'</small></div><div class="subscription-payment-account">'+accountLogo(account)+'<span>'+esc(accountLabel(account))+'</span></div><div class="subscription-payment-amounts"><div><span>当前账本余额</span>'+money(formatMoney(current,code))+'</div><div><span>本次费用</span>'+(valid?money(formatMoney(fee,code)):'<b class="subscription-payment-empty">待填写</b>')+'</div></div><div class="subscription-payment-result"><span>'+icon(status==='enough'?'check':'info',14)+(valid?(shortfall>0?'余额不足':'余额充足'):'填写费用后核对余额')+'</span>'+(shortfall>0?'<span>还差 '+money(subscriptionDifferenceMoney(shortfall,code))+'</span>':'')+'</div><p class="subscription-payment-note">按当前余额比较一笔费用，未预扣未来费用。</p></section>';
 }
 function updateSubscriptionPayment(){
  const form=$('#subscription-form'),preview=$('#subscription-payment-preview');if(!form||!preview)return;
@@ -254,8 +260,9 @@ function settings(){
 }
 function render(){if(!state)return;renderedDay=today();if(accountFilter&&!state.accounts.some(a=>a.id===accountFilter))accountFilter='';document.body.classList.toggle('amounts-hidden',hidden);$('#app').innerHTML=shell(({overview,transactions,accounts,subscriptions,insights,goals,settings}[page]||overview)());document.title=`${navItems.find(x=>x[0]===page)?.[2]||'账本设置'} · MONEY LAB`}
 function navigate(next){page=next;menuOpen=false;location.hash=next;render();window.scrollTo(0,0)}
-function modal(title,subtitle,body,wide=false){mobileSync?.onModalClosed();modalFocus=document.activeElement;$('#modal-root').innerHTML=`<div class="modal-overlay"><section class="modal ${wide?'wide':''}" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header class="modal-head"><div><h2 id="modal-title">${title}</h2><p>${subtitle}</p></div><button class="icon-btn" data-action="close-modal" aria-label="关闭">${icon('close',16)}</button></header><div class="modal-body">${body}</div></section></div>`;document.body.style.overflow='hidden';setTimeout(()=>($('.modal [autofocus]')||$('.modal input')||$('.modal button'))?.focus(),40)}
+function modal(title,subtitle,body,wide=false){iconSelects?.close();mobileSync?.onModalClosed();modalFocus=document.activeElement;$('#modal-root').innerHTML=`<div class="modal-overlay"><section class="modal ${wide?'wide':''}" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header class="modal-head"><div><h2 id="modal-title">${title}</h2><p>${subtitle}</p></div><button class="icon-btn" data-action="close-modal" aria-label="关闭">${icon('close',16)}</button></header><div class="modal-body">${body}</div></section></div>`;document.body.style.overflow='hidden';refreshFormVisuals();setTimeout(()=>($('.modal [autofocus]')||$('.modal input')||$('.modal button'))?.focus(),40)}
 function closeModal(){
+ iconSelects?.close();
  if(busy)return;
  const opener=modalFocus,hadModal=Boolean($('.modal'));
  // Run after a successful save's render, before the modal observer offers an update.
@@ -279,6 +286,74 @@ function ensureAccount(){if(state.accounts.length)return true;toast('先添加�
 function accountLogo(account){
  const p=bankById(account?.bankId)||accountPreset(account),color=p?.color||account?.color||'#a498cf';
  return '<span class="account-logo" style="--account-accent:'+esc(color)+'">'+(p?.logo?'<img src="'+esc(p.logo)+'" alt="'+esc(p.name)+' Logo" width="30" height="30">':icon(p?.icon||'wallet',25))+'</span>';
+}
+function pickerSymbol(name='wallet',tone='lilac'){
+ return '<span class="picker-symbol tone-'+esc(tone)+'" aria-hidden="true">'+icon(name,19)+'</span>';
+}
+function linkedAccountIcon(type){
+ const logo={apple:'/assets/brands/apple.svg',google:'/assets/brands/google.svg',wechat:'/assets/brands/wechat.png',qq:'/assets/brands/qq.png'}[type];
+ return logo?'<span class="picker-symbol tone-neutral" aria-hidden="true"><img src="'+logo+'" alt="" width="22" height="22"></span>':pickerSymbol({email:'mail',phone:'phone',qq:'user',other:'user'}[type]||'user','mint');
+}
+function describePickerOption(select,option){
+ const value=option.value,name=select.name,title=option.textContent;
+ if(['accountId','toAccountId'].includes(name)||select.id==='account-filter'){
+  const account=accountById(value);
+  if(!account)return {iconHtml:pickerSymbol('wallet'),title};
+  const bank=bankById(account.bankId),preset=accountPreset(account),region=isAppleBalance(account)?appleBalanceRegion(account.appleRegion):null;
+  const details=[bank?.name||preset?.name||account.type,region?.name,account.lastFour?'尾号 '+account.lastFour:'',account.appleAccount];
+  if(select.form?.dataset.type==='transfer')details.push('余额 '+formatMoney(balances()[account.id],accountCurrency(account)));
+  return {iconHtml:accountLogo(account),title:account.name,subtitle:[...new Set(details.filter(Boolean))].join(' · '),badge:accountCurrency(account),searchText:accountLabel(account)};
+ }
+ if(name==='providerId'||name==='bankId'){
+  const entity=name==='bankId'?bankById(value):accountPresets.find(p=>p.id===value);
+  return {iconHtml:entity?accountLogo(name==='bankId'?{bankId:value}:{providerId:value}):pickerSymbol(name==='bankId'?'bankCard':'wallet'),title,subtitle:entity?.type||'',searchText:entity?.shortName||''};
+ }
+ if(name==='serviceId'){
+  const provider=subscriptionCatalog.find(p=>p.id===value);
+  return {iconHtml:provider?subIcon({serviceId:value}):pickerSymbol('spark'),title,searchText:provider?.aliases?.join(' ')||''};
+ }
+ if(name==='tierPreset'){
+  const serviceId=select.form?.elements.serviceId?.value,provider=subscriptionCatalog.find(p=>p.id===serviceId);
+  return {iconHtml:provider?subIcon({serviceId}):pickerSymbol('spark'),title};
+ }
+ if(name==='currency'){
+  const currency=currencyInfo(value);
+  return {iconHtml:'<span class="picker-symbol tone-mint currency-symbol" aria-hidden="true">'+esc(currency.symbol)+'</span>',title:currency.name,badge:value};
+ }
+ if(name==='appleRegion'){
+  const region=appleBalanceRegion(value);
+  return {iconHtml:pickerSymbol('globe','mint'),title:region?.name||title,badge:region?.currency||''};
+ }
+ if(name==='category')return {iconHtml:pickerSymbol(categoryIcons[value]||'ledger',incomeCategories.includes(value)?'mint':'peach'),title};
+ if(name==='icon')return {iconHtml:pickerSymbol(value),title};
+ if(name==='billingDay')return {iconHtml:pickerSymbol('calendar','peach'),title:'每月 '+title};
+ if(name==='rateMode')return {iconHtml:pickerSymbol(value==='auto'?'repeat':'edit','mint'),title};
+ if(name==='type')return {iconHtml:pickerSymbol(({'银行卡':'bankCard','数字钱包':'wallet','现金':'cash','虚拟卡':'virtualCard','Apple 账户余额':'gift','储蓄投资':'chart','信用卡 / 负债':'bankCard'})[value]||'wallet'),title};
+ if(select.dataset.linkedField==='type')return {iconHtml:linkedAccountIcon(value),title};
+ if(select.id==='saved-linked-account'){
+  const account=value===''?null:savedSubscriptionAccounts()[Number(value)];
+  return account?{iconHtml:linkedAccountIcon(account.type),title:account.value,subtitle:[subscriptionAccountLabel(account),account.label].filter(Boolean).join(' · ')}:{iconHtml:pickerSymbol('user','mint'),title};
+ }
+ return {iconHtml:pickerSymbol('grid'),title};
+}
+const formFieldIcons={name:'edit',amount:'cash',accountId:'wallet',toAccountId:'wallet',providerId:'wallet',bankId:'bankCard',lastFour:'bankCard',currency:'globe',rateMode:'repeat',cnyRate:'chart',openingBalance:'cash',type:'grid',color:'palette',appleRegion:'globe',appleAccount:'user',category:'grid',title:'edit',date:'calendar',note:'book',toAmount:'cash',serviceId:'spark',tier:'spark',expiresOn:'bell',startDate:'calendar',billingDay:'repeat',icon:'palette',target:'goal',saved:'cash',budget:'chart',backup:'upload'};
+function refreshFormVisuals(){
+ iconSelects?.refresh();
+ const dialog=$('.modal');if(!dialog)return;
+ for(const label of dialog.querySelectorAll('label[for]')){
+  if(label.querySelector('.form-field-icon'))continue;
+  const control=document.getElementById(label.htmlFor);if(!control)continue;
+  const name=control.dataset.linkedField?({type:'user',value:'user',label:'edit'})[control.dataset.linkedField]:formFieldIcons[control.name];
+  if(name)label.insertAdjacentHTML('afterbegin','<span class="form-field-icon" aria-hidden="true">'+icon(name,14)+'</span>');
+ }
+ for(const title of dialog.querySelectorAll('.subscription-section-title h3')){
+  if(!title.querySelector('.form-section-icon'))title.insertAdjacentHTML('afterbegin','<span class="form-section-icon" aria-hidden="true">'+icon(title.textContent.includes('到期')?'bell':'user',18)+'</span>');
+ }
+ const heading=$('.modal-head > div',dialog);
+ if(heading&&!heading.querySelector('.form-heading-icon')){
+  const form=$('form',dialog),name=({'subscription-form':'spark','account-form':'wallet','transaction-form':'ledger','goal-form':'goal','budget-form':'chart','import-form':'upload'})[form?.id];
+  if(name){heading.classList.add('illustrated-form-heading');heading.insertAdjacentHTML('afterbegin','<span class="form-heading-icon" aria-hidden="true">'+icon(name,25)+'</span>');}
+ }
 }
 function updateAccountCurrency({request=false}={}){
  const form=$('#account-form');if(!form)return;
@@ -534,9 +609,12 @@ document.addEventListener('compositionend',e=>{if(e.target.id==='subscription-se
 for(const event of ['input','change'])document.addEventListener(event,e=>{if(e.target.name==='amount'&&e.target.closest('#subscription-form'))updateSubscriptionPayment()});
 document.addEventListener('input',e=>{if(e.target.id==='subscription-search'){subscriptionQuery=e.target.value;if(e.isComposing)return;const cursor=e.target.selectionStart;render();const input=$('#subscription-search');input.focus();input.setSelectionRange(cursor,cursor)}if(['expiresOn','startDate'].includes(e.target.name)&&e.target.closest('#subscription-form'))updateSubscriptionExpiryPreview();if(e.target.id==='transaction-search'){const cursor=e.target.selectionStart;query=e.target.value;render();const el=$('#transaction-search');el.focus();el.setSelectionRange(cursor,cursor)}});
 document.addEventListener('change',e=>{if(e.target.name==='appleRegion'&&e.target.closest('#account-form'))updateAppleBalanceFields({request:true});if(e.target.id==='saved-linked-account'&&e.target.value!==''){const account=savedSubscriptionAccounts()[Number(e.target.value)];if(account)addLinkedAccount(account);e.target.value=''}if(e.target.dataset.linkedField==='type'){const input=e.target.closest('.linked-account-row').querySelector('[data-linked-field="value"]');input.type=e.target.value==='email'?'email':'text';}if(['expiresOn','startDate','billingDay','recurring'].includes(e.target.name)&&e.target.closest('#subscription-form'))updateSubscriptionExpiryPreview();if(['currency','rateMode'].includes(e.target.name)&&e.target.closest('#account-form'))updateAppleBalanceFields({request:true});if(e.target.name==='accountId'&&e.target.closest('#subscription-form'))updateSubscriptionCurrency();if(e.target.name==='bankId'&&e.target.closest('#account-form'))chooseBank(e.target.value);if(e.target.name==='type'&&e.target.closest('#account-form'))updateBankFields();if(e.target.name==='providerId'&&e.target.closest('#account-form'))chooseAccountPreset(e.target.value);if(['accountId','toAccountId'].includes(e.target.name)&&e.target.closest('#transaction-form'))updateTransferPreview();if(e.target.name==='serviceId'){chooseSubscriptionService(e.target.value)}if(e.target.name==='tierPreset'){const tier=$('#field-tier');tier.value=e.target.value;if(!e.target.value)tier.focus();}if(e.target.id==='account-filter'){accountFilter=e.target.value;render()}if(e.target.name==='startDate'&&e.target.closest('#subscription-form')&&!$('#subscription-form').dataset.id){$('#field-billingDay').value=String(Number(e.target.value.slice(8)));updateSubscriptionExpiryPreview()}});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();if(menuOpen){menuOpen=false;render()}}if($('.modal')){if(e.key==='Tab'){const nodes=[...$('.modal').querySelectorAll('button:not(:disabled),input,select,textarea,[tabindex="0"]')];const first=nodes[0],last=nodes.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}return}if(e.key.toLowerCase()==='n'&&!e.ctrlKey&&!e.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)){e.preventDefault();transactionModal()}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();if(menuOpen){menuOpen=false;render()}}if($('.modal')){if(e.key==='Tab'){const nodes=[...$('.modal').querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]')].filter(node=>node.tabIndex>=0&&node.getClientRects().length&&!node.closest('[hidden]'));const first=nodes[0],last=nodes.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}return}if(e.key.toLowerCase()==='n'&&!e.ctrlKey&&!e.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)){e.preventDefault();transactionModal()}});
 window.addEventListener('hashchange',()=>{const next=location.hash.slice(1);if([...navItems.map(x=>x[0]),'settings'].includes(next)&&page!==next){page=next;render()}});
 async function refresh(){try{const next=await api('/api/state');if(!busy&&(!state||next.revision>state.revision||renderedDay!==today())){state=next;if($('.modal'))ratesDeferredRender=true;else render()}}catch(e){if(!state)$('#app').innerHTML=`<div class="boot"><span class="brand-mark"><img src="/assets/app-icon.png" alt="超级账本" width="54" height="54"></span><h2>暂时无法打开本地账本</h2><p class="muted">${esc(e.message)}</p><p class="small muted">请先尝试重新连接；仍无法打开时，退出应用，再从桌面或开始菜单打开「超级账本」。</p><button class="btn btn-primary" data-action="retry">重新连接</button></div>`}}
+iconSelects=createIconSelects({describeOption:describePickerOption});
+// Refresh after business handlers finish changing native values or dependent fields.
+for(const event of ['click','change','input'])document.addEventListener(event,()=>queueMicrotask(refreshFormVisuals));
 mobileSync=createMobileSyncUI({api,modal,toast,desktop,refresh:async()=>{await refresh();if(mobileSync.isOpen()){ratesDeferredRender=false;render()}}});
 page=[...navItems.map(x=>x[0]),'settings'].includes(location.hash.slice(1))?location.hash.slice(1):'overview';
 hidden=sessionStorage.getItem('moneylab-hidden')==='true';
