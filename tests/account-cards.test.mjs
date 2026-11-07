@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { accountCardArtKey, formatAccountTotal, renderAccountLibrary } from '../account-cards.js';
 import { bankCatalog } from '../bank-catalog.mjs';
 import { MAX_NATIVE_UNITS, formatMoney } from '../currencies.mjs';
@@ -199,4 +200,225 @@ test('large native bank subtotals render even when both individual balances reac
   const html = render(accounts, { cnyBalances: { one: 700000000, two: 700000000 } });
   assert.match(html, /USDT 2,000,000/);
   assert.match(html, /¥ 14,000,000\.00/);
+});
+
+test('every bank and wallet theme defines its saturated glow token with a generic fallback', () => {
+  const css = readFileSync(new URL('../account-cards.css', import.meta.url), 'utf8');
+  const glows = {
+    icbc: '#ff5d4d', ccb: '#2f86e8', abc: '#17b894', cmb: '#ff3f78',
+    boc: '#d8345b', bocom: '#4f68e8', psbc: '#5fae3c', pingan: '#ff9a2e',
+    wechat: '#22d07d', alipay: '#2f9dff', apple: '#9aa6b8',
+    virtual: '#9a6bff', cash: '#f2b23a', generic: '#7c8cff',
+  };
+  for (const theme of [...bankCatalog.map(bank => bank.id), 'wechat', 'alipay', 'apple', 'virtual', 'cash', 'generic']) {
+    const rule = css.match(new RegExp(`\\[data-account-theme="${theme}"\\]\\s*\\{([^}]+)\\}`));
+    assert.ok(rule, `${theme} has an explicit theme rule`);
+    assert.match(rule[1], new RegExp(`--card-glow\\s*:\\s*${glows[theme]}\\s*[;}]?`, 'i'));
+  }
+  const fallback = css.match(/\[data-account-theme\]\s*\{([^}]+)\}/);
+  assert.ok(fallback, 'unknown themes have a fallback rule');
+  assert.match(fallback[1], /--card-glow\s*:\s*#7c8cff\b/i);
+});
+
+test('all seven account kinds have distinct hidden native ornaments and bank summaries reuse the bank ornament', () => {
+  const accounts = [
+    account('alipay', { bankId: undefined, providerId: 'alipay', type: '数字钱包' }),
+    account('apple', { bankId: undefined, providerId: 'apple-balance', type: 'Apple 账户余额' }),
+    account('virtual', { bankId: undefined, providerId: 'virtual-card', type: '虚拟卡' }),
+    account('cash', { bankId: undefined, providerId: 'cash', type: '现金' }),
+    account('wechat', { bankId: undefined, providerId: 'wechat', type: '数字钱包' }),
+    account('bank'),
+    account('other', { bankId: undefined, providerId: undefined, type: '其他账户' }),
+  ];
+  const individual = render(accounts, { view: 'cards' });
+  const ornaments = cards(individual).map(card => {
+    const tags = [...card.matchAll(/<span\b[^>]*class="([^"]*\bcard-ornament\b[^"]*)"[^>]*>/g)];
+    assert.equal(tags.length, 1, 'each card has exactly one decorative object');
+    assert.match(tags[0][0], /aria-hidden="true"/);
+    const ornament = tags[0][1].split(/\s+/).filter(name => name.startsWith('ornament-'));
+    assert.equal(ornament.length, 1);
+    return ornament[0];
+  });
+  assert.equal(new Set(ornaments).size, 7);
+  const collapsed = render(accounts);
+  const expanded = render(accounts, { expandedBanks: new Set(['boc']) });
+  const summary = collapsed.match(/<div class="bank-group-overview">([\s\S]*?)<div class="bank-cover">/);
+  assert.ok(summary, 'bank ornament appears inside the summary before its foreground content');
+  assert.ok(summary[1].includes(ornaments[5]));
+  assert.match(summary[1], /aria-hidden="true"/);
+  assert.doesNotMatch(individual + collapsed + expanded, /url\(|\/assets\/illustrations\/|data-card-art/i);
+});
+
+test('collapsed bank stack depth matches one or two cards and caps at three for five cards', () => {
+  for (const count of [1, 2, 5]) {
+    const accounts = Array.from({ length: count }, (_, index) => account(`private-member-${index}`, { lastFour: `900${index}` }));
+    const html = render(accounts);
+    const section = html.match(/<section\b[^>]*class="bank-group\b[^>]*>/);
+    assert.ok(section);
+    assert.match(section[0], new RegExp(`data-card-stack="${Math.min(count, 3)}"`));
+    assert.equal(cards(html).length, 0);
+    assert.doesNotMatch(html, /private-member-|900[0-4]/);
+  }
+});
+
+test('only the explicitly dealt and currently expanded bank receives the entrance animation marker', () => {
+  const accounts = [account('boc-card'), account('ccb-card', { bankId: 'ccb' })];
+  const cases = [
+    { expandedBanks: new Set(['boc', 'ccb']), dealBankId: 'boc', expected: ['boc'] },
+    { expandedBanks: new Set(['boc', 'ccb']), dealBankId: 'ccb', expected: ['ccb'] },
+    { expandedBanks: new Set(['ccb']), dealBankId: 'boc', expected: [] },
+    { expandedBanks: new Set(['boc', 'ccb']), dealBankId: '', expected: [] },
+    { expandedBanks: new Set(['boc', 'ccb']), dealBankId: 'unknown-bank', expected: [] },
+  ];
+  for (const { expected, ...options } of cases) {
+    const html = render(accounts, options);
+    const marked = [...html.matchAll(/<section\b[^>]*class="([^"]*\bbank-group\b[^"]*)"[^>]*data-bank-id="([^"]+)"[^>]*>/g)]
+      .filter(match => match[1].split(/\s+/).includes('is-dealing')).map(match => match[2]);
+    assert.deepEqual(marked, expected);
+  }
+  assert.doesNotMatch(render(accounts, { view: 'cards', expandedBanks: new Set(['boc']), dealBankId: 'boc' }), /is-dealing/);
+});
+
+test('toggle-all appears only for two or more banks in the bank view and reflects full or mixed expansion', () => {
+  const accounts = [account('boc-one'), account('boc-two'), account('ccb-one', { bankId: 'ccb' })];
+  const button = /<button\b[^>]*data-action="toggle-all-banks"[^>]*>([^<]+)<\/button>/g;
+  for (const [expandedBanks, label] of [
+    [new Set(), '全部展开'],
+    [new Set(['boc']), '全部展开'],
+    [new Set(['boc', 'ccb']), '全部收起'],
+    [new Set(['boc', 'ccb', 'stale-bank']), '全部收起'],
+  ]) {
+    const html = render(accounts, { expandedBanks });
+    const buttons = [...html.matchAll(button)];
+    assert.equal(buttons.length, 1);
+    assert.equal(buttons[0][1], label);
+    assert.match(buttons[0][0], /class="text-btn bank-toggle-all"/);
+    assert.match(html, /2 家银行 · 3 张卡/);
+  }
+  for (const subset of [[], accounts.slice(0, 1), accounts.slice(0, 2)]) {
+    assert.doesNotMatch(render(subset), /toggle-all-banks/);
+  }
+  assert.doesNotMatch(render(accounts, { view: 'cards', expandedBanks: new Set(['boc', 'ccb']) }), /toggle-all-banks/);
+});
+
+test('negative card markers use the live native balance while every amount retains the exact money class', () => {
+  const accounts = [
+    account('negative', { openingBalance: 500 }),
+    account('zero', { openingBalance: -500 }),
+    account('positive', { openingBalance: -500, currency: 'USD' }),
+  ];
+  const balances = { negative: -125, zero: 0, positive: 125 };
+  const html = render(accounts, { view: 'cards', balances, cnyBalances: { negative: -125, zero: 0, positive: 875 } });
+  for (const [index, card] of cards(html).entries()) {
+    const balanceClass = card.match(/<div class="(card-balance(?:\s+[^"]*)?)"/);
+    assert.ok(balanceClass);
+    assert.equal(balanceClass[1].split(/\s+/).includes('is-negative'), index === 0);
+  }
+  const moneyClasses = [...html.matchAll(/class="([^"]*\bmoney\b[^"]*)"/g)].map(match => match[1]);
+  assert.equal(moneyClasses.length, 4);
+  assert.ok(moneyClasses.every(value => value === 'money'));
+});
+
+test('bank negative markers depend only on the CNY total, including mixed debts and a zero net balance', () => {
+  const accounts = [
+    account('positive-debt', { openingBalance: -10000 }),
+    account('positive-credit', { openingBalance: 20000 }),
+    account('zero-debt', { bankId: 'ccb', openingBalance: -500 }),
+    account('zero-credit', { bankId: 'ccb', openingBalance: 500 }),
+    account('negative-credit', { bankId: 'icbc', currency: 'JPY', openingBalance: 10000 }),
+    account('negative-debt', { bankId: 'icbc', currency: 'USD', openingBalance: -100 }),
+  ];
+  const cnyBalances = {
+    'positive-debt': -10000, 'positive-credit': 20000,
+    'zero-debt': -500, 'zero-credit': 500,
+    'negative-credit': 500, 'negative-debt': -700,
+  };
+  const html = render(accounts, { cnyBalances, expandedBanks: new Set(['boc', 'ccb', 'icbc']) });
+  for (const [bankId, negative] of [['boc', false], ['ccb', false], ['icbc', true]]) {
+    const section = html.match(new RegExp(`<section\\b[^>]*data-bank-id="${bankId}"[^>]*>([\\s\\S]*?)<\\/section>`));
+    assert.ok(section);
+    const totalClass = section[1].match(/<div class="(bank-total(?:\s+[^"]*)?)"/);
+    assert.ok(totalClass);
+    assert.equal(totalClass[1].split(/\s+/).includes('is-negative'), negative, bankId);
+    assert.match(section[1], /包含负余额/);
+  }
+  for (const match of html.matchAll(/class="([^"]*\bmoney\b[^"]*)"/g)) assert.equal(match[1], 'money');
+});
+
+test('negative amount styling uses direct children and privacy mode neutralizes both card and bank colors', () => {
+  const css = readFileSync(new URL('../account-cards.css', import.meta.url), 'utf8');
+  assert.match(css, /\.card-balance\.is-negative\s*>\s*\.money\s*,\s*\.bank-total\.is-negative\s*>\s*\.money\s*\{\s*color:\s*#c2453d\s*;?\s*\}/i);
+  assert.match(css, /\.amounts-hidden\s+\.card-balance\.is-negative\s*>\s*\.money\s*,\s*\.amounts-hidden\s+\.bank-total\.is-negative\s*>\s*\.money\s*\{\s*color:\s*inherit\s*;?\s*\}/i);
+});
+
+// Exercise the real event branches without importing the application or opening
+// storage, Electron, or a browser. The DOM and render boundary stay in memory.
+function accountToggle(action, { expandedBanks = new Set(), domBanks = [], bankId, dealBank = '' } = {}) {
+  const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+  const branches = ['toggle-bank', 'toggle-all-banks'].map(name => {
+    const branch = source.match(new RegExp(`case\\s*'${name}'\\s*:[\\s\\S]*?(?=\\s*case\\s*'|\\s*default\\s*:)`));
+    assert.ok(branch, `${name} event branch exists`);
+    return branch[0];
+  }).join('\n');
+  const events = [];
+  const environment = {
+    action, expandedBanks, dealBank, events, target: { dataset: { bankId } },
+    bankById: id => bankCatalog.find(bank => bank.id === id),
+    document: {
+      querySelectorAll(selector) {
+        assert.equal(selector, '.bank-group[data-bank-id]');
+        return domBanks.map(id => ({ dataset: { bankId: id } }));
+      },
+      querySelector(selector) {
+        return { focus(options) { events.push({ type: 'focus', selector, options }); } };
+      },
+    },
+  };
+  const run = new Function('environment', `
+    let { dealBank } = environment;
+    const { expandedBanks, target, bankById, document } = environment;
+    const render = () => environment.events.push({ type: 'render', dealBank, banks: [...expandedBanks] });
+    switch (environment.action) { ${branches} }
+    return dealBank;
+  `);
+  return { expandedBanks, events, dealBank: run(environment) };
+}
+
+test('single-bank toggles deal only on expansion, clear the marker after render and restore keyboard focus', () => {
+  const expandedBanks = new Set();
+  const opened = accountToggle('toggle-bank', { expandedBanks, bankId: 'boc' });
+  assert.deepEqual(opened.events, [
+    { type: 'render', dealBank: 'boc', banks: ['boc'] },
+    { type: 'focus', selector: '[data-action="toggle-bank"][data-bank-id="boc"]', options: { preventScroll: true } },
+  ]);
+  assert.equal(opened.dealBank, '');
+  assert.deepEqual(expandedBanks, new Set(['boc']));
+  const closed = accountToggle('toggle-bank', { expandedBanks, bankId: 'boc', dealBank: opened.dealBank });
+  assert.deepEqual(closed.events, [
+    { type: 'render', dealBank: '', banks: [] },
+    { type: 'focus', selector: '[data-action="toggle-bank"][data-bank-id="boc"]', options: { preventScroll: true } },
+  ]);
+  assert.equal(closed.dealBank, '');
+  assert.equal(expandedBanks.size, 0);
+  const unknown = accountToggle('toggle-bank', { expandedBanks, bankId: 'unknown-bank' });
+  assert.deepEqual(unknown.events, []);
+  assert.equal(expandedBanks.size, 0);
+});
+
+test('toggle-all uses current DOM banks, expands mixed state and clears full state without dealing cards', () => {
+  const expandedBanks = new Set(['boc', 'stale-bank']);
+  const opened = accountToggle('toggle-all-banks', { expandedBanks, domBanks: ['boc', 'ccb'] });
+  assert.deepEqual(expandedBanks, new Set(['boc', 'stale-bank', 'ccb']));
+  assert.deepEqual(opened.events, [
+    { type: 'render', dealBank: '', banks: ['boc', 'stale-bank', 'ccb'] },
+    { type: 'focus', selector: '[data-action="toggle-all-banks"]', options: { preventScroll: true } },
+  ]);
+  assert.equal(opened.dealBank, '');
+  const closed = accountToggle('toggle-all-banks', { expandedBanks, domBanks: ['boc', 'ccb'] });
+  assert.equal(expandedBanks.size, 0);
+  assert.deepEqual(closed.events, [
+    { type: 'render', dealBank: '', banks: [] },
+    { type: 'focus', selector: '[data-action="toggle-all-banks"]', options: { preventScroll: true } },
+  ]);
+  assert.equal(closed.dealBank, '');
 });
