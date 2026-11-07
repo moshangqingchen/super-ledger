@@ -191,6 +191,49 @@
 .subscription-grid > .add-card { min-height: 250px; border: 1px dashed #d8ddec; border-radius: 22px; background: linear-gradient(150deg, #fcfcff, #f4f5fc); color: #74809b; box-shadow: inset 0 1px 0 #fff; }
 .subscription-grid > .add-card:hover { background: #f2effc; border-color: #baaedb; color: #75629f; }
 .subscription-grid > .add-card > svg { color: #9a8bbc; background: #eeebf8; box-shadow: 0 4px 10px #594a8b06; }
+
+/* Compact view: the same brand surface, reduced to the key facts. */
+.subscription-view-switch { margin-left: auto; }
+.subscription-view-switch button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 7px 13px; }
+.subscription-view-switch button.selected { color: #62509d; }
+.subscription-grid.is-compact { grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr)); gap: 20px; align-items: stretch; }
+.subscription-grid.is-compact > :is(.subscription-card, .add-card) { grid-row: auto; }
+.subscription-grid > .subscription-card.is-compact {
+  display: flex;
+  flex-direction: column;
+  padding: 17px 18px 16px;
+  border-radius: 18px;
+  background:
+    radial-gradient(110% 150px at 100% 0, color-mix(in srgb, var(--sub-glow) 13%, transparent), transparent 100%),
+    linear-gradient(180deg, color-mix(in srgb, var(--sub-tint) 72%, #fff) 0, #fff 170px);
+}
+.subscription-grid > .subscription-card.is-compact::after { border-radius: 12px; }
+/* Multiples of 240 / 13.125 keep the blocky Claude mascot on whole pixels. */
+.subscription-grid > .subscription-card.is-compact::before { top: 46px; right: 12px; width: calc(4px * 240 / 13.125); height: calc(4px * 240 / 13.125); }
+.compact-head { display: flex; align-items: flex-start; gap: 11px; min-width: 0; }
+.compact-head > :is(.service-logo, .service-icon) { display: grid; place-items: center; flex: 0 0 42px; width: 42px; height: 42px; border-radius: 13px; border: 1px solid #ffffffed; box-shadow: 0 1px 2px #26324a08, 0 5px 12px color-mix(in srgb, var(--subscription-accent) 13%, transparent), inset 0 1px 0 #ffffffb3; }
+.compact-head > .service-logo { padding: 8px; background: #ffffffec; }
+.compact-head > .service-logo img { width: 100%; height: 100%; object-fit: contain; }
+.compact-head > .service-logo[data-service="ttvoice"] { padding: 4px; background: #626ad4; }
+.compact-title { flex: 1; min-width: 0; }
+.subscription-grid .compact-title h3 { margin: 0; color: #303b52; font-size: 15px; font-weight: 700; line-height: 1.4; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.subscription-grid .compact-title .membership-tier-badge { display: inline-block; margin: 4px 0 0; padding: 2px 7px; font-size: 11px; }
+.compact-head .subscription-top-actions { flex-shrink: 0; gap: 6px; }
+.subscription-grid .compact-head .icon-btn { width: 30px; height: 30px; flex: 0 0 30px; }
+.subscription-grid .subscription-card.is-compact > .money { margin: 11px 0 13px; font-size: 25px; letter-spacing: -.7px; line-height: 1.25; }
+.compact-facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.compact-facts > span { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 27px; padding: 3px 8px; border: 1px solid transparent; border-radius: 8px; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.compact-facts svg { flex-shrink: 0; }
+.compact-expiry { background: var(--expiry-bg); border-color: var(--expiry-line) !important; color: var(--expiry-ink); }
+.compact-expiry b { font-weight: 650; }
+.compact-expiry small { font-size: 11px; opacity: .86; }
+.compact-funding[data-funding="enough"] { background: #eef8f3; border-color: #cfe9dc !important; color: #26745d; }
+.compact-funding[data-funding="shortfall"] { background: #fdf1f4; border-color: #f0d2da !important; color: #a33f57; }
+.compact-funding b { font-weight: 650; }
+.subscription-grid .compact-funding .account-logo { flex: 0 0 18px; width: 18px; height: 18px; border-radius: 5px; background: #fff; }
+.subscription-grid .compact-funding .account-logo :is(img, svg) { width: 14px; height: 14px; }
+.subscription-grid.is-compact > .add-card { min-height: 0; border-radius: 18px; }
+
 .subscription-legend { border-radius: 14px; border-color: #e6eaf3; background: #ffffffa6; box-shadow: inset 0 1px 0 #fff; }
 .subscription-legend > strong { color: #59667e; }
 .subscription-tools { padding: 6px 0; gap: 15px; }
@@ -253,6 +296,8 @@
   .subscription-tools { align-items: stretch; gap: 12px; }
   .subscription-filters { width: 100%; }
   .subscription-search { flex-basis: 100%; min-width: 0; }
+  .subscription-view-switch { width: 100%; margin-left: 0; }
+  .subscription-view-switch button { flex: 1; }
   .subscription-grid { gap: 17px; }
   .subscription-grid > .subscription-card { padding: 21px; }
   .modal:has(#subscription-form) .modal-head { padding: 21px; }

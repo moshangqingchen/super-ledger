@@ -28,8 +28,9 @@ let mainWindow, tray, server, origin = '', quitting = false, alreadyClosing = fa
 let updater, updateController, updateLifecycle;
 const sessionToken = randomBytes(32).toString('hex');
 const preferencesFile = path.join(app.getPath('userData'), 'desktop-settings.json');
-let preferences = { keepInTray: true };
-try { const p=JSON.parse(fs.readFileSync(preferencesFile,'utf8'));if(typeof p.keepInTray==='boolean')preferences.keepInTray=p.keepInTray; } catch {}
+const SUBSCRIPTION_VIEWS = ['detailed', 'compact'];
+let preferences = { keepInTray: true, subscriptionView: 'detailed' };
+try { const p=JSON.parse(fs.readFileSync(preferencesFile,'utf8'));if(typeof p.keepInTray==='boolean')preferences.keepInTray=p.keepInTray;if(SUBSCRIPTION_VIEWS.includes(p.subscriptionView))preferences.subscriptionView=p.subscriptionView; } catch {}
 
 function log(message) {
   try { fs.mkdirSync(app.getPath('userData'),{recursive:true});fs.appendFileSync(path.join(app.getPath('userData'),'desktop.log'),`[${new Date().toISOString()}] ${message}\n`); } catch {}
@@ -44,7 +45,7 @@ function trusted(event) {
   if (url.origin !== origin) throw new Error('无效的应用来源');
 }
 function showWindow() { if(mainWindow&&!mainWindow.isDestroyed()){if(mainWindow.isMinimized())mainWindow.restore();mainWindow.show();mainWindow.focus();void updateLifecycle?.opened();void offerUpdate(false);} }
-function info() { return { version:app.getVersion(),dataDirectory,keepInTray:preferences.keepInTray,platform:process.platform }; }
+function info() { return { version:app.getVersion(),dataDirectory,keepInTray:preferences.keepInTray,subscriptionView:preferences.subscriptionView,platform:process.platform }; }
 function configureIpc() {
   ipcMain.handle('ledger:info',event=>{trusted(event);return info();});
   ipcMain.handle('ledger:update-status',event=>{trusted(event);return updater.status();});
@@ -53,6 +54,10 @@ function configureIpc() {
   ipcMain.handle('ledger:update-cancel',event=>{trusted(event);return updater.cancelDownload();});
   ipcMain.handle('ledger:update-install',async event=>{trusted(event);return updateController.install();});
   ipcMain.handle('ledger:update-defer',event=>{trusted(event);return updateController.defer();});
+  ipcMain.handle('ledger:subscription-view',(event,view)=>{
+    trusted(event);if(!SUBSCRIPTION_VIEWS.includes(view))throw new Error('设置格式无效');
+    preferences.subscriptionView=view;savePreferences();return info();
+  });
   ipcMain.handle('ledger:preferences',(event,value)=>{
     trusted(event);if(!value||typeof value.keepInTray!=='boolean')throw new Error('设置格式无效');
     preferences.keepInTray=value.keepInTray;savePreferences();updateTray();return info();

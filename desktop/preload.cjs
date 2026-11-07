@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('ledgerDesktop', Object.freeze({
   installUpdate:()=>ipcRenderer.invoke('ledger:update-install'),
   deferUpdate:()=>ipcRenderer.invoke('ledger:update-defer'),
   setPreferences:value=>ipcRenderer.invoke('ledger:preferences',{keepInTray:Boolean(value.keepInTray)}),
+  setSubscriptionView:view=>ipcRenderer.invoke('ledger:subscription-view',view),
   openDataDirectory:()=>ipcRenderer.invoke('ledger:open-data'),
   openMobileFiles:()=>ipcRenderer.invoke('ledger:mobile-files'),
   enableMobileSyncNetwork:()=>ipcRenderer.invoke('ledger:mobile-firewall'),

@@ -23,6 +23,66 @@ function motifPath(value) {
   return match[2];
 }
 
+const appSource = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+
+function compactCard({ hidden = false, sub = {}, balance = 500 } = {}) {
+  const [source] = /function subscriptionCompact\(s,status,currentBalances\)\{[\s\S]*?\r?\n\}\r?\n/.exec(appSource);
+  const account = { id: 'a', name: '钱包' };
+  const render = new Function(
+    'hidden', 'esc', 'icon', 'subIcon', 'accountById', 'accountCurrency', 'accountLogo', 'accountLabel', 'subscriptionMoney', 'subscriptionDifferenceMoney',
+    `${source}; return subscriptionCompact;`,
+  )(hidden, value => String(value).replace(/</g, '&lt;'), () => '<svg></svg>', () => '<span class="service-logo"></span>',
+    id => (id === 'a' ? account : undefined), () => 'USD', () => '<span class="account-logo"></span>', () => '钱包账户', s => `USD ${s.amount / 100}`, (units, code) => `${code} ${units / 100}`);
+  return render(
+    { id: 's1', name: 'Claude', tier: 'Pro', amount: 300, accountId: 'a', recurring: true, active: true, note: '私密备注', linkedAccounts: [{ type: 'email', value: 'login@example.com' }], ...sub },
+    { tone: 'soon', label: '26 天后到期', date: '2026-12-02' },
+    { a: balance },
+  );
+}
+
+test('compact subscription cards keep the key facts and leave the details to the full view', () => {
+  const html = compactCard();
+  for (const expected of ['is-compact', 'data-expiry="soon"', 'Claude', 'Pro', 'USD 3', '/ 月', '26 天后到期', '2026-12-02', '余额充足', 'data-action="edit-subscription"']) {
+    assert.ok(html.includes(expected), `missing ${expected}`);
+  }
+  for (const detail of ['私密备注', 'login@example.com', '关联登录账号', 'toggle-subscription', '按当前余额比较']) {
+    assert.ok(!html.includes(detail), `should not show ${detail}`);
+  }
+  assert.match(compactCard({ sub: { active: false } }), /paused[\s\S]*记账已暂停/);
+  assert.ok(compactCard({ sub: { name: '<img src=x>' } }).includes('&lt;img src=x>'));
+});
+
+test('compact funding states the shortfall and masks it in privacy mode', () => {
+  const short = compactCard({ balance: 100 });
+  assert.match(short, /data-funding="shortfall"/);
+  assert.match(short, /余额不足，还差 <b class="money">USD 2<\/b>/);
+  const masked = compactCard({ balance: 100, hidden: true });
+  assert.ok(masked.includes('aria-label="金额已隐藏">••••'));
+  assert.ok(!masked.includes('USD 2'));
+  assert.match(compactCard({ balance: 300 }), /data-funding="enough"[\s\S]*余额充足/);
+  assert.doesNotMatch(compactCard({ sub: { accountId: 'gone' } }), /compact-funding/);
+});
+
+test('the view switch only accepts known views and the desktop preference is validated', () => {
+  assert.ok(appSource.includes(`case'subscription-view':{if(!['detailed','compact'].includes(target.dataset.view))break;`));
+  assert.ok(appSource.includes(`if(subscriptionView==='compact')return subscriptionCompact(s,status,currentBalances);`));
+  assert.ok(appSource.includes(`aria-label="订阅展示方式"`));
+  const main = readFileSync(new URL('../desktop/main.cjs', import.meta.url), 'utf8');
+  assert.match(main, /ledger:subscription-view',\(event,view\)=>\{\s*trusted\(event\);if\(!SUBSCRIPTION_VIEWS\.includes\(view\)\)throw/);
+  assert.ok(main.includes('if(SUBSCRIPTION_VIEWS.includes(p.subscriptionView))preferences.subscriptionView=p.subscriptionView;'));
+  const preload = readFileSync(new URL('../desktop/preload.cjs', import.meta.url), 'utf8');
+  assert.ok(preload.includes(`setSubscriptionView:view=>ipcRenderer.invoke('ledger:subscription-view',view)`));
+  assert.ok(preload.includes(`{keepInTray:Boolean(value.keepInTray)}`), 'the tray preference path stays separate');
+});
+
+test('compact cards leave the detailed subgrid and motifs stay whole in both views', () => {
+  const declarations = selector => rules.find(rule => rule.selector === selector)?.declarations;
+  assert.equal(declarations('.subscription-grid.is-compact > :is(.subscription-card, .add-card)')?.get('grid-row'), 'auto');
+  assert.equal(declarations('.subscription-grid > .subscription-card.is-compact')?.get('display'), 'flex');
+  assert.equal(declarations('.subscription-grid > .subscription-card::before')?.has('mask-image'), false);
+  assert.ok(readFileSync(new URL('claude.svg', motifDirectory), 'utf8').includes('shape-rendering="crispEdges"'), 'the Claude mascot keeps blocky edges');
+});
+
 test('every subscription catalog service and the generic fallback define a complete theme', () => {
   assert.ok(base, 'custom subscriptions have a generic card theme');
   const themes = [['generic', base]];
