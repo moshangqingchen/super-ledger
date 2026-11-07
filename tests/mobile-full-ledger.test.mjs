@@ -147,12 +147,85 @@ test('a rejected pending automatic transaction does not extend expiry, while its
   assert.equal(result.accepted.length, 1);
   assert.equal(result.conflicts.length, 1);
   assert.equal(result.next.transactions.length, 0);
+  assert.deepEqual(result.next.subscriptions[0].processedOccurrences, []);
   assert.equal(result.next.subscriptions[0].expiresOn, '2026-11-05');
   assert.deepEqual(result.next.subscriptions[0].expiryRenewal.renewedOccurrences, []);
   const retried = mergeMobileOperations(result.next, payload(result.next, [tx(phone.transactions[0])]), now);
   assert.equal(retried.conflicts.length, 0);
   assert.equal(retried.next.subscriptions[0].expiresOn, '2026-12-05');
   assert.equal(retried.next.transactions.length, 1);
+});
+
+test('a stale phone balance cannot debit an unfunded desktop subscription and funding permits one retry', () => {
+  const desktop = renewalState();
+  desktop.accounts[0].openingBalance = 0;
+  const phone = structuredClone(desktop);
+  phone.accounts[0].openingBalance = 1000;
+  const charged = applyRecurring(phone, '2026-11-05').state;
+  const operations = [put('subscription', charged.subscriptions[0], desktop.subscriptions[0]), tx(charged.transactions[0])];
+  const now = new Date('2026-11-05T02:00:00Z');
+  const blocked = mergeMobileOperations(desktop, payload(desktop, operations), now);
+  assert.equal(blocked.accepted.length, 1);
+  assert.equal(blocked.conflicts.length, 1);
+  assert.match(blocked.conflicts[0].reason, /余额不足/);
+  assert.equal(blocked.conflicts[0].canKeepPhone, false);
+  assert.equal(blocked.conflicts[0].retryWhenFunded, true);
+  assert.equal(blocked.next.transactions.length, 0);
+  assert.equal(blocked.next.subscriptions[0].expiresOn, '2026-11-05');
+  assert.deepEqual(blocked.next.subscriptions[0].processedOccurrences, []);
+  assert.deepEqual(blocked.next.subscriptions[0].expiryRenewal.renewedOccurrences, []);
+
+  const funded = mergeMobileOperations(blocked.next, payload(blocked.next, [tx(payment({ type: 'income', amount: 1000, title: '充值', category: '其他收入' }))]), now);
+  const retried = mergeMobileOperations(funded.next, payload(funded.next, operations), now);
+  assert.equal(retried.conflicts.length, 0);
+  assert.equal(getBalances(retried.next, '2026-11-05').cash, 0);
+  assert.deepEqual(retried.next.subscriptions[0].processedOccurrences, ['member:2026-11']);
+  assert.equal(retried.next.subscriptions[0].expiresOn, '2026-12-05');
+  const repeated = mergeMobileOperations(retried.next, payload(retried.next, operations), now);
+  assert.equal(repeated.conflicts.length, 0);
+  assert.equal(repeated.next.transactions.length, 2);
+  assert.equal(repeated.next.subscriptions[0].expiresOn, '2026-12-05');
+});
+
+test('shared-wallet phone automatic charges are funded in acceptance order without marking a rejected period', () => {
+  const desktop = renewalState();
+  desktop.accounts[0].openingBalance = 1500;
+  const second = subscription({ id: 'second', expiresOn: '2026-11-05' });
+  resetSubscriptionExpiry(second, []);
+  desktop.subscriptions.push(second);
+  const phone = structuredClone(desktop);
+  phone.accounts[0].openingBalance = 5000;
+  const charged = applyRecurring(phone, '2026-11-05').state;
+  const operations = [
+    ...charged.subscriptions.map((sub, index) => put('subscription', sub, desktop.subscriptions[index])),
+    ...charged.transactions.map(record => tx(record)),
+  ];
+  const result = mergeMobileOperations(desktop, payload(desktop, operations), new Date('2026-11-05T02:00:00Z'));
+  assert.equal(result.conflicts.length, 1);
+  assert.equal(result.next.transactions.length, 1);
+  assert.equal(getBalances(result.next, '2026-11-05').cash, 500);
+  assert.deepEqual(result.next.subscriptions[0].processedOccurrences, ['member:2026-11']);
+  assert.equal(result.next.subscriptions[0].expiresOn, '2026-12-05');
+  assert.deepEqual(result.next.subscriptions[1].processedOccurrences, []);
+  assert.equal(result.next.subscriptions[1].expiresOn, '2026-11-05');
+});
+
+test('automatic sync checks native available funds and excludes income dated after Beijing today', () => {
+  const desktop = renewalState();
+  desktop.schemaVersion = 2;
+  Object.assign(desktop.accounts[0], { currency: 'USD', cnyRate: '7', rateMode: 'manual', openingBalance: 500 });
+  Object.assign(desktop.subscriptions[0], { currency: 'USD', amount: 600 });
+  desktop.transactions.push(payment({ type: 'income', amount: 1000, currency: 'USD', cnyRate: '7', date: '2026-11-06' }));
+  const phone = structuredClone(desktop);
+  phone.accounts[0].openingBalance = 1000;
+  const charged = applyRecurring(phone, '2026-11-05').state;
+  const charge = charged.transactions.find(record => record.subscriptionId);
+  const result = mergeMobileOperations(desktop, payload(desktop, [tx(charge)]), new Date('2026-11-05T02:00:00Z'));
+  assert.equal(result.accepted.length, 0);
+  assert.equal(result.conflicts.length, 1);
+  assert.match(result.conflicts[0].reason, /余额不足/);
+  assert.equal(getBalances(result.next, '2026-11-05').cash, 500);
+  assert.deepEqual(result.next.subscriptions[0].processedOccurrences, []);
 });
 
 test('paid renewal receipts survive deleted phone transactions and reject future receipts before their Beijing hour', () => {

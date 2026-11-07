@@ -6,7 +6,7 @@
 
 ## 安装与打开
 
-Windows 1.8.11 和 Android 1.3.7 可从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/tag/v1.8.11) 下载 `SuperLedger-Setup-1.8.11.exe` 和 `SuperLedger-Mobile-1.3.7.apk`，也可运行本地构建的 `release/超级账本-安装-1.8.11.exe`。Windows 安装包也内附该 APK。安装程序会为当前用户创建桌面与开始菜单入口。
+Windows 1.8.12 和 Android 1.3.8 可从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/tag/v1.8.12) 下载 `SuperLedger-Setup-1.8.12.exe` 和 `SuperLedger-Mobile-1.3.8.apk`，也可运行本地构建的 `release/超级账本-安装-1.8.12.exe`。Windows 安装包也内附该 APK。安装程序会为当前用户创建桌面与开始菜单入口。
 
 也可直接打开 `release/win-unpacked/超级账本.exe`；免安装版必须保留整个 win-unpacked 文件夹。根目录的 `启动账本.cmd` 仅是兼容启动入口，日常使用桌面或开始菜单图标即可。
 
@@ -19,6 +19,8 @@ Android 1.3.6 支持按北京时间设置首次和每月扣账小时，小时订
 首次打开默认是空账本：账户、收支、订阅、储蓄心愿均为空，预算未设置，所有金额为零。点击「添加账户」后填写自己的余额开始使用。会员服务与 Logo 是可选目录，不会自动创建订阅记录。
 
 ## 功能
+
+- Windows 1.8.12 / Android 1.3.8 的自动订阅逐笔检查原币余额。余额不足时保留待扣账期，补足后按原账期处理，成功记账后再顺延到期日。详见 [1.8.12 更新说明](docs/releases/1.8.12.md)。
 
 - Windows 1.8.11 / Android 1.3.7 的连续订阅成功记账后，已填写的会员到期日自动顺延一个自然月。升级时会修复已有扣账但未顺延的到期日，同一账期只顺延一次。详见 [1.8.11 更新说明](docs/releases/1.8.11.md)。
 

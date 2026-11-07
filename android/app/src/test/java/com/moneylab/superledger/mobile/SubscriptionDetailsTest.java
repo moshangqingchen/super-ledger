@@ -90,6 +90,8 @@ public final class SubscriptionDetailsTest {
         check(SubscriptionDetails.expiryStatus(monthEnd, "2024-02-29").label.equals("今天续费"), "renewal today is explicit");
         check(SubscriptionDetails.expiryStatus(new JSONObject(monthEnd.toString()).put("expiresOn", "2024-12-31"), "2024-02-22").date.equals("2024-12-31"), "explicit expiry precedes recurrence");
         check(SubscriptionDetails.expiryStatus(sub().put("startDate", "2027-01-31"), "2026-12-31").days == 31, "future first booking fallback");
+        SubscriptionDetails.Status pending = SubscriptionDetails.expiryStatus(sub(), "2024-01-03");
+        check(pending.label.equals("待扣账 · 已逾期 2 天") && pending.detail.equals("2024-01-01 · 待扣账"), "an overdue unpaid renewal stays visible as pending billing");
         for (String flag : new String[]{"active", "recurring"}) {
             JSONObject inactive = sub().put(flag, false);
             SubscriptionDetails.Status unset = SubscriptionDetails.expiryStatus(inactive, "2024-01-01");

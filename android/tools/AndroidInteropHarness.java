@@ -31,6 +31,21 @@ public class AndroidInteropHarness {
     } else if(action.equals("membership-edit-expiry")) {
       String expiry=LocalDate.parse(LedgerStore.today()).plusDays(10).toString();
       store.saveSubscription(new JSONObject().put("id","renewing_membership").put("expiresOn",expiry));output.put("expectedExpiry",expiry);
+    } else if(action.equals("membership-unfunded")) {
+      String today=LedgerStore.today();
+      store.saveAccount(new JSONObject().put("id","funding_wallet").put("name","待补款钱包").put("type","现金").put("openingBalance",0));
+      store.saveSubscription(new JSONObject().put("id","funding_member").put("name","余额不足会员").put("accountId","funding_wallet").put("amount",100).put("category","会员订阅").put("startDate",today).put("billingDay",Integer.parseInt(today.substring(8))).put("recurring",true).put("active",true).put("expiresOn",today));
+      output.put("expectedExpiry",today);
+    } else if(action.equals("membership-topup")) {
+      String today=LedgerStore.today();
+      store.saveManual(new JSONObject().put("id","funding_topup").put("type","income").put("accountId","funding_wallet").put("amount",100).put("date",today).put("title","订阅补款").put("category","其他收入").put("note",""));
+      output.put("expectedExpiry",LocalDate.parse(today).plusMonths(1).toString());
+    } else if(action.equals("stale-funding-wallet")) {
+      store.saveAccount(new JSONObject().put("id","stale_wallet").put("name","离线缓存余额").put("type","现金").put("openingBalance",100));output.put("today",LedgerStore.today());
+    } else if(action.equals("stale-funding-plan")) {
+      String today=LedgerStore.today();
+      store.saveSubscription(new JSONObject().put("id","stale_member").put("name","等待服务器资金恢复").put("accountId","stale_wallet").put("amount",100).put("category","会员订阅").put("startDate",today).put("billingDay",Integer.parseInt(today.substring(8))).put("recurring",true).put("active",true).put("expiresOn",today));
+      output.put("expectedExpiry",LocalDate.parse(today).plusMonths(1).toString());
     } else if(action.equals("apple-edit")) {
       store.saveAccount(new JSONObject().put("id","desktop_apple_tr").put("openingBalance",20050));
     } else if(action.equals("apple-convert")) {
@@ -71,13 +86,18 @@ public class AndroidInteropHarness {
     } else if(action.equals("resolve-desktop")) {
       JSONArray conflicts=store.snapshot().getJSONArray("conflicts");check(conflicts.length()>0,"Expected unresolved conflict");
       store.resolveConflict(conflicts.getJSONObject(0).getString("operationId"),false);
-    } else if(action.equals("sync")||action.equals("sync-no-ack")) {
+    } else if(action.equals("sync")||action.equals("sync-no-ack")||action.equals("sync-until-settled")) {
       String qr=new String(Files.readAllBytes(Paths.get(args[2])),StandardCharsets.UTF_8);
       SyncClient.Pairing pairing=SyncClient.parsePairing(qr);
-      JSONObject request=store.syncRequest(UUID.randomUUID().toString());
-      JSONObject response=SyncClient.synchronize(pairing,request);
-      output.put("request",request).put("response",response);
-      if(action.equals("sync"))store.applyResponse(response,request);
+      int rounds=0;
+      do {
+        JSONObject request=store.syncRequest(UUID.randomUUID().toString());
+        JSONObject response=SyncClient.synchronize(pairing,request);
+        output.put("request",request).put("response",response);
+        if(!action.equals("sync-no-ack"))store.applyResponse(response,request);
+        rounds++;
+      }while(action.equals("sync-until-settled")&&rounds<20&&store.syncRequest(UUID.randomUUID().toString()).getJSONArray("operations").length()>0);
+      output.put("rounds",rounds);
     } else if(action.equals("pairing-validation")) {
       JSONObject value=new JSONObject(new String(Files.readAllBytes(Paths.get(args[2])),StandardCharsets.UTF_8));
       String[] invalid={"http://8.8.8.8:12345","http://127.0.0.1:12345","http://localhost:12345","http://192.168.001.1:12345","http://192.168.1.1:80","http://192.168.1.1:12345/path","https://192.168.1.1:12345"};

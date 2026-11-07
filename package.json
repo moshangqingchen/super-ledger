@@ -1,6 +1,6 @@
 {
   "name": "money-lab-local-ledger",
-  "version": "1.8.11",
+  "version": "1.8.12",
   "private": true,
   "type": "module",
   "description": "超级账本 Windows 桌面应用 · 收支、资产与会员订阅管理",
@@ -70,7 +70,7 @@
       "assets/update-public-key.pem"
     ],
     "extraResources": [
-      { "from": "android/release/SuperLedger-Mobile-1.3.7.apk", "to": "mobile/SuperLedger-Mobile-1.3.7.apk" },
+      { "from": "android/release/SuperLedger-Mobile-1.3.8.apk", "to": "mobile/SuperLedger-Mobile-1.3.8.apk" },
       { "from": "desktop/enable-mobile-sync.ps1", "to": "mobile/enable-mobile-sync.ps1" },
       { "from": "docs/mobile-sync-guide.md", "to": "mobile/使用说明.md" }
     ],

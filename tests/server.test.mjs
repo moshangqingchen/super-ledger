@@ -320,12 +320,51 @@ test('opening a previously booked subscription repairs expiry once without charg
   assert.deepEqual(await readState(fixture), renewed);
 });
 
+test('an unfunded subscription waits through restart and charges once after a same-day top-up', async t => {
+  let current = new Date('2026-11-07T02:00:00Z');
+  const fixture = await startFixture(t, { now: () => current });
+  let state = await readState(fixture);
+  state.schemaVersion = 3;
+  state.accounts = [{ id: 'cash', name: '现金', type: '现金', openingBalance: 1200, color: '#123456' }];
+  state.subscriptions = [{ id: 'member', name: '待补款会员', amount: 16000, accountId: 'cash', category: '会员订阅', startDate: '2026-11-07', startHour: 10, billingDay: 7, billingHour: 10, recurring: true, active: true, color: '#123456', icon: 'spark', expiresOn: '2026-11-07', processedOccurrences: [] }];
+  const response = await send(fixture, '/api/state', { state, expectedRevision: state.revision }, 'PUT');
+  assert.equal(response.status, 200);
+  const waiting = await response.json();
+  assert.deepEqual(waiting.transactions, []);
+  assert.deepEqual(waiting.subscriptions[0].processedOccurrences, []);
+  assert.equal(waiting.subscriptions[0].expiresOn, '2026-11-07');
+  assert.equal((await (await fetch(`${fixture.base}/api/health`)).json()).automaticBookingError, '');
+  await fixture.close();
+  await fixture.start();
+  assert.deepEqual(await readState(fixture), waiting);
+
+  current = new Date('2026-11-08T02:00:00Z');
+  state = await readState(fixture);
+  assert.deepEqual(state.transactions, []);
+  state.transactions.push({ id: 'top-up', type: 'income', amount: 14800, accountId: 'cash', category: '其他收入', title: '补足余额', date: '2026-11-08', note: '' });
+  const fundedResponse = await send(fixture, '/api/state', { state, expectedRevision: state.revision }, 'PUT');
+  assert.equal(fundedResponse.status, 200);
+  const funded = await fundedResponse.json();
+  assert.equal(funded.transactions.filter(tx => tx.subscriptionId === 'member').length, 1);
+  assert.equal(funded.subscriptions[0].expiresOn, '2026-12-07');
+  assert.deepEqual(funded.subscriptions[0].processedOccurrences, ['member:2026-11']);
+  assert.deepEqual(await readState(fixture), funded);
+  await fixture.close();
+  await fixture.start();
+  assert.deepEqual(await readState(fixture), funded);
+});
+
 async function blockedRecurringFixture(t) {
   const fixture = await startFixture(t);
   await fixture.close();
   const state = makeEmptyState();
   const today = localDate();
-  state.accounts = [{ id: 'cash', name: '现金', type: '现金', openingBalance: -MAX_MONEY, color: '#123456' }];
+  state.schemaVersion = 2;
+  state.accounts = [{ id: 'cash', name: '现金', type: '现金', openingBalance: MAX_MONEY, color: '#123456' }];
+  state.transactions = [
+    { id: 'historical-expense', type: 'expense', amount: MAX_MONEY, accountId: 'cash', category: '其他支出', title: '历史支出', date: today, note: '' },
+    { id: 'historical-income', type: 'income', amount: MAX_MONEY, accountId: 'cash', category: '其他收入', title: '历史收入', date: today, note: '' },
+  ];
   state.subscriptions = [{ id: 'fee', name: '到期订阅', amount: 1, accountId: 'cash', category: '会员订阅', startDate: today, billingDay: Number(today.slice(-2)), recurring: true, active: true, color: '#123456', icon: 'spark', processedOccurrences: [] }];
   assert.equal(validateState(state), true, 'The saved ledger remains valid before its next automatic debit');
   fs.writeFileSync(path.join(fixture.directory, 'ledger.json'), JSON.stringify(state));
@@ -338,7 +377,7 @@ test('failed automatic bookings leave the ledger readable and exportable and all
   assert.deepEqual(await readState(fixture), state);
   const health = await (await fetch(`${fixture.base}/api/health`)).json();
   assert.equal(health.ready, true);
-  assert.match(health.automaticBookingError, /账户累计余额/);
+  assert.match(health.automaticBookingError, /累计收支/);
   const exported = await fetch(`${fixture.base}/api/export`);
   assert.equal(exported.status, 200);
   assert.deepEqual(await exported.json(), state, 'Operational errors must not enter the backup schema');
@@ -351,7 +390,7 @@ test('failed automatic bookings leave the ledger readable and exportable and all
   const saved = await response.json();
   assert.equal(saved.revision, state.revision + 1);
   assert.equal(saved.subscriptions[0].active, false);
-  assert.deepEqual(saved.transactions, []);
+  assert.deepEqual(saved.transactions, state.transactions);
   assert.deepEqual(saved.subscriptions[0].processedOccurrences, []);
   assert.deepEqual(await readState(fixture), saved);
   assert.equal((await (await fetch(`${fixture.base}/api/health`)).json()).automaticBookingError, '');
@@ -361,7 +400,7 @@ test('failed automatic bookings leave the ledger readable and exportable and all
   for (const endpoint of ['/api/state', '/api/import']) {
     const rejected = await send(fixture, endpoint, { state: invalid, expectedRevision: saved.revision }, endpoint === '/api/state' ? 'PUT' : 'POST');
     assert.equal(rejected.status, 400, 'An unbookable candidate must return an actionable validation error');
-    assert.match((await rejected.json()).error, /账户累计余额/);
+    assert.match((await rejected.json()).error, /累计收支/);
     assert.deepEqual(await readState(fixture), saved);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(fixture.directory, 'ledger.json'), 'utf8')), saved);
     assert.equal((await (await fetch(`${fixture.base}/api/health`)).json()).automaticBookingError, '', 'A rejected candidate must not mark the saved ledger as blocked');

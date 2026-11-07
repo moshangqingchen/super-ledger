@@ -112,6 +112,8 @@ public final class SubscriptionDetails {
         String action = source.equals("expiry") ? "到期" : "续费";
         String tone = days < 0 ? "expired" : days <= 7 ? "urgent" : days <= 30 ? "soon" : "normal";
         String label = days < 0 ? "已" + action + " " + -days + " 天" : days == 0 ? "今天" + action : days + " 天后" + action;
+        if (source.equals("renewal") && days < 0)
+            return new Status(tone, "待扣账 · 已逾期 " + -days + " 天", target + " · 待扣账", target, days, source);
         return new Status(tone, label, target + " · " + (source.equals("expiry") ? "会员到期" : "下次续费"), target, days, source);
     }
 

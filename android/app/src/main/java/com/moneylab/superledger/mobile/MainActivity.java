@@ -357,11 +357,12 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         for (int i = 0; i < conflicts.length(); i++) {
             final JSONObject conflict = conflicts.getJSONObject(i); JSONObject op = null; for (int j = 0; j < operations.length(); j++) if (conflict.optString("operationId").equals(operations.getJSONObject(j).optString("id"))) op = operations.getJSONObject(j);
             if (op == null) continue;
-            final JSONObject operation = op; LinearLayout c = card(); c.addView(text("同步需要确认", 17, RED, true)); c.addView(label(conflict.optString("reason", "两端记录有变化")));
+            final JSONObject operation = op; LinearLayout c = card(); c.addView(text(conflict.optBoolean("retryWhenFunded")?"余额不足，待补款":"同步需要确认", 17, RED, true)); c.addView(label(conflict.optString("reason", "两端记录有变化")));
             JSONObject phone = op.optJSONObject("record"); if (phone == null) phone = op.optJSONObject("transaction"); if (phone == null) phone = op.optJSONObject("base"); if (phone != null) c.addView(text((op.optString("kind").equals("delete") ? "手机希望删除：" : "手机记录：") + recordDescription(op.optString("entity", "transaction"), phone), 14, INK, false));
             JSONObject candidate = conflict.optJSONObject("candidate"), current = conflict.optJSONObject("current"); JSONObject shown = candidate != null ? candidate : current;
             if (shown != null) c.addView(label("电脑记录：" + recordDescription(op.optString("entity", "transaction"), shown)));
-            addButton(c, "查看处理方式", false, () -> resolveConflict(conflict, operation));
+            if(conflict.optBoolean("retryWhenFunded"))c.addView(label("补足账户余额后再次同步，待扣账期会自动处理。"));
+            else addButton(c, "查看处理方式", false, () -> resolveConflict(conflict, operation));
         }
         for (int i = 0; i < pending.length(); i++) {
             final JSONObject item = pending.getJSONObject(i), tx = item.getJSONObject("transaction"); LinearLayout c = card(), title = row(); addLogo(title, BrandIcons.forSource(item.optString("sourcePackage")), sourceName(data, item.optString("sourcePackage")), "#8476D9", 38); title.addView(text(tx.optString("title", "付款通知"), 18, INK, true), new LinearLayout.LayoutParams(0, -2, 1)); c.addView(title); c.addView(text(tx.optLong("amount") <= 0 ? "金额待确认" : money(tx.optLong("amount"), tx.optString("currency", "CNY")), 25, PURPLE, true)); c.addView(label(item.optString("reason"))); c.addView(text(tx.optString("date") + " · " + sourceName(data, item.optString("sourcePackage")), 12, MUTED, false));
@@ -400,11 +401,17 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         LinearLayout steps = card(); sectionTitle(steps,"连接你的电脑","sync"); gap(steps, 10); steps.addView(text("01  手机和电脑连接同一 Wi-Fi / 热点\n\n02  电脑端打开「手机同步」\n\n03  扫描电脑显示的临时二维码", 15, INK, false)); gap(steps, 14); steps.addView(label("不需要云端账号。二维码只用于临时配对，账本内容加密传输。关闭电脑同步窗口或二维码过期后，需要重新扫码。"));
         Button scan = button(store.isSyncing() ? "正在同步…" : "扫一扫，开始同步", true, () -> startActivityForResult(new Intent(this, ScanActivity.class), 31)); scan.setEnabled(!store.isSyncing()); steps.addView(scan, new LinearLayout.LayoutParams(-1, -2)); addButton(steps, "粘贴配对内容", false, this::pastePairing);
         if (!syncMessage.isEmpty()) { LinearLayout result = card(); result.addView(text(store.isSyncing() ? "正在连接" : "同步结果", 18, INK, true)); result.addView(label(syncMessage)); }
-        LinearLayout state = card(); sectionTitle(state,"同步状态","shield"); state.addView(label("上次成功：" + when(data.optLong("lastSyncAt")) + "\n待上传修改：" + data.getJSONArray("operations").length() + " 项\n待处理通知：" + data.getJSONArray("pending").length() + " 条\n需要确认的冲突：" + data.getJSONArray("conflicts").length() + " 项"));
+        int funding=fundingWaitCount(data);
+        LinearLayout state = card(); sectionTitle(state,"同步状态","shield"); state.addView(label("上次成功：" + when(data.optLong("lastSyncAt")) + "\n待上传修改：" + data.getJSONArray("operations").length() + " 项\n待处理通知：" + data.getJSONArray("pending").length() + " 条\n需要确认的冲突：" + (data.getJSONArray("conflicts").length()-funding) + " 项\n等待补款的账期：" + funding + " 项"));
         state.addView(label("同步中断不会删除手机记录。信息不明确的通知留在手机待确认，核对入账后才上传。账户、外币、转账、订阅、预算和心愿都可在手机管理，并同步到电脑 1.7.0 及以上版本。"));
         if (!data.isNull("bookId")) addButton(state, "连接另一份电脑账本", false, () -> dialogBuilder().setTitle("切换电脑账本？").setMessage("仅在没有待同步修改时可以切换。手机会清除已下载的电脑账本和账户映射；待确认通知保留。原电脑上的数据不受影响。").setNegativeButton("取消", null).setPositiveButton("切换", (d, w) -> act(() -> { store.reconnectEmpty(); pairing = null; render(); })).show());
         addButton(state, "导出手机完整备份", false, () -> exportBackup(false));
         if (!data.isNull("bookId")) addButton(state, "电脑账本已重置 / 恢复配对", false, () -> dialogBuilder().setTitle("先保留手机备份").setMessage("适用于电脑账本已重置、导入或更换，无法再同步旧队列的情况。请先导出完整手机备份，再选择是否恢复配对；此时不会丢弃任何手机记录。").setNegativeButton("取消", null).setPositiveButton("先导出备份", (d, w) -> act(() -> exportBackup(true))).show());
+    }
+    private int fundingWaitCount(JSONObject data)throws Exception {
+        JSONArray conflicts=items(data,"conflicts");int count=0;
+        for(int i=0;i<conflicts.length();i++)if(conflicts.getJSONObject(i).optBoolean("retryWhenFunded"))count++;
+        return count;
     }
     private void pastePairing() { EditText input = new EditText(this); styleInput(input); input.setHint("粘贴电脑端的配对内容"); input.setMinLines(3); input.setMaxLines(8); input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS); dialogBuilder().setTitle("手动配对").setView(input).setNegativeButton("取消", null).setPositiveButton("同步", (d, w) -> act(() -> startSync(input.getText().toString()))).show(); }
     @Override protected void onActivityResult(int code, int result, Intent intent) {
@@ -446,9 +453,9 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
                     JSONObject request = store.syncRequest(UUID.randomUUID().toString());
                     JSONObject response = SyncClient.synchronize(selected, request); store.applyResponse(response, request);
                     JSONObject summary = response.optJSONObject("summary"); if (summary != null) { added += summary.optInt("added"); updated += summary.optInt("updated"); deleted += summary.optInt("deleted"); duplicates += summary.optInt("duplicates"); }
-                    rounds++; if (request.getJSONArray("operations").length() == 0 || rounds >= 20 || store.syncRequest(UUID.randomUUID().toString()).getJSONArray("operations").length() == 0) break;
+                    rounds++; if (rounds >= 20 || store.syncRequest(UUID.randomUUID().toString()).getJSONArray("operations").length() == 0) break;
                 }
-                JSONObject latest = store.snapshot(); result = "同步完成\n新增 " + added + " 笔 · 更新 " + updated + " 笔 · 删除 " + deleted + " 笔\n已去重 " + duplicates + " 笔 · 待确认冲突 " + latest.getJSONArray("conflicts").length() + " 项\n剩余待上传 " + latest.getJSONArray("operations").length() + " 项";
+                JSONObject latest = store.snapshot();int funding=fundingWaitCount(latest); result = "同步完成\n新增 " + added + " 笔 · 更新 " + updated + " 笔 · 删除 " + deleted + " 笔\n已去重 " + duplicates + " 笔 · 待确认冲突 " + (latest.getJSONArray("conflicts").length()-funding) + " 项\n等待补款的账期 " + funding + " 项 · 剩余待上传 " + latest.getJSONArray("operations").length() + " 项";
             } catch (Exception e) { result = "同步尚未完成\n" + (e.getMessage() == null ? "请检查连接后重试" : e.getMessage()); }
             finally { store.endSync(); }
             sendBroadcast(new Intent(ACTION_CHANGED).setPackage(getPackageName()));
@@ -687,9 +694,9 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         intro.setBackground(MobileStyle.heroSurface(this));intro.addView(label("每月启用的计划扣账 · 折合人民币"));intro.addView(amountText(money(monthly,"CNY"),31,INK));addButton(intro,"＋ 添加订阅",true,()->editSubscription(null));
         intro.addView(label("到期标注：已过期红色，7 天内橙色，8–30 天黄色，30 天以上绿色，未设置灰色。"));
         if(subscriptions.length()==0)intro.addView(label("选择服务品牌，填写你实际支付的金额和扣款账户。"));
-        for(int i=0;i<subscriptions.length();i++){final JSONObject sub=subscriptions.getJSONObject(i);LinearLayout c=card(),r=row();c.setBackground(MobileStyle.material(this,safeColor(sub.optString("color","#8C7BC1")),22));addLogo(r,BrandIcons.forSubscription(sub),sub.optString("name"),sub.optString("color","#8476D9"),44);LinearLayout labels=column();labels.addView(text(sub.optString("name"),17,INK,true));labels.addView(text(sub.optString("tier").isEmpty()?"自定义档位":sub.optString("tier"),12,MUTED,false));r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));c.addView(r);gap(c,16);c.addView(amountText(money(sub.optLong("amount"),sub.optString("currency","CNY")),29,INK));String due=MobileLedger.nextSubscriptionDue(sub,LedgerStore.today());c.addView(label((sub.optBoolean("active")?(sub.optBoolean("recurring")?"每月 "+sub.optInt("billingDay")+" 日 "+String.format(Locale.US,"%02d:00",sub.optInt("billingHour",0)):"单次记账"):"已暂停")+(due==null?"":" · 下次 "+due+" "+String.format(Locale.US,"%02d:00",MobileLedger.subscriptionDueHour(sub,due))+" 北京时间")));
+        for(int i=0;i<subscriptions.length();i++){final JSONObject sub=subscriptions.getJSONObject(i);LinearLayout c=card(),r=row();c.setBackground(MobileStyle.material(this,safeColor(sub.optString("color","#8C7BC1")),22));addLogo(r,BrandIcons.forSubscription(sub),sub.optString("name"),sub.optString("color","#8476D9"),44);LinearLayout labels=column();labels.addView(text(sub.optString("name"),17,INK,true));labels.addView(text(sub.optString("tier").isEmpty()?"自定义档位":sub.optString("tier"),12,MUTED,false));r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));c.addView(r);gap(c,16);c.addView(amountText(money(sub.optLong("amount"),sub.optString("currency","CNY")),29,INK));String due=MobileLedger.nextSubscriptionDue(sub,LedgerStore.today());java.time.ZonedDateTime now=MobileLedger.beijingDateTime(System.currentTimeMillis());String today=now.toLocalDate().toString();boolean waiting=due!=null&&(due.compareTo(today)<0||due.equals(today)&&MobileLedger.subscriptionDueHour(sub,due)<=now.getHour());c.addView(label((sub.optBoolean("active")?(sub.optBoolean("recurring")?"每月 "+sub.optInt("billingDay")+" 日 "+String.format(Locale.US,"%02d:00",sub.optInt("billingHour",0)):"单次记账"):"已暂停")+(due==null?"":(waiting?" · 待扣账 ":" · 下次 ")+due+" "+String.format(Locale.US,"%02d:00",MobileLedger.subscriptionDueHour(sub,due))+" 北京时间")));
             SubscriptionDetails.Status expiry=SubscriptionDetails.expiryStatus(sub,LedgerStore.today());int tone=expiryColor(expiry.tone);TextView badge=text(expiry.label,13,tone,true);badge.setPadding(dp(11),dp(9),dp(11),dp(9));badge.setBackground(MobileStyle.outlined(this,MobileStyle.blend(Color.WHITE,tone,.06f),MobileStyle.blend(Color.WHITE,tone,.22f),11));c.addView(badge);gap(c,5);c.addView(text(expiry.detail,12,MUTED,false));
-            gap(c,12);c.addView(subscriptionFunding(findAccount(state,sub.optString("accountId")),accountBalances.optLong(sub.optString("accountId")),sub.optLong("amount")));
+            gap(c,12);c.addView(subscriptionFunding(findAccount(state,sub.optString("accountId")),accountBalances.optLong(sub.optString("accountId")),sub.optLong("amount"),waiting));
             JSONArray linked=sub.optJSONArray("linkedAccounts");if(linked!=null&&linked.length()>0){gap(c,12);c.addView(text("关联登录账号",13,MUTED,true));for(int j=0;j<linked.length();j++){JSONObject identity=linked.getJSONObject(j);c.addView(text(linkedAccountLabel(identity),12,INK,false));}}
             if(!sub.optString("note").isEmpty())c.addView(label(sub.optString("note")));
             actionPair(c,"编辑计划",()->editSubscription(sub),sub.optBoolean("active")?"暂停记账":"恢复记账",()->{JSONObject changed=LedgerStore.copy(sub).put("active",!sub.optBoolean("active"));store.saveSubscription(changed);render();});
@@ -697,12 +704,15 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     }
     /** Read-only comparison, in integer units of the selected account; no booking or currency conversion. */
     private LinearLayout subscriptionFunding(JSONObject account,long balance,Long fee){
+        return subscriptionFunding(account,balance,fee,false);
+    }
+    private LinearLayout subscriptionFunding(JSONObject account,long balance,Long fee,boolean pending){
         LinearLayout panel=column();panel.setPadding(dp(15),dp(14),dp(15),dp(14));panel.setBackground(MobileStyle.material(this,0xFF93A3C3,16));
         panel.addView(text("扣款账户",12,MUTED,true));panel.addView(text(accountName(account),14,INK,true));gap(panel,8);
         String code=account==null?"CNY":account.optString("currency","CNY");panel.addView(text("当前账本余额",12,MUTED,false));panel.addView(amountText(money(balance,code),24,INK));
-        if(fee!=null&&fee>0){panel.addView(text("本次费用  "+money(fee,code),14,INK,false));long difference=fee-balance;if(difference>0)panel.setBackground(MobileStyle.material(this,RED,16));TextView status=text(difference>0?"余额不足 · 还差 "+fundingDifference(difference,code):"余额充足",13,difference>0?RED:GREEN,true);gap(panel,8);panel.addView(status);}
+        if(fee!=null&&fee>0){panel.addView(text("本次费用  "+money(fee,code),14,INK,false));long difference=fee-balance;if(difference>0)panel.setBackground(MobileStyle.material(this,RED,16));TextView status=text(difference>0?(pending?"余额不足，待补款 · 还差 ":"余额不足 · 还差 ")+fundingDifference(difference,code):"余额充足",13,difference>0?RED:GREEN,true);gap(panel,8);panel.addView(status);if(pending&&difference>0)panel.addView(text("本期尚未扣账，补足后自动处理。",12,RED,false));}
         else panel.addView(label("填写本次费用后，可查看余额是否足够。"));
-        panel.addView(text("按当前余额比较一笔费用，未预扣未来费用。",11,MUTED,false));return panel;
+        panel.addView(text("按当前余额比较一笔费用。余额不足时暂缓扣账，补足后自动处理。",11,MUTED,false));return panel;
     }
     private String fundingDifference(long units,String currency){try{int precision=MobileLedger.decimals(currency);BigDecimal value=BigDecimal.valueOf(units,precision);String raw=(currency.equals("USDT")?value.stripTrailingZeros():value).toPlainString();String[] parts=raw.split("\\.");parts[0]=parts[0].replaceAll("(?<=\\d)(?=(\\d{3})+$)",",");return (currency.equals("CNY")?"¥":currency)+" "+parts[0]+(parts.length==2?"."+parts[1]:"");}catch(Exception invalid){return "金额待核对";}}
     private int expiryColor(String tone){return tone.equals("expired")?0xFFAE3652:tone.equals("urgent")?0xFFA04B12:tone.equals("soon")?0xFF83620D:tone.equals("normal")?GREEN:MUTED;}
@@ -741,7 +751,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         EditText day=field(form,"每月扣账日 · 1 至 31",original==null?LedgerStore.today().substring(8):String.valueOf(original.optInt("billingDay")),InputType.TYPE_CLASS_NUMBER);
         form.addView(label("每月扣账时间 · 北京时间"));Spinner billingHour=spinner(hours);billingHour.setSelection(original==null?startHour.getSelectedItemPosition():original.optInt("billingHour",0));form.addView(billingHour);
         Switch recurring=new Switch(this);recurring.setText("连续订阅，每月记账");recurring.setChecked(original==null||original.optBoolean("recurring"));form.addView(recurring);Switch active=new Switch(this);active.setText("启用计划扣账");active.setChecked(original==null||original.optBoolean("active"));form.addView(active);
-        form.addView(label("短月份会使用当月最后一天。暂停期间不补扣；自动记录不代表平台实际付款成功。收到实际付款通知时仍会核对去重。"));
+        form.addView(label("短月份使用当月最后一天。余额不足时先等待补款，补足后自动处理；暂停期间不补扣。自动记账只影响账本余额。"));
         EditText expires=dateField(form,"会员到期日期 · 可选",original==null?"":original.optString("expiresOn"),true);expires.setHint("选择会员到期日期");addButton(form,"清除到期日期",false,()->expires.setText(""));
         TextView expiryPreview=label("");form.addView(expiryPreview);form.addView(label("连续订阅每次成功记账后，会员到期日自动顺延一个月；未填写时显示下次续费日期。"));
         Runnable refreshExpiry=()->{try{JSONObject preview=original==null?new JSONObject().put("id","preview").put("processedOccurrences",new JSONArray()):LedgerStore.copy(original);preview.put("startDate",start.getText().toString()).put("billingDay",Integer.parseInt(day.getText().toString())).put("recurring",recurring.isChecked()).put("active",active.isChecked()).put("expiresOn",expires.getText().toString());if(original!=null&&(!original.optString("expiresOn").equals(preview.optString("expiresOn"))||original.optBoolean("recurring")!=preview.optBoolean("recurring")))preview=MobileLedger.resetSubscriptionExpiry(preview,state.getJSONArray("transactions"));SubscriptionDetails.validateSubscription(preview);SubscriptionDetails.Status status=SubscriptionDetails.expiryStatus(preview,LedgerStore.today());expiryPreview.setText(status.label+" · "+status.detail);expiryPreview.setTextColor(expiryColor(status.tone));}catch(Exception invalid){expiryPreview.setText(invalid.getMessage()==null?"请核对扣账日期和到期日期。":invalid.getMessage());expiryPreview.setTextColor(MUTED);}};

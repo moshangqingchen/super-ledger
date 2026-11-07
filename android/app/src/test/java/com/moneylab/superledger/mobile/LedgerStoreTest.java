@@ -179,6 +179,66 @@ public final class LedgerStoreTest {
         JSONObject renewalRequest=store.syncRequest(UUID.randomUUID().toString());JSONObject outboundMember=null;
         for(int i=0;i<renewalRequest.getJSONArray("operations").length();i++){JSONObject entry=renewalRequest.getJSONArray("operations").getJSONObject(i);if(entry.optString("entity").equals("subscription"))outboundMember=entry.getJSONObject("record");}
         check(outboundMember!=null&&outboundMember.getString("expiresOn").equals(nextExpiry)&&outboundMember.getJSONObject("expiryRenewal").getJSONArray("renewedOccurrences").length()==1,"backup restoration and outbound synchronization retain exactly-once expiry credits");
+        store=fresh(new File(workspace,"unfunded-income"));store.saveAccount(MobileLedgerTest.account("bank","CNY",0,null));
+        store.saveSubscription(MobileLedgerTest.subscription("waiting","bank",100,LedgerStore.today(),true).put("expiresOn",LedgerStore.today()));
+        JSONObject pendingMember=store.snapshot().getJSONObject("state").getJSONArray("subscriptions").getJSONObject(0);
+        check(pendingMember.getJSONArray("processedOccurrences").length()==0&&pendingMember.getString("expiresOn").equals(LedgerStore.today()),"normal save leaves an unfunded subscription pending without extending expiry");
+        store.saveManual(MobileLedgerTest.tx("small_topup","income","bank",99,LedgerStore.today()));
+        check(store.snapshot().getJSONObject("state").getJSONArray("transactions").length()==1,"an insufficient income top-up creates no subscription expense");
+        store.saveManual(MobileLedgerTest.tx("final_topup","income","bank",1,LedgerStore.today()));
+        JSONObject paidIncomeState=store.snapshot().getJSONObject("state");
+        check(paidIncomeState.getJSONArray("transactions").length()==3&&MobileLedger.balances(paidIncomeState,LedgerStore.today()).getLong("bank")==0,"saving a sufficient top-up immediately pays the pending subscription exactly once");
+        check(paidIncomeState.getJSONArray("subscriptions").getJSONObject(0).getJSONObject("expiryRenewal").getJSONArray("renewedOccurrences").length()==1,"a top-up extends expiry only after the real expense is recorded");
+        store.applyRecurring();check(store.snapshot().getJSONObject("state").getJSONArray("transactions").length()==3,"polling after a funded save never duplicates the charge");
+
+        store=fresh(new File(workspace,"unfunded-transfer"));store.saveAccount(MobileLedgerTest.account("funds","CNY",1000,null));store.saveAccount(MobileLedgerTest.account("bank","CNY",0,null));
+        store.saveSubscription(MobileLedgerTest.subscription("waiting","bank",100,LedgerStore.today(),true));
+        store.saveManual(MobileLedgerTest.tx("funding_transfer","transfer","funds",100,LedgerStore.today()).put("toAccountId","bank"));
+        JSONObject paidTransferState=store.snapshot().getJSONObject("state");
+        check(paidTransferState.getJSONArray("transactions").length()==2&&MobileLedger.balances(paidTransferState,LedgerStore.today()).getLong("bank")==0&&MobileLedger.balances(paidTransferState,LedgerStore.today()).getLong("funds")==900,"saving a transfer funds the destination subscription using only the transferred amount");
+
+        store=fresh(new File(workspace,"unfunded-opening-balance"));store.saveAccount(MobileLedgerTest.account("bank","CNY",0,null));store.saveSubscription(MobileLedgerTest.subscription("waiting","bank",100,LedgerStore.today(),true));
+        store.saveAccount(new JSONObject().put("id","bank").put("openingBalance",100));
+        check(store.snapshot().getJSONObject("state").getJSONArray("transactions").length()==1,"saving an increased opening balance retries a previously unfunded period");
+
+        store=fresh(new File(workspace,"unfunded-sync"));store.saveAccount(MobileLedgerTest.account("bank","CNY",0,null));store.saveSubscription(MobileLedgerTest.subscription("waiting","bank",100,LedgerStore.today(),true));
+        JSONObject fundingRequest=store.syncRequest(UUID.randomUUID().toString()),fundedRemote=LedgerStore.copy(store.snapshot().getJSONObject("state"));
+        fundedRemote.getJSONArray("accounts").getJSONObject(0).put("openingBalance",100);
+        JSONArray acceptedFunding=new JSONArray();for(int i=0;i<fundingRequest.getJSONArray("operations").length();i++)acceptedFunding.put(fundingRequest.getJSONArray("operations").getJSONObject(i).getString("id"));
+        store.applyResponse(response(fundingRequest,fundedRemote,acceptedFunding,new JSONArray()),fundingRequest);
+        JSONObject syncedFunding=store.snapshot();
+        check(syncedFunding.getJSONObject("state").getJSONArray("transactions").length()==1&&syncedFunding.getJSONArray("operations").length()==2,"a funded sync response immediately books one expense and queues its updated subscription for the next sync");
+        store=fresh(new File(workspace,"stale-funding-cache"));store.saveAccount(MobileLedgerTest.account("bank","CNY",100,null));
+        store.saveSubscription(MobileLedgerTest.subscription("waiting","bank",100,LedgerStore.today(),true).put("expiresOn",LedgerStore.today()));
+        JSONObject staleRequest=store.syncRequest(UUID.randomUUID().toString()),remoteUnfunded=LedgerStore.copy(store.snapshot().getJSONObject("state"));
+        JSONObject legacyFundedState=LedgerStore.copy(remoteUnfunded);
+        remoteUnfunded.getJSONArray("accounts").getJSONObject(0).put("openingBalance",0);remoteUnfunded.put("transactions",new JSONArray());
+        JSONObject remoteMember=remoteUnfunded.getJSONArray("subscriptions").getJSONObject(0);remoteMember.put("processedOccurrences",new JSONArray()).put("expiresOn",LedgerStore.today()).put("expiryRenewal",new JSONObject().put("baseDate",LedgerStore.today()).put("baselineOccurrences",new JSONArray()).put("renewedOccurrences",new JSONArray()));
+        JSONArray acceptedStale=new JSONArray();JSONObject staleExpense=null;
+        for(int i=0;i<staleRequest.getJSONArray("operations").length();i++){JSONObject operation=staleRequest.getJSONArray("operations").getJSONObject(i);if(operation.optString("entity").equals("transaction"))staleExpense=operation;else acceptedStale.put(operation.getString("id"));}
+        JSONObject fundingConflict=new JSONObject().put("operationId",staleExpense.getString("id")).put("entity","transaction").put("current",JSONObject.NULL).put("reason","余额不足").put("retryWhenFunded",true).put("canKeepPhone",false);
+        store.applyResponse(response(staleRequest,remoteUnfunded,acceptedStale,new JSONArray().put(fundingConflict)),staleRequest);
+        JSONObject waitingBackup=store.snapshot();
+        check(MobileLedger.balances(waitingBackup.getJSONObject("state"),LedgerStore.today()).getLong("bank")==0&&waitingBackup.getJSONObject("state").getJSONArray("transactions").length()==0,"a rejected stale-phone automatic expense cannot overlay the server ledger as a negative balance");
+        check(waitingBackup.getJSONArray("operations").length()==1&&waitingBackup.getJSONArray("conflicts").getJSONObject(0).getBoolean("retryWhenFunded"),"a funding rejection retains its durable operation for automatic retry");
+        check(waitingBackup.getJSONObject("state").getJSONArray("subscriptions").getJSONObject(0).getString("expiresOn").equals(LedgerStore.today()),"an unfunded rejected charge does not retain an optimistic expiry extension");
+        check(store.syncRequest(UUID.randomUUID().toString()).getJSONArray("operations").length()==0,"an unfunded waiting operation is omitted to prevent repeated empty synchronization rounds");
+        JSONObject legacyWaitingBackup=LedgerStore.copy(waitingBackup).put("state",legacyFundedState);
+        File staleDirectory=new File(workspace,"stale-funding-cache");Files.write(new File(staleDirectory,"mobile-ledger.json").toPath(),legacyWaitingBackup.toString().getBytes(StandardCharsets.UTF_8));store=fresh(staleDirectory);
+        check(store.snapshot().getJSONObject("state").getJSONArray("transactions").length()==0&&MobileLedger.balances(store.snapshot().getJSONObject("state"),LedgerStore.today()).getLong("bank")==0,"upgrading a saved legacy funding rejection rebuilds its optimistic negative-balance preview before first display");
+        store.saveManual(MobileLedgerTest.tx("stale_topup","income","bank",100,LedgerStore.today()));
+        JSONObject recoveredFunding=store.snapshot();
+        check(recoveredFunding.getJSONArray("conflicts").length()==0&&recoveredFunding.getJSONObject("state").getJSONArray("transactions").length()==2&&MobileLedger.balances(recoveredFunding.getJSONObject("state"),LedgerStore.today()).getLong("bank")==0,"a local top-up automatically replaces a waiting operation with one funded expense");
+        JSONObject recoveredRequest=store.syncRequest(UUID.randomUUID().toString());JSONArray recoveredAccepted=new JSONArray();for(int i=0;i<recoveredRequest.getJSONArray("operations").length();i++)recoveredAccepted.put(recoveredRequest.getJSONArray("operations").getJSONObject(i).getString("id"));
+        store.applyResponse(response(recoveredRequest,recoveredFunding.getJSONObject("state"),recoveredAccepted,new JSONArray()),recoveredRequest);
+        check(store.snapshot().getJSONArray("operations").length()==0&&store.snapshot().getJSONArray("conflicts").length()==0,"a funded retry converges without manual conflict resolution");
+        store.restoreBackup(waitingBackup);
+        JSONObject emptyFundingPull=store.syncRequest(UUID.randomUUID().toString()),paidRemote=LedgerStore.copy(remoteUnfunded);paidRemote.getJSONArray("accounts").getJSONObject(0).put("openingBalance",100);paidRemote=MobileLedger.applyRecurring(paidRemote,LedgerStore.today()).getJSONObject("state");
+        store.applyResponse(response(emptyFundingPull,paidRemote,new JSONArray(),new JSONArray()),emptyFundingPull);
+        JSONObject duplicateRetry=store.syncRequest(UUID.randomUUID().toString());
+        check(duplicateRetry.getJSONArray("operations").length()==1&&store.snapshot().getJSONObject("state").getJSONArray("transactions").length()==1&&MobileLedger.balances(store.snapshot().getJSONObject("state"),LedgerStore.today()).getLong("bank")==0,"a server-paid matching period is re-sent only for deduplication acknowledgement without a second local debit");
+        store.applyResponse(response(duplicateRetry,paidRemote,new JSONArray().put(duplicateRetry.getJSONArray("operations").getJSONObject(0).getString("id")),new JSONArray()),duplicateRetry);
+        check(store.snapshot().getJSONArray("operations").length()==0&&store.snapshot().getJSONArray("conflicts").length()==0,"a matching server payment clears its waiting operation on the next acknowledgement");
         System.out.println("LedgerStore: " + checks + " checks passed (host adapters, not Android runtime)");
     }
 }

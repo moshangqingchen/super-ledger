@@ -414,6 +414,7 @@ export function applyRecurring(state, now = new Date()) {
   const existing = new Set(next.transactions.map(tx => tx.occurrenceKey).filter(Boolean));
   const transactionIds = new Set(next.transactions.map(tx => tx.id));
   const accountById = new Map(next.accounts.map(account => [account.id, account]));
+  const available = getBalances(next, today);
   for (const sub of next.subscriptions) {
     if (!sub.active) continue;
     const processed = new Set(sub.processedOccurrences);
@@ -421,6 +422,7 @@ export function applyRecurring(state, now = new Date()) {
       const key = occurrenceKey(sub, due);
       if (processed.has(key)) continue;
       if (!existing.has(key)) {
+        if (available[sub.accountId] < sub.amount) continue;
         const txId = `rec_${sub.id}_${due.slice(0, 7).replace('-', '')}`;
         if (transactionIds.has(txId)) fail('自动记账交易 ID 冲突，请检查账本数据');
         const tx = {
@@ -437,6 +439,7 @@ export function applyRecurring(state, now = new Date()) {
         added.push(tx);
         existing.add(key);
         transactionIds.add(txId);
+        available[sub.accountId] -= sub.amount;
       }
       processed.add(key);
     }
@@ -475,17 +478,15 @@ export function replaceRecord(records, id, record) {
 }
 
 export function nextSubscriptionDue(sub, now = new Date()) {
-  const { date: today, hour } = subscriptionClock(now);
+  subscriptionClock(now);
   if (!sub.active) return null;
   const processed = new Set(sub.processedOccurrences);
   if (!sub.recurring) return processed.has(occurrenceKey(sub, sub.startDate)) ? null : sub.startDate;
   const [sy, sm] = sub.startDate.split('-').map(Number);
-  const [ty, tm] = today.split('-').map(Number);
-  const start = Math.max(0, (ty - sy) * 12 + tm - sm);
   const lastSupportedMonth = (2199 - sy) * 12 + 12 - sm;
-  for (let i = start; i <= lastSupportedMonth; i++) {
+  for (let i = 0; i <= lastSupportedMonth; i++) {
     const due = addMonthsDue(sub.startDate, i, sub.billingDay);
-    if ((due > today || due === today && subscriptionDueHour(sub, due) >= hour) && !processed.has(occurrenceKey(sub, due))) return due;
+    if (!processed.has(occurrenceKey(sub, due))) return due;
   }
   return null;
 }
@@ -511,10 +512,16 @@ export function subscriptionExpiryStatus(sub, now = new Date()) {
   };
   const days = ordinal(target) - ordinal(referenceDate);
   const action = source === 'expiry' ? '到期' : '续费';
+  let label = days < 0 ? `已${action} ${-days} 天` : days === 0 ? `今天${action}` : `${days} 天后${action}`;
+  let detailLabel = source === 'expiry' ? '会员到期' : '下次续费';
+  if (source === 'renewal' && days < 0) {
+    label = `待扣账 · 已逾期 ${-days} 天`;
+    detailLabel = '待扣账';
+  }
   return {
     tone: days < 0 ? 'expired' : days <= 7 ? 'urgent' : days <= 30 ? 'soon' : 'normal',
-    label: days < 0 ? `已${action} ${-days} 天` : days === 0 ? `今天${action}` : `${days} 天后${action}`,
-    detail: `${target} · ${source === 'expiry' ? '会员到期' : '下次续费'}`,
+    label,
+    detail: `${target} · ${detailLabel}`,
     date: target, days, source,
   };
 }

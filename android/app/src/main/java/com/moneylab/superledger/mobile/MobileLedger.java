@@ -158,7 +158,21 @@ public final class MobileLedger {
         }
         return result.put("active",active);
     }
-    public static String nextSubscriptionDue(JSONObject sub,String today) throws Exception {date(today);if(!sub.getBoolean("active"))return null;Set<String> processed=strings(sub.getJSONArray("processedOccurrences"));String start=sub.getString("startDate"),id=sub.getString("id");if(!sub.getBoolean("recurring"))return processed.contains(id+":"+start.substring(0,7))?null:start;YearMonth first=YearMonth.from(LocalDate.parse(start)),current=YearMonth.from(LocalDate.parse(today));int offset=Math.max(0,(current.getYear()-first.getYear())*12+current.getMonthValue()-first.getMonthValue()),last=(2199-first.getYear())*12+12-first.getMonthValue();for(int i=offset;i<=last;i++){String due=addMonthsDue(start,i,sub.getInt("billingDay"));if(due.compareTo(today)>=0&&!processed.contains(id+":"+due.substring(0,7)))return due;}return null;}
+    public static String nextSubscriptionDue(JSONObject sub,String today) throws Exception {
+        date(today);
+        if(!sub.getBoolean("active"))return null;
+        Set<String> processed=strings(sub.getJSONArray("processedOccurrences"));
+        String start=sub.getString("startDate"),id=sub.getString("id");
+        if(!sub.getBoolean("recurring"))return processed.contains(id+":"+start.substring(0,7))?null:start;
+        YearMonth first=YearMonth.from(LocalDate.parse(start));
+        int last=(2199-first.getYear())*12+12-first.getMonthValue();
+        for(int month=0;month<=last;month++){
+            String due=addMonthsDue(start,month,sub.getInt("billingDay"));
+            if(!processed.contains(id+":"+due.substring(0,7)))return due;
+        }
+        return null;
+    }
+
     /** Manual changes establish a new expiry baseline without reusing already paid months. */
     public static JSONObject resetSubscriptionExpiry(JSONObject source,JSONArray transactions) throws Exception {
         JSONObject sub=copy(source),previous=sub.optJSONObject("expiryRenewal");
@@ -209,10 +223,50 @@ public final class MobileLedger {
     }
     /** Exactly once per subscription/month. This records expenses; it never makes a payment. */
     public static JSONObject applyRecurring(JSONObject state,String today) throws Exception { return applyRecurring(state,today,23); }
-    public static JSONObject applyRecurring(JSONObject state,String today,int currentHour) throws Exception {validateState(state);date(today);if(currentHour<0||currentHour>23)throw new Exception("当前小时必须为 0 至 23");JSONObject next=copy(state);JSONArray added=new JSONArray(),txs=next.getJSONArray("transactions"),subs=next.getJSONArray("subscriptions");Set<String> occurrences=new HashSet<>(),ids=new HashSet<>();for(int i=0;i<txs.length();i++){JSONObject tx=txs.getJSONObject(i);ids.add(tx.getString("id"));if(tx.has("occurrenceKey"))occurrences.add(tx.getString("occurrenceKey"));}
-        for(int i=0;i<subs.length();i++){JSONObject sub=subs.getJSONObject(i);if(!sub.getBoolean("active"))continue;Set<String> processed=strings(sub.getJSONArray("processedOccurrences"));JSONArray dates=dueDates(sub,today);for(int j=0;j<dates.length();j++){String due=dates.getString(j),key=sub.getString("id")+":"+due.substring(0,7);if(due.equals(today)&&subscriptionDueHour(sub,due)>currentHour||processed.contains(key))continue;if(!occurrences.contains(key)){String id="rec_"+sub.getString("id")+"_"+due.substring(0,7).replace("-","");if(!ids.add(id))throw new Exception("自动记账 ID 冲突");String tier=sub.optString("tier"),title=sub.getString("name")+(tier.isEmpty()?"":" · "+tier);JSONObject account=find(next.getJSONArray("accounts"),sub.getString("accountId"));JSONObject tx=new JSONObject().put("id",id).put("type","expense").put("amount",sub.getLong("amount")).put("accountId",sub.getString("accountId")).put("category","会员订阅").put("title",title.substring(0,Math.min(120,title.length()))).put("date",due).put("note","订阅到期自动记账"+(tier.isEmpty()?"":" · 会员档位："+tier)).put("subscriptionId",sub.getString("id")).put("occurrenceKey",key);if(!currency(account).equals("CNY"))tx.put("currency",currency(account)).put("cnyRate",currencyRate(account));txs.put(tx);added.put(copy(tx));occurrences.add(key);}processed.add(key);}sub.put("processedOccurrences",new JSONArray(processed));}
-        Set<String> newOccurrences=new HashSet<>();for(int i=0;i<added.length();i++)newOccurrences.add(added.getJSONObject(i).getString("occurrenceKey"));
+    public static JSONObject applyRecurring(JSONObject state,String today,int currentHour) throws Exception {
+        validateState(state);
+        date(today);
+        if(currentHour<0||currentHour>23)throw new Exception("当前小时必须为 0 至 23");
+        JSONObject next=copy(state),available=balances(next,today);
+        JSONArray added=new JSONArray(),transactions=next.getJSONArray("transactions"),subscriptions=next.getJSONArray("subscriptions");
+        Set<String> occurrences=new HashSet<>(),transactionIds=new HashSet<>();
+        for(int i=0;i<transactions.length();i++){
+            JSONObject tx=transactions.getJSONObject(i);
+            transactionIds.add(tx.getString("id"));
+            if(tx.has("occurrenceKey"))occurrences.add(tx.getString("occurrenceKey"));
+        }
+        for(int i=0;i<subscriptions.length();i++){
+            JSONObject sub=subscriptions.getJSONObject(i);
+            if(!sub.getBoolean("active"))continue;
+            Set<String> processed=strings(sub.getJSONArray("processedOccurrences"));
+            JSONArray dates=dueDates(sub,today);
+            for(int j=0;j<dates.length();j++){
+                String due=dates.getString(j),key=sub.getString("id")+":"+due.substring(0,7);
+                if(due.equals(today)&&subscriptionDueHour(sub,due)>currentHour||processed.contains(key))continue;
+                if(!occurrences.contains(key)){
+                    String accountId=sub.getString("accountId");
+                    long fee=sub.getLong("amount"),remaining=available.getLong(accountId);
+                    // Unfunded periods remain pending so a later top-up can pay them once.
+                    if(remaining<fee)continue;
+                    String id="rec_"+sub.getString("id")+"_"+due.substring(0,7).replace("-","");
+                    if(!transactionIds.add(id))throw new Exception("自动记账 ID 冲突");
+                    String tier=sub.optString("tier"),title=sub.getString("name")+(tier.isEmpty()?"":" · "+tier);
+                    JSONObject account=find(next.getJSONArray("accounts"),accountId);
+                    JSONObject tx=new JSONObject().put("id",id).put("type","expense").put("amount",fee).put("accountId",accountId)
+                        .put("category","会员订阅").put("title",title.substring(0,Math.min(120,title.length()))).put("date",due)
+                        .put("note","订阅到期自动记账"+(tier.isEmpty()?"":" · 会员档位："+tier)).put("subscriptionId",sub.getString("id")).put("occurrenceKey",key);
+                    if(!currency(account).equals("CNY"))tx.put("currency",currency(account)).put("cnyRate",currencyRate(account));
+                    transactions.put(tx);added.put(copy(tx));occurrences.add(key);
+                    available.put(accountId,remaining-fee);
+                }
+                processed.add(key);
+            }
+            sub.put("processedOccurrences",new JSONArray(processed));
+        }
+        Set<String> newOccurrences=new HashSet<>();
+        for(int i=0;i<added.length();i++)newOccurrences.add(added.getJSONObject(i).getString("occurrenceKey"));
         reconcileSubscriptionExpiry(next,today,newOccurrences);
-        validateState(next);return new JSONObject().put("state",next).put("added",added);
+        validateState(next);
+        return new JSONObject().put("state",next).put("added",added);
     }
 }

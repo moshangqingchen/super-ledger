@@ -1,7 +1,7 @@
 import http from 'node:http';
 import os from 'node:os';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
-import { validateState, upgradeSchemaVersion, beijingDateTime, subscriptionDueHour, addMonthsDue, isValidDate, resetSubscriptionExpiry, reconcileSubscriptionExpiry } from './engine.mjs';
+import { validateState, upgradeSchemaVersion, beijingDateTime, subscriptionDueHour, addMonthsDue, isValidDate, getBalances, resetSubscriptionExpiry, reconcileSubscriptionExpiry } from './engine.mjs';
 
 export const SESSION_MS = 10 * 60 * 1000;
 const MAX_WIRE_BYTES = 4 * 1024 * 1024;
@@ -196,7 +196,7 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
   const batchIds = new Set();
   const clock = beijingDateTime(now);
   const pendingCharges = new Set(payload.operations
-    .filter(operation => (operation?.entity || 'transaction') === 'transaction' && operation.kind === 'put' && operation.transaction?.subscriptionId)
+    .filter(operation => (operation?.entity || 'transaction') === 'transaction' && operation?.kind === 'put' && operation.transaction?.subscriptionId)
     .map(operation => operation.transaction.occurrenceKey));
   for (const operation of payload.operations) {
     const operationId = operation?.id;
@@ -264,6 +264,8 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
           && subscriptionOccurrencePending(sub, key.slice(sub.id.length + 1), clock));
         if (pendingProcessed || pendingRenewal) { reject('订阅的已记账账期尚未到北京时间扣账时间，请核对两端时间后重试。'); continue; }
         try {
+          sub.processedOccurrences = sub.processedOccurrences.filter(key => processed.has(key)
+            || !pendingCharges.has(key) || candidate.transactions.some(tx => tx.occurrenceKey === key));
           mergeSubscriptionExpiry(sub, current, operation.base, candidate.transactions, pendingCharges);
           reconcileSubscriptionExpiry(candidate, now);
           validateState(candidate);
@@ -322,6 +324,12 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
             }); continue;
           }
         }
+        const balance = getBalances(next, clock.date)[tx.accountId];
+        if (Number.isSafeInteger(tx.amount) && tx.amount > 0 && balance < tx.amount) {
+          reject('扣款账户余额不足，手机自动扣账尚未合并，请补足账本余额后重试。', undefined, {
+            canKeepPhone: false, retryWhenFunded: true, resolutionHint: '补足电脑上的扣款账户余额后再次同步，待扣账期会自动处理。',
+          }); continue;
+        }
       }
       const duplicate = !current && duplicateOf(next, tx);
       if (duplicate?.exact) {
@@ -333,7 +341,13 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
       const suspected = !current && operation.allowDuplicate !== true && suspectedDuplicate(next, tx);
       if (suspected) { reject('可能与现有支付记录或订阅扣账重复，请核对后选择保留现有账单或仍然新增。', suspected); continue; }
       if (current) candidate.transactions[candidate.transactions.findIndex(item => item.id === transactionId)] = tx;
-      else candidate.transactions.push(tx);
+      else {
+        candidate.transactions.push(tx);
+        if (tx.subscriptionId && tx.occurrenceKey) {
+          const sub = candidate.subscriptions.find(item => item.id === tx.subscriptionId);
+          if (sub) sub.processedOccurrences = [...new Set([...sub.processedOccurrences, tx.occurrenceKey])].sort();
+        }
+      }
     }
     if (fullLedger) candidate.schemaVersion = Math.max(candidate.schemaVersion, 2);
     try {

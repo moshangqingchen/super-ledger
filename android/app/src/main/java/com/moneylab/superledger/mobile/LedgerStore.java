@@ -58,6 +58,7 @@ public final class LedgerStore {
         }
         data.put("state", MobileLedger.upgradeLegacyState(data.getJSONObject("state")));
         if(!data.has("screenCaptureEnabled"))data.put("screenCaptureEnabled",false);
+        if(data.optJSONObject("serverState")!=null&&!fundingWaits().isEmpty())rebuildLocalState(copy(state()));
     }
     private void persist() throws Exception {
         byte[] bytes = data.toString().getBytes(StandardCharsets.UTF_8);
@@ -118,6 +119,21 @@ public final class LedgerStore {
         if(left instanceof Number&&right instanceof Number)return new java.math.BigDecimal(left.toString()).compareTo(new java.math.BigDecimal(right.toString()))==0;return left.equals(right);
     }
     private void requireIdle() throws Exception { if (syncing) throw new Exception("正在同步，请完成后再修改账单"); }
+    private Set<String> fundingWaits() throws Exception {
+        Set<String> waiting=new HashSet<>();JSONArray conflicts=data.getJSONArray("conflicts"),operations=data.getJSONArray("operations");
+        for(int i=0;i<conflicts.length();i++){
+            JSONObject conflict=conflicts.getJSONObject(i);if(!conflict.optBoolean("retryWhenFunded"))continue;
+            int index=findIndex(operations,conflict.optString("operationId"));if(index<0)continue;
+            JSONObject op=operations.getJSONObject(index),tx=record(op);
+            if(entity(op).equals("transaction")&&op.optString("kind").equals("put")&&tx!=null&&tx.optString("type").equals("expense")&&tx.has("subscriptionId")&&tx.has("occurrenceKey"))waiting.add(op.getString("id"));
+        }
+        return waiting;
+    }
+    private boolean hasBlockingConflicts() throws Exception {
+        Set<String> waiting=fundingWaits();JSONArray conflicts=data.getJSONArray("conflicts");
+        for(int i=0;i<conflicts.length();i++)if(!waiting.contains(conflicts.getJSONObject(i).optString("operationId")))return true;
+        return false;
+    }
     private void queueRecord(String entity,String id,JSONObject value) throws Exception {
         JSONObject state=data.getJSONObject("state"),old=getRecord(state,entity,id);JSONArray operations=data.getJSONArray("operations");Object base=old==null?JSONObject.NULL:copy(old);int insertion=operations.length();Set<String> superseded=new HashSet<>();
         for(int i=0;i<operations.length();i++){JSONObject op=operations.getJSONObject(i);if(entity.equals(entity(op))&&id.equals(recordId(op))){if(insertion==operations.length()){insertion=i;base=op.opt("base");}superseded.add(op.getString("id"));}}
@@ -134,7 +150,7 @@ public final class LedgerStore {
     }
     public synchronized void putTransaction(JSONObject tx, String pendingId) throws Exception {
         requireIdle();
-        change(() -> { JSONObject value=prepareManual(tx);queuePut(value);MobileLedger.validateState(data.getJSONObject("state")); if (pendingId != null) { int idx = findIndex(data.getJSONArray("pending"), pendingId); if (idx >= 0) data.getJSONArray("pending").remove(idx); } });
+        change(() -> { JSONObject value=prepareManual(tx);queuePut(value);MobileLedger.validateState(data.getJSONObject("state")); if (pendingId != null) { int idx = findIndex(data.getJSONArray("pending"), pendingId); if (idx >= 0) data.getJSONArray("pending").remove(idx); } applyRecurringInternal(); });
     }
     public synchronized void deleteTransaction(String id) throws Exception {
         deleteManual(id);
@@ -157,7 +173,7 @@ public final class LedgerStore {
         requireIdle();change(()->{JSONObject value=mergedRecord("account",input,"acc_"),old=getRecord(state(),"account",value.getString("id"));defaultValue(value,"type","其他账户");defaultValue(value,"color","#8bc8ab");defaultValue(value,"openingBalance",0);defaultValue(value,"currency","CNY");
             if(old!=null&&!MobileLedger.currency(old).equals(MobileLedger.currency(value))){String id=old.getString("id");JSONArray txs=state().getJSONArray("transactions"),subs=state().getJSONArray("subscriptions");for(int i=0;i<txs.length();i++){JSONObject tx=txs.getJSONObject(i);if(id.equals(tx.optString("accountId"))||id.equals(tx.optString("toAccountId")))throw new Exception("账户已有交易，不能更改币种");}for(int i=0;i<subs.length();i++)if(id.equals(subs.getJSONObject(i).optString("accountId")))throw new Exception("账户已有关联订阅，不能更改币种");}
             if(MobileLedger.currency(value).equals("CNY")){value.remove("cnyRate");value.remove("rateMode");value.remove("rateAsOf");value.remove("rateSource");}else{value.put("cnyRate",MobileLedger.currencyRate(value));defaultValue(value,"rateMode","manual");}
-            queueRecord("account",value.getString("id"),value);promoteSchema();MobileLedger.validateState(state());});
+            queueRecord("account",value.getString("id"),value);promoteSchema();MobileLedger.validateState(state());applyRecurringInternal();});
     }
     public synchronized void deleteAccount(String id) throws Exception {
         requireIdle();change(()->{if(getRecord(state(),"account",id)==null)return;JSONArray txs=state().getJSONArray("transactions"),subs=state().getJSONArray("subscriptions");for(int i=0;i<txs.length();i++){JSONObject tx=txs.getJSONObject(i);if(id.equals(tx.optString("accountId"))||id.equals(tx.optString("toAccountId")))throw new Exception("账户有关联账单，请先调整交易账户");}for(int i=0;i<subs.length();i++)if(id.equals(subs.getJSONObject(i).optString("accountId")))throw new Exception("账户有关联订阅，请先调整扣款账户");queueRecord("account",id,null);JSONObject mappings=data.getJSONObject("mappings");List<String> remove=new ArrayList<>();Iterator<String> keys=mappings.keys();while(keys.hasNext()){String key=keys.next();if(id.equals(mappings.optString(key)))remove.add(key);}for(String key:remove)mappings.remove(key);MobileLedger.validateState(state());});
@@ -173,7 +189,7 @@ public final class LedgerStore {
         return value;
     }
     public synchronized void saveManual(JSONObject input) throws Exception {putTransaction(input,null);}
-    public synchronized void deleteManual(String id) throws Exception {requireIdle();change(()->{if(getRecord(state(),"transaction",id)==null)return;queueRecord("transaction",id,null);MobileLedger.validateState(state());});}
+    public synchronized void deleteManual(String id) throws Exception {requireIdle();change(()->{if(getRecord(state(),"transaction",id)==null)return;queueRecord("transaction",id,null);MobileLedger.validateState(state());applyRecurringInternal();});}
     public synchronized void saveGoal(JSONObject input) throws Exception {requireIdle();change(()->{JSONObject value=mergedRecord("goal",input,"goal_");defaultValue(value,"color","#c7dfa2");defaultValue(value,"saved",0);queueRecord("goal",value.getString("id"),value);MobileLedger.validateState(state());});}
     public synchronized void deleteGoal(String id) throws Exception {requireIdle();change(()->{if(getRecord(state(),"goal",id)!=null)queueRecord("goal",id,null);MobileLedger.validateState(state());});}
     public synchronized void saveSettings(JSONObject input) throws Exception {requireIdle();change(()->{JSONObject value=MobileLedger.merge(state().getJSONObject("settings"),input);queueRecord("settings","settings",value);MobileLedger.validateState(state());});}
@@ -199,7 +215,12 @@ public final class LedgerStore {
         for(int i=0;i<subs.length();i++){JSONObject sub=subs.getJSONObject(i);if(!same(getRecord(state(),"subscription",sub.getString("id")),sub))queueRecord("subscription",sub.getString("id"),sub);}
         JSONArray added=result.getJSONArray("added");for(int i=0;i<added.length();i++)queuePut(added.getJSONObject(i));MobileLedger.validateState(state());
     }
-    private void persistRecurring(String date,int currentHour) throws Exception {if(data.getJSONArray("conflicts").length()>0)return;JSONObject previous=copy(data);try{applyRecurringInternal(date,currentHour);if(!same(previous,data))persist();}catch(Exception error){data=previous;throw error;}}
+    private void applyRecurringInternal() throws Exception {
+        if(hasBlockingConflicts())return;
+        ZonedDateTime now=MobileLedger.beijingDateTime(System.currentTimeMillis());
+        applyRecurringInternal(now.toLocalDate().toString(),now.getHour());
+    }
+    private void persistRecurring(String date,int currentHour) throws Exception {if(hasBlockingConflicts())return;JSONObject previous=copy(data);try{applyRecurringInternal(date,currentHour);if(!same(previous,data))persist();}catch(Exception error){data=previous;throw error;}}
     private void persistRecurring() throws Exception {ZonedDateTime now=MobileLedger.beijingDateTime(System.currentTimeMillis());persistRecurring(now.toLocalDate().toString(),now.getHour());}
     public synchronized void applyRecurring(String date) throws Exception {requireIdle();persistRecurring(date,23);}
     public synchronized void applyRecurring() throws Exception {requireIdle();persistRecurring();}
@@ -274,17 +295,33 @@ public final class LedgerStore {
     }
     public synchronized JSONObject syncRequest(String requestId) throws Exception {
         persistRecurring();
+        Set<String> waiting=fundingWaits();
         Set<String> unresolved = new HashSet<>(); JSONArray conflicts = data.getJSONArray("conflicts");
-        for (int i = 0; i < conflicts.length(); i++) unresolved.add(conflicts.getJSONObject(i).optString("operationId"));
+        for (int i = 0; i < conflicts.length(); i++){String id=conflicts.getJSONObject(i).optString("operationId");if(!waiting.contains(id))unresolved.add(id);}
+        JSONObject available=waiting.isEmpty()||hasBlockingConflicts()?null:MobileLedger.balances(state(),today());
         JSONArray selected = new JSONArray(), operations = data.getJSONArray("operations");
         JSONObject request = new JSONObject().put("protocolVersion",2).put("supportedSchemaVersion",3).put("schemaVersion",state().getInt("schemaVersion")).put("requestId", requestId).put("deviceId", data.getString("deviceId")).put("deviceName", Build.MANUFACTURER + " " + Build.MODEL)
             .put("bookId", data.opt("bookId")).put("operations", selected);
         int bytes = request.toString().getBytes(StandardCharsets.UTF_8).length;
         for (int i = 0; i < operations.length() && selected.length() < 500; i++) {
             JSONObject operation = operations.getJSONObject(i); if (unresolved.contains(operation.getString("id"))) continue;
+            JSONObject charge=record(operation);boolean reserve=false;
+            if(waiting.contains(operation.getString("id"))){
+                boolean existing=false;JSONArray transactions=state().getJSONArray("transactions");
+                for(int j=0;j<transactions.length();j++)if(charge.getString("occurrenceKey").equals(transactions.getJSONObject(j).optString("occurrenceKey"))){existing=true;break;}
+                if(!existing){
+                    if(available==null)continue;
+                    JSONObject account=getRecord(state(),"account",charge.optString("accountId"));
+                    if(account!=null&&MobileLedger.currency(account).equals(MobileLedger.currency(charge))){
+                        if(available.getLong(charge.getString("accountId"))<charge.getLong("amount"))continue;
+                        reserve=true;
+                    }
+                }
+            }
             int size = operation.toString().getBytes(StandardCharsets.UTF_8).length + (selected.length() == 0 ? 0 : 1);
             if (bytes + size > 2 * 1024 * 1024) { if (selected.length() == 0) throw new Exception("单条修改超过同步容量上限，请缩短备注后再试"); break; }
             selected.put(copy(operation)); bytes += size;
+            if(reserve)available.put(charge.getString("accountId"),available.getLong(charge.getString("accountId"))-charge.getLong("amount"));
         }
         return request;
     }
@@ -300,7 +337,6 @@ public final class LedgerStore {
             JSONObject fallback=copy(data.getJSONObject("state"));data.put("bookId", bookId).put("serverState",copy(state));
             JSONArray operations = data.getJSONArray("operations");
             for (int i = operations.length() - 1; i >= 0; i--) if (accepted.contains(operations.getJSONObject(i).getString("id"))) operations.remove(i);
-            rebuildLocalState(fallback);
             JSONArray mergedConflicts = new JSONArray(), returned = response.optJSONArray("conflicts") == null ? new JSONArray() : response.getJSONArray("conflicts"), previousConflicts = data.getJSONArray("conflicts");
             Set<String> returnedIds = new HashSet<>(); for (int i = 0; i < returned.length(); i++) returnedIds.add(returned.getJSONObject(i).optString("operationId"));
             for (int i = 0; i < previousConflicts.length(); i++) {
@@ -315,13 +351,16 @@ public final class LedgerStore {
             }
             for (int i = 0; i < returned.length(); i++){int index=findIndex(operations, returned.getJSONObject(i).optString("operationId"));if(index>=0)mergedConflicts.put(copy(returned.getJSONObject(i)).put("entity",entity(operations.getJSONObject(index))));}
             data.put("conflicts", mergedConflicts);
+            rebuildLocalState(fallback);
             data.put("lastSyncAt", System.currentTimeMillis()).put("lastSummary", response.optJSONObject("summary") == null ? new JSONObject() : response.getJSONObject("summary"));
+            applyRecurringInternal();
         });
     }
     /** Overlay all unacknowledged entities; retain dependency snapshots for records awaiting conflict resolution. */
     private void rebuildLocalState(JSONObject fallback) throws Exception {
         JSONObject remote=data.optJSONObject("serverState");JSONObject next=copy(remote==null?fallback:remote);JSONArray ops=data.getJSONArray("operations");
-        for(int i=0;i<ops.length();i++){JSONObject op=ops.getJSONObject(i);applyRecord(next,entity(op),recordId(op),op.optString("kind").equals("delete")?null:record(op));}
+        Set<String> waiting=fundingWaits();
+        for(int i=0;i<ops.length();i++){JSONObject op=ops.getJSONObject(i);if(!waiting.contains(op.getString("id")))applyRecord(next,entity(op),recordId(op),op.optString("kind").equals("delete")?null:record(op));}
         JSONArray txs=next.getJSONArray("transactions"),subs=next.getJSONArray("subscriptions");
         for(int i=0;i<txs.length();i++){JSONObject tx=txs.getJSONObject(i);retainAccount(next,fallback,tx.optString("accountId"),tx.optString("currency","CNY"));if(tx.optString("type").equals("transfer"))retainAccount(next,fallback,tx.optString("toAccountId"),tx.optString("toCurrency","CNY"));if(tx.has("subscriptionId")&&find(subs,tx.optString("subscriptionId"))==null){JSONObject old=getRecord(fallback,"subscription",tx.optString("subscriptionId"));if(old!=null)applyRecord(next,"subscription",old.getString("id"),old);}}
         for(int i=0;i<subs.length();i++){JSONObject sub=subs.getJSONObject(i);retainAccount(next,fallback,sub.optString("accountId"),sub.optString("currency","CNY"));}
@@ -347,6 +386,7 @@ public final class LedgerStore {
             }
             conflicts.remove(conflictIndex);
             rebuildLocalState(fallback);
+            applyRecurringInternal();
         });
     }
     public synchronized void reconnectEmpty() throws Exception {

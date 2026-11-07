@@ -116,7 +116,7 @@ test('hourly next-charge dates and renewal reminders share the Beijing clock', (
   Object.assign(sub, { startHour: 9, billingHour: 18 });
   assert.equal(nextSubscriptionDue(sub, new Date('2026-11-07T00:59:59Z')), '2026-11-07');
   assert.equal(nextSubscriptionDue(sub, new Date('2026-11-07T01:30:00Z')), '2026-11-07');
-  assert.equal(nextSubscriptionDue(sub, new Date('2026-11-07T02:00:00Z')), '2026-12-07');
+  assert.equal(nextSubscriptionDue(sub, new Date('2026-11-07T02:00:00Z')), '2026-11-07');
   assert.equal(nextSubscriptionDue(sub, '2026-11-07'), '2026-11-07');
   const status = subscriptionExpiryStatus(sub, new Date('2026-11-06T16:01:00Z'));
   assert.equal(status.date, '2026-11-07');
@@ -380,6 +380,174 @@ test('expiry overflow fails atomically before an automatic payment can be persis
   assert.throws(() => applyRecurring(state, '2199-12-31'), /超过支持范围/);
   assert.deepEqual(state, original);
   assert.equal(state.transactions.length, 0);
+});
+
+test('insufficient funds leave a charge and expiry pending until a current-day top-up covers it exactly', () => {
+  const state = fixture('2026-11-07', 7);
+  state.accounts[0].openingBalance = 1799;
+  Object.assign(state.subscriptions[0], { startHour: 10, billingHour: 10, expiresOn: '2026-11-07' });
+  upgradeSchemaVersion(state);
+  const original = structuredClone(state);
+  const waiting = applyRecurring(state, new Date('2026-11-07T02:00:00Z'));
+  assert.deepEqual(waiting.added, []);
+  assert.deepEqual(waiting.state.subscriptions[0].processedOccurrences, []);
+  assert.deepEqual(waiting.state.subscriptions[0].expiryRenewal.renewedOccurrences, []);
+  assert.equal(waiting.state.subscriptions[0].expiresOn, '2026-11-07');
+  assert.equal(getBalances(waiting.state, '2026-11-07').bank, 1799);
+  assert.deepEqual(applyRecurring(waiting.state, new Date('2026-11-08T02:00:00Z')).state, waiting.state);
+  assert.deepEqual(state, original);
+
+  waiting.state.transactions.push({ id: 'topup', type: 'income', accountId: 'bank', amount: 1,
+    title: '补足余额', category: '其他收入', date: '2026-11-08', note: '' });
+  const paid = applyRecurring(waiting.state, new Date('2026-11-08T02:00:00Z'));
+  assert.equal(paid.added.length, 1);
+  assert.equal(paid.added[0].date, '2026-11-07');
+  assert.equal(getBalances(paid.state, '2026-11-08').bank, 0);
+  assert.equal(paid.state.subscriptions[0].expiresOn, '2026-12-07');
+  assert.deepEqual(paid.state.subscriptions[0].processedOccurrences, ['music:2026-11']);
+  assert.deepEqual(applyRecurring(paid.state, new Date('2026-11-08T03:00:00Z')).state, paid.state);
+});
+
+test('zero and negative balances cannot fund a subscription but sufficient later income can', () => {
+  for (const openingBalance of [0, -500]) {
+    const state = fixture('2026-11-07', 7);
+    state.accounts[0].openingBalance = openingBalance;
+    const waiting = applyRecurring(state, '2026-11-07');
+    assert.equal(waiting.added.length, 0);
+    assert.deepEqual(waiting.state.subscriptions[0].processedOccurrences, []);
+    waiting.state.transactions.push({ id: 'income', type: 'income', accountId: 'bank', amount: 1800 - openingBalance,
+      title: '补足余额', category: '其他收入', date: '2026-11-08', note: '' });
+    const paid = applyRecurring(waiting.state, '2026-11-08');
+    assert.equal(paid.added.length, 1);
+    assert.equal(getBalances(paid.state, '2026-11-08').bank, 0);
+  }
+});
+
+test('future income and transfers become available only on their Beijing ledger date', () => {
+  for (const type of ['income', 'transfer']) {
+    const state = fixture('2026-11-07', 7);
+    state.accounts[0].openingBalance = 1799;
+    state.accounts.push({ id: 'wallet', name: '钱包', type: '现金', openingBalance: 100, color: '#123456' });
+    state.transactions.push({ id: 'future-funds', type, accountId: type === 'transfer' ? 'wallet' : 'bank', amount: 1,
+      ...(type === 'transfer' ? { toAccountId: 'bank' } : {}), title: '未来资金', category: '其他', date: '2026-11-08', note: '' });
+    assert.equal(getBalances(state).bank, 1800);
+    const waiting = applyRecurring(state, new Date('2026-11-07T15:59:59Z'));
+    assert.equal(waiting.added.length, 0);
+    assert.equal(getBalances(waiting.state, '2026-11-07').bank, 1799);
+    const paid = applyRecurring(waiting.state, new Date('2026-11-07T16:00:00Z'));
+    assert.equal(paid.added.length, 1);
+    assert.equal(getBalances(paid.state, '2026-11-08').bank, 0);
+  }
+  const state = fixture('2026-11-07', 7);
+  state.accounts[0].openingBalance = 1800;
+  state.transactions.push({ id: 'future-expense', type: 'expense', accountId: 'bank', amount: 1,
+    title: '未来支出', category: '其他', date: '2026-11-08', note: '' });
+  const paid = applyRecurring(state, '2026-11-07');
+  assert.equal(paid.added.length, 1);
+  assert.equal(getBalances(paid.state, '2026-11-07').bank, 0);
+});
+
+test('catch-up charges consume funds from oldest month first and renew only paid periods', () => {
+  const state = fixture();
+  state.accounts[0].openingBalance = 3600;
+  state.subscriptions[0].expiresOn = '2024-01-31';
+  const partial = applyRecurring(state, '2024-03-31');
+  assert.deepEqual(partial.added.map(tx => tx.date), ['2024-01-31', '2024-02-29']);
+  assert.deepEqual(partial.state.subscriptions[0].processedOccurrences, ['music:2024-01', 'music:2024-02']);
+  assert.deepEqual(partial.state.subscriptions[0].expiryRenewal.renewedOccurrences, ['music:2024-01', 'music:2024-02']);
+  assert.equal(partial.state.subscriptions[0].expiresOn, '2024-03-31');
+  assert.equal(getBalances(partial.state, '2024-03-31').bank, 0);
+  assert.equal(nextSubscriptionDue(partial.state.subscriptions[0], '2024-04-01'), '2024-03-31');
+  assert.deepEqual(applyRecurring(partial.state, '2024-04-01').state, partial.state);
+  partial.state.transactions.push({ id: 'april-topup', type: 'income', accountId: 'bank', amount: 1800,
+    title: '补款', category: '其他收入', date: '2024-04-01', note: '' });
+  const paid = applyRecurring(partial.state, '2024-04-01');
+  assert.deepEqual(paid.added.map(tx => tx.date), ['2024-03-31']);
+  assert.equal(paid.state.subscriptions[0].expiresOn, '2024-04-30');
+  assert.equal(getBalances(paid.state, '2024-04-01').bank, 0);
+});
+
+test('subscriptions sharing an account use stable list order and debit available funds per payment', () => {
+  const state = fixture('2026-11-07', 7);
+  state.accounts[0].openingBalance = 2000;
+  state.subscriptions[0].expiresOn = '2026-11-07';
+  state.subscriptions.push({ ...structuredClone(state.subscriptions[0]), id: 'second' },
+    { ...structuredClone(state.subscriptions[0]), id: 'small', amount: 200 });
+  const partial = applyRecurring(state, '2026-11-07');
+  assert.deepEqual(partial.added.map(tx => tx.subscriptionId), ['music', 'small']);
+  assert.equal(getBalances(partial.state, '2026-11-07').bank, 0);
+  assert.deepEqual(partial.state.subscriptions[1].processedOccurrences, []);
+  assert.equal(partial.state.subscriptions[1].expiresOn, '2026-11-07');
+  assert.equal(partial.state.subscriptions[0].expiresOn, '2026-12-07');
+  assert.equal(partial.state.subscriptions[2].expiresOn, '2026-12-07');
+  partial.state.transactions.push({ id: 'topup-second', type: 'income', accountId: 'bank', amount: 1800,
+    title: '补款', category: '其他收入', date: '2026-11-08', note: '' });
+  const paid = applyRecurring(partial.state, '2026-11-08');
+  assert.deepEqual(paid.added.map(tx => tx.subscriptionId), ['second']);
+  assert.equal(paid.state.subscriptions[1].expiresOn, '2026-12-07');
+  assert.equal(getBalances(paid.state, '2026-11-08').bank, 0);
+});
+
+test('an existing paid occurrence repairs its marker without requiring or deducting its funds again', () => {
+  const state = fixture('2026-11-07', 7);
+  state.accounts[0].openingBalance = 1800;
+  state.subscriptions[0].expiresOn = '2026-11-07';
+  const paid = applyRecurring(state, '2026-11-07').state;
+  paid.subscriptions[0].processedOccurrences = [];
+  const repaired = applyRecurring(paid, '2026-11-08');
+  assert.equal(repaired.added.length, 0);
+  assert.equal(repaired.state.transactions.length, 1);
+  assert.equal(getBalances(repaired.state, '2026-11-08').bank, 0);
+  assert.deepEqual(repaired.state.subscriptions[0].processedOccurrences, ['music:2026-11']);
+  assert.deepEqual(repaired.state.subscriptions[0].expiryRenewal, paid.subscriptions[0].expiryRenewal);
+});
+
+test('funding checks use exact account currency units without borrowing another account or converted value', () => {
+  for (const [currency, fee, rate] of [['USD', 1800, '7.2'], ['JPY', 1800, '0.05'], ['USDT', 2, '7.2'], ['TRY', 1800, '0.2']]) {
+    const state = fixture('2026-11-07', 7);
+    Object.assign(state.accounts[0], { currency, cnyRate: rate, openingBalance: fee - 1 });
+    state.accounts.push({ id: 'rich', name: '其他账户', type: '现金', color: '#123456', openingBalance: 100000 });
+    Object.assign(state.subscriptions[0], { currency, amount: fee });
+    upgradeSchemaVersion(state);
+    const waiting = applyRecurring(state, '2026-11-07');
+    assert.equal(waiting.added.length, 0, currency);
+    waiting.state.transactions.push({ id: 'native-topup', type: 'income', accountId: 'bank', amount: 1, currency, cnyRate: rate,
+      title: '原币补款', category: '其他收入', date: '2026-11-08', note: '' });
+    const paid = applyRecurring(waiting.state, '2026-11-08');
+    assert.equal(paid.added.length, 1, currency);
+    assert.equal(paid.added[0].amount, fee);
+    assert.equal(paid.added[0].currency, currency);
+    assert.equal(paid.added[0].cnyRate, rate);
+    assert.equal(getBalances(paid.state, '2026-11-08').bank, 0);
+    assert.equal(getBalances(paid.state, '2026-11-08').rich, 100000);
+  }
+});
+
+test('a single charge also waits for enough funds and records only once after a later deposit', () => {
+  const state = fixture('2026-11-07', 7);
+  state.accounts[0].openingBalance = 0;
+  Object.assign(state.subscriptions[0], { recurring: false, expiresOn: '2026-11-07' });
+  const waiting = applyRecurring(state, '2026-11-07');
+  assert.equal(waiting.added.length, 0);
+  assert.deepEqual(waiting.state.subscriptions[0].processedOccurrences, []);
+  waiting.state.transactions.push({ id: 'single-topup', type: 'income', accountId: 'bank', amount: 1800,
+    title: '补款', category: '其他收入', date: '2026-11-08', note: '' });
+  const paid = applyRecurring(waiting.state, '2026-11-08');
+  assert.equal(paid.added.length, 1);
+  assert.equal(paid.state.subscriptions[0].expiresOn, '2026-11-07');
+  assert.equal(Object.hasOwn(paid.state.subscriptions[0], 'expiryRenewal'), false);
+  assert.deepEqual(applyRecurring(paid.state, '2026-12-08').state, paid.state);
+});
+
+test('an unpaid overdue subscription keeps its original pending date and never claims renewal succeeded', () => {
+  const state = fixture('2026-11-07', 7);
+  state.accounts[0].openingBalance = 0;
+  const waiting = applyRecurring(state, new Date('2026-11-08T02:00:00Z')).state;
+  assert.equal(nextSubscriptionDue(waiting.subscriptions[0], new Date('2026-11-08T02:00:00Z')), '2026-11-07');
+  assert.deepEqual(subscriptionExpiryStatus(waiting.subscriptions[0], new Date('2026-11-08T02:00:00Z')), {
+    tone: 'expired', label: '待扣账 · 已逾期 1 天', detail: '2026-11-07 · 待扣账',
+    date: '2026-11-07', days: -1, source: 'renewal',
+  });
 });
 
 test('next due preserves a future first date across years and follows month-end billing after it', () => {
