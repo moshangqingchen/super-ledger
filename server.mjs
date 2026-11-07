@@ -4,7 +4,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { makeEmptyState, makeInitialState, validateState, applyRecurring } from './engine.mjs';
+import { makeEmptyState, makeInitialState, validateState, applyRecurring, beijingDateTime } from './engine.mjs';
 import { createRateService } from './exchange-rates.mjs';
 import { accountCurrency } from './currencies.mjs';
 import { createMobileSync, newSyncMetadata, checkedMetadata, mergeMobileOperations } from './mobile-sync.mjs';
@@ -18,11 +18,6 @@ const MIME = {
   '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
   '.woff2': 'font/woff2', '.woff': 'font/woff',
 };
-
-function todayLocal() {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
 
 function fail(status, message, detail = {}) {
   return Object.assign(new Error(message), { status, detail });
@@ -118,12 +113,13 @@ async function lockDataDirectory(directory, port) {
   } catch (error) { release(); throw error; }
 }
 
-export async function createLedgerServer({ port = 4317, dataDirectory = path.join(ROOT, 'data'), authToken, rateService, onlineRates = false, mobileSyncOptions = {} } = {}) {
+export async function createLedgerServer({ port = 4317, dataDirectory = path.join(ROOT, 'data'), authToken, rateService, onlineRates = false, mobileSyncOptions = {}, now = () => new Date() } = {}) {
   if (!Number.isInteger(port) || (port !== 0 && port < 1024) || port > 65535) throw new Error('无效的本机服务端口。');
   if (authToken !== undefined && (typeof authToken !== 'string' || authToken.length === 0)) throw new Error('桌面账本访问凭据必须为非空字符串。');
   const tokenBytes = authToken === undefined ? null : Buffer.from(authToken, 'utf8');
   const ledgerFile = path.join(dataDirectory, 'ledger.json');
   const previousFile = path.join(dataDirectory, 'ledger.previous.json');
+  const todayLocal = () => beijingDateTime(now()).date;
   let listeningPort = port;
   const allowedHosts = new Set();
   const allowedOrigins = new Set();
@@ -227,7 +223,7 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
 
   function reconcile() {
     try {
-      const result = applyRecurring(state, todayLocal());
+      const result = applyRecurring(state, now());
       if (JSON.stringify(result.state) !== JSON.stringify(state)) commit(result.state);
       automaticBookingError = '';
       return result.added;
@@ -255,10 +251,10 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
     },
     synchronize(payload) {
       reconcile();
-      const result = mergeMobileOperations(state, payload);
+      const result = mergeMobileOperations(state, payload, now());
       // Publish receipts, entity edits and their due bookings atomically. A
       // failed catch-up must not leave a partially acknowledged subscription.
-      const reconciled = applyRecurring(result.next, todayLocal()).state;
+      const reconciled = applyRecurring(result.next, now()).state;
       if (result.changed || JSON.stringify(reconciled) !== JSON.stringify(state)) commit(reconciled);
       automaticBookingError = '';
       const publicState = structuredClone(state);
@@ -324,7 +320,7 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
         checkRevision(body.expectedRevision);
         try { validateState(body.state); } catch (error) { throw fail(400, error.message); }
         let next;
-        try { next = applyRecurring(applyCachedRates(body.state), todayLocal()).state; }
+        try { next = applyRecurring(applyCachedRates(body.state), now()).state; }
         catch (error) { throw fail(400, error.message); }
         // Mobile receipts are server-owned and must survive edits from an older
         // renderer. A whole-ledger PUT cannot erase deduplication history.
@@ -341,7 +337,7 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
         checkRevision(body.expectedRevision);
         try { validateState(body.state); } catch (error) { throw fail(400, error.message); }
         let next;
-        try { next = applyRecurring(applyCachedRates(body.state), todayLocal()).state; }
+        try { next = applyRecurring(applyCachedRates(body.state), now()).state; }
         catch (error) { throw fail(400, error.message); }
         const backup = path.join(dataDirectory, `ledger.before-import.${new Date().toISOString().replace(/[:.]/g, '-')}.${randomUUID().slice(0, 8)}.json`);
         fs.copyFileSync(ledgerFile, backup, fs.constants.COPYFILE_EXCL);
@@ -361,7 +357,7 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
         const backup = path.join(dataDirectory, `ledger.before-reset.${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
         fs.copyFileSync(ledgerFile, backup);
         const next = body.mode === 'demo' ? makeInitialState(todayLocal()) : makeEmptyState();
-        const saved = commit(applyRecurring(next, todayLocal()).state);
+        const saved = commit(applyRecurring(next, now()).state);
         automaticBookingError = '';
         mobileSync.stop();
         return sendJson(response, 200, saved);

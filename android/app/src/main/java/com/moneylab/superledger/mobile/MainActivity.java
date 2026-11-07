@@ -15,6 +15,8 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.InputType;
 import android.text.Editable;
@@ -39,11 +41,10 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.math.BigDecimal;
-import java.text.SimpleDateFormat;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -71,13 +72,15 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     private boolean recoveryAfterExport;
     private AppUpdater updater;
     private boolean resumed, temporaryActivity;
+    private final Handler recurringHandler = new Handler(Looper.getMainLooper());
+    private final Runnable recurringTick = () -> { if (resumed && !destroyed) { render(); scheduleRecurring(); } };
     private MobileUpdateDialog mobileUpdates;
     private LinearLayout updatePanel;
     private TextView updateProgressLabel;
     private ProgressBar updateProgressBar;
     private String updateCardKey = "";
     private String selectedMonth = LedgerStore.today().substring(0, 7), selectedAccount = "", selectedCategory = "", selectedType = "", searchQuery = "", moreSection = "", recurringError = "";
-    private final BroadcastReceiver receiver = new BroadcastReceiver() { @Override public void onReceive(Context context, Intent intent) { render(); } };
+    private final BroadcastReceiver receiver = new BroadcastReceiver() { @Override public void onReceive(Context context, Intent intent) { render(); scheduleRecurring(); } };
     private interface Action { void run() throws Exception; }
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
@@ -88,7 +91,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
             @Override public boolean canInstall() { return store != null && !store.isSyncing(); }
             @Override public void onDismiss() { if (!destroyed && root != null) root.post(MainActivity.this::maybeShowUpdateUi); }
         });
-        IntentFilter filter = new IntentFilter(ACTION_CHANGED);
+        IntentFilter filter = new IntentFilter(ACTION_CHANGED);filter.addAction(Intent.ACTION_TIME_CHANGED);filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED); else registerReceiver(receiver, filter);
         receiverRegistered = true; render();
     }
@@ -98,8 +101,12 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     @Override protected void onStop() { if (updater != null) updater.onActivityStopped(isChangingConfigurations() || temporaryActivity); temporaryActivity = false; super.onStop(); }
     @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); if (updater != null && Intent.ACTION_MAIN.equals(intent.getAction()) && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) updater.onLauncherIntent(); }
     @Override public void startActivityForResult(Intent intent, int requestCode, Bundle options) { temporaryActivity = true; try { super.startActivityForResult(intent, requestCode, options); } catch (RuntimeException error) { temporaryActivity = false; throw error; } }
-    @Override protected void onResume() { super.onResume(); resumed = true; temporaryActivity = false; if (store != null) render(); if (updater != null) updater.attach(this); }
-    @Override protected void onPause() { resumed = false; if (updater != null) updater.detach(this); super.onPause(); }
+    @Override protected void onResume() { super.onResume(); resumed = true; temporaryActivity = false; if (store != null) render(); scheduleRecurring(); if (updater != null) updater.attach(this); }
+    @Override protected void onPause() { resumed = false; recurringHandler.removeCallbacks(recurringTick); if (updater != null) updater.detach(this); super.onPause(); }
+    private void scheduleRecurring() {
+        recurringHandler.removeCallbacks(recurringTick);
+        if (resumed && !destroyed) recurringHandler.postDelayed(recurringTick, 3_600_000L - Math.floorMod(System.currentTimeMillis(), 3_600_000L) + 25);
+    }
     @Override protected void onDestroy() { destroyed = true; if (mobileUpdates != null) mobileUpdates.dispose(); if (updater != null) updater.detach(this); if (receiverRegistered) unregisterReceiver(receiver); super.onDestroy(); }
     @Override public void onWindowFocusChanged(boolean focused) { super.onWindowFocusChanged(focused); if (focused) maybeShowUpdateUi(); }
     @Override public void onUpdaterChanged() {
@@ -179,7 +186,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     private void render() {
         if (destroyed || store == null) return;
         try {
-            if (!store.isSyncing()) { try { store.applyRecurring(LedgerStore.today()); recurringError = ""; } catch (Exception error) { recurringError = error.getMessage() == null ? "请核对订阅和账户设置" : error.getMessage(); } }
+            if (!store.isSyncing()) { try { store.applyRecurring(); recurringError = ""; } catch (Exception error) { recurringError = error.getMessage() == null ? "请核对订阅和账户设置" : error.getMessage(); } }
             JSONObject data = store.snapshot(); updatePanel = null; updateProgressLabel = null; updateProgressBar = null; updateCardKey = ""; root = column(); root.setBackgroundColor(BG);
             root.setOnApplyWindowInsetsListener((v, insets) -> { v.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(), insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom()); return insets; });
             LinearLayout header = row(); header.setPadding(dp(20), dp(14), dp(20), dp(14)); header.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{Color.WHITE, BG}));
@@ -215,7 +222,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     private static String accountName(JSONObject account) { if (account == null) return "未选账户"; if (AppleBalance.isAppleBalance(account)) return AppleBalance.accountLabel(account); String currency = account.optString("currency", "CNY"); return account.optString("name", "账户") + (account.optString("lastFour").isEmpty() ? "" : " · " + account.optString("lastFour")) + (currency.equals("CNY") ? "" : " · " + currency); }
     private static String money(long amount, String currency) { try { return MobileLedger.formatMoney(amount, currency); } catch (Exception e) { return "金额待核对"; } }
     private static String amountInput(long amount, String currency) { try { return MobileLedger.amountInput(amount, currency); } catch (Exception e) { return ""; } }
-    private static String when(long millis) { return millis <= 0 ? "尚未同步" : new SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(new Date(millis)); }
+    private static String when(long millis) { return millis <= 0 ? "尚未同步" : MobileLedger.beijingDateTime(millis).format(DateTimeFormatter.ofPattern("MM-dd HH:mm",Locale.CHINA)); }
     private static JSONArray items(JSONObject state, String key) { JSONArray value = state.optJSONArray(key); return value == null ? new JSONArray() : value; }
     private static int safeColor(String color) { try { return Color.parseColor(color); } catch (Exception error) { return PURPLE; } }
     private void openMore(String section) { page = 3; moreSection = section; render(); }
@@ -243,7 +250,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         JSONObject state = data.getJSONObject("state"); String today = LedgerStore.today(), month = today.substring(0, 7); JSONArray accounts = items(state, "accounts");
         JSONObject monthly = MobileLedger.monthlySummary(state, month, today), daily = MobileLedger.dailySummary(state, today);
         LinearLayout welcome = row(); welcome.setPadding(0, dp(4), 0, dp(18)); LinearLayout greeting = column();
-        greeting.addView(text(new SimpleDateFormat("M 月 d 日 · E", Locale.CHINA).format(new Date()), 11, MUTED, false)); gap(greeting, 7);
+        greeting.addView(text(MobileLedger.beijingDateTime(System.currentTimeMillis()).format(DateTimeFormatter.ofPattern("M 月 d 日 · E",Locale.CHINA)), 11, MUTED, false)); gap(greeting, 7);
         greeting.addView(text("每一笔，\n都心中有数。", 25, INK, true)); gap(greeting, 4); greeting.addView(text("好好生活，慢慢积累。", 12, MUTED, false)); welcome.addView(greeting, new LinearLayout.LayoutParams(0, -2, 1));
         ImageView artwork = new ImageView(this); artwork.setImageResource(R.drawable.ledger_bloom); artwork.setScaleType(ImageView.ScaleType.FIT_CENTER); artwork.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO); welcome.addView(artwork, new LinearLayout.LayoutParams(dp(108), dp(118))); body.addView(welcome);
         LinearLayout hero = card(); hero.setBackground(MobileStyle.heroSurface(this));
@@ -586,8 +593,8 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         AlertDialog dialog=builder.create();dialog.setOnShowListener(d->{MobileStyle.styleDialog(dialog);dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{if(store.isSyncing())throw new Exception("正在同步，请完成后再保存");save.run();dialog.dismiss();render();toast("已保存，下次扫码会同步到电脑");}catch(Exception e){validation.setText(e.getMessage()==null?"请核对填写内容":e.getMessage());scroll.post(()->scroll.smoothScrollTo(0,form.getBottom()));}});
             if(remove!=null)dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->dialogBuilder().setTitle("确认删除？").setMessage(deleteMessage).setNegativeButton("取消",null).setPositiveButton("删除",(confirm,w)->{try{remove.run();dialog.dismiss();render();toast("已删除，变更将在下次扫码同步");}catch(Exception e){validation.setText(e.getMessage());scroll.post(()->scroll.smoothScrollTo(0,form.getBottom()));}}).show());});dialog.show();
     }
-    private EditText dateField(LinearLayout form,String name,String value,boolean future){EditText input=field(form,name,value,InputType.TYPE_CLASS_DATETIME);input.setFocusable(false);input.setOnClickListener(v->{Calendar initial=Calendar.getInstance();String raw=input.getText().toString();try{initial.set(Integer.parseInt(raw.substring(0,4)),Integer.parseInt(raw.substring(5,7))-1,Integer.parseInt(raw.substring(8,10)));}catch(Exception ignored){}
-        DatePickerDialog picker=new DatePickerDialog(this,(view,year,month,day)->input.setText(String.format(Locale.US,"%04d-%02d-%02d",year,month+1,day)),initial.get(Calendar.YEAR),initial.get(Calendar.MONTH),initial.get(Calendar.DAY_OF_MONTH));if(!future)picker.getDatePicker().setMaxDate(System.currentTimeMillis());picker.show();});return input;}
+    private EditText dateField(LinearLayout form,String name,String value,boolean future){EditText input=field(form,name,value,InputType.TYPE_CLASS_DATETIME);input.setFocusable(false);input.setOnClickListener(v->{Calendar initial=Calendar.getInstance();String raw=input.getText().toString();if(!MobileLedger.isValidDate(raw))raw=LedgerStore.today();initial.set(Integer.parseInt(raw.substring(0,4)),Integer.parseInt(raw.substring(5,7))-1,Integer.parseInt(raw.substring(8,10)));
+        DatePickerDialog picker=new DatePickerDialog(this,(view,year,month,day)->input.setText(String.format(Locale.US,"%04d-%02d-%02d",year,month+1,day)),initial.get(Calendar.YEAR),initial.get(Calendar.MONTH),initial.get(Calendar.DAY_OF_MONTH));if(!future){String today=LedgerStore.today();Calendar latest=Calendar.getInstance();latest.set(Integer.parseInt(today.substring(0,4)),Integer.parseInt(today.substring(5,7))-1,Integer.parseInt(today.substring(8,10)),23,59,59);picker.getDatePicker().setMaxDate(latest.getTimeInMillis());}picker.show();});return input;}
     private void showField(EditText field,boolean shown){field.setVisibility(shown?View.VISIBLE:View.GONE);ViewGroup parent=(ViewGroup)field.getParent();int index=parent.indexOfChild(field);if(index>0)parent.getChildAt(index-1).setVisibility(shown?View.VISIBLE:View.GONE);}
     private void watch(EditText edit,Runnable update){edit.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){update.run();}public void afterTextChanged(Editable value){}});}
     private void editTransaction(JSONObject original,JSONObject pending,String initialType,String initialAccount)throws Exception {
@@ -680,7 +687,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         intro.setBackground(MobileStyle.heroSurface(this));intro.addView(label("每月启用的计划扣账 · 折合人民币"));intro.addView(amountText(money(monthly,"CNY"),31,INK));addButton(intro,"＋ 添加订阅",true,()->editSubscription(null));
         intro.addView(label("到期标注：已过期红色，7 天内橙色，8–30 天黄色，30 天以上绿色，未设置灰色。"));
         if(subscriptions.length()==0)intro.addView(label("选择服务品牌，填写你实际支付的金额和扣款账户。"));
-        for(int i=0;i<subscriptions.length();i++){final JSONObject sub=subscriptions.getJSONObject(i);LinearLayout c=card(),r=row();c.setBackground(MobileStyle.material(this,safeColor(sub.optString("color","#8C7BC1")),22));addLogo(r,BrandIcons.forSubscription(sub),sub.optString("name"),sub.optString("color","#8476D9"),44);LinearLayout labels=column();labels.addView(text(sub.optString("name"),17,INK,true));labels.addView(text(sub.optString("tier").isEmpty()?"自定义档位":sub.optString("tier"),12,MUTED,false));r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));c.addView(r);gap(c,16);c.addView(amountText(money(sub.optLong("amount"),sub.optString("currency","CNY")),29,INK));String due=MobileLedger.nextSubscriptionDue(sub,LedgerStore.today());c.addView(label((sub.optBoolean("active")?(sub.optBoolean("recurring")?"每月 "+sub.optInt("billingDay")+" 日":"单次记账"):"已暂停")+(due==null?"":" · 下次 "+due)));
+        for(int i=0;i<subscriptions.length();i++){final JSONObject sub=subscriptions.getJSONObject(i);LinearLayout c=card(),r=row();c.setBackground(MobileStyle.material(this,safeColor(sub.optString("color","#8C7BC1")),22));addLogo(r,BrandIcons.forSubscription(sub),sub.optString("name"),sub.optString("color","#8476D9"),44);LinearLayout labels=column();labels.addView(text(sub.optString("name"),17,INK,true));labels.addView(text(sub.optString("tier").isEmpty()?"自定义档位":sub.optString("tier"),12,MUTED,false));r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));c.addView(r);gap(c,16);c.addView(amountText(money(sub.optLong("amount"),sub.optString("currency","CNY")),29,INK));String due=MobileLedger.nextSubscriptionDue(sub,LedgerStore.today());c.addView(label((sub.optBoolean("active")?(sub.optBoolean("recurring")?"每月 "+sub.optInt("billingDay")+" 日 "+String.format(Locale.US,"%02d:00",sub.optInt("billingHour",0)):"单次记账"):"已暂停")+(due==null?"":" · 下次 "+due+" "+String.format(Locale.US,"%02d:00",MobileLedger.subscriptionDueHour(sub,due))+" 北京时间")));
             SubscriptionDetails.Status expiry=SubscriptionDetails.expiryStatus(sub,LedgerStore.today());int tone=expiryColor(expiry.tone);TextView badge=text(expiry.label,13,tone,true);badge.setPadding(dp(11),dp(9),dp(11),dp(9));badge.setBackground(MobileStyle.outlined(this,MobileStyle.blend(Color.WHITE,tone,.06f),MobileStyle.blend(Color.WHITE,tone,.22f),11));c.addView(badge);gap(c,5);c.addView(text(expiry.detail,12,MUTED,false));
             gap(c,12);c.addView(subscriptionFunding(findAccount(state,sub.optString("accountId")),accountBalances.optLong(sub.optString("accountId")),sub.optLong("amount")));
             JSONArray linked=sub.optJSONArray("linkedAccounts");if(linked!=null&&linked.length()>0){gap(c,12);c.addView(text("关联登录账号",13,MUTED,true));for(int j=0;j<linked.length();j++){JSONObject identity=linked.getJSONObject(j);c.addView(text(linkedAccountLabel(identity),12,INK,false));}}
@@ -727,13 +734,19 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         LinearLayout fundingPreview=column();form.addView(fundingPreview);
         Runnable refreshFunding=()->{try{JSONObject selected=accounts.get(account.getSelectedItemPosition());String code=selected.optString("currency","CNY");Long charge=null;try{long parsed=MobileLedger.parseMoney(amount.getText().toString().trim(),code);if(parsed>0)charge=parsed;}catch(Exception ignored){}JSONObject latest=store.snapshot().getJSONObject("state");JSONObject selectedLatest=findAccount(latest,selected.optString("id"));if(selectedLatest==null||!selectedLatest.optString("currency","CNY").equals(code))throw new Exception("扣款账户已变更，请重新打开编辑。");long balance=MobileLedger.balances(latest,LedgerStore.today()).getLong(selected.getString("id"));fundingPreview.removeAllViews();fundingPreview.addView(subscriptionFunding(selectedLatest,balance,charge));}catch(Exception invalid){fundingPreview.removeAllViews();fundingPreview.addView(label("余额暂不可用，请核对扣款账户。"));}};
         watch(amount,refreshFunding);
-        EditText start=dateField(form,"首次扣账日期",original==null?LedgerStore.today():original.optString("startDate"),true),day=field(form,"每月扣账日 · 1 至 31",original==null?LedgerStore.today().substring(8):String.valueOf(original.optInt("billingDay")),InputType.TYPE_CLASS_NUMBER);
+        form.addView(label("订阅扣账统一使用北京时间（UTC+8），精确到整点。"));
+        EditText start=dateField(form,"首次扣账日期 · 北京时间",original==null?LedgerStore.today():original.optString("startDate"),true);
+        List<String> hours=new ArrayList<>();for(int hour=0;hour<24;hour++)hours.add(String.format(Locale.US,"%02d:00",hour));
+        form.addView(label("首次扣账时间 · 北京时间"));Spinner startHour=spinner(hours);startHour.setSelection(original==null?MobileLedger.beijingDateTime(System.currentTimeMillis()).getHour():original.optInt("startHour",0));form.addView(startHour);
+        EditText day=field(form,"每月扣账日 · 1 至 31",original==null?LedgerStore.today().substring(8):String.valueOf(original.optInt("billingDay")),InputType.TYPE_CLASS_NUMBER);
+        form.addView(label("每月扣账时间 · 北京时间"));Spinner billingHour=spinner(hours);billingHour.setSelection(original==null?startHour.getSelectedItemPosition():original.optInt("billingHour",0));form.addView(billingHour);
         Switch recurring=new Switch(this);recurring.setText("连续订阅，每月记账");recurring.setChecked(original==null||original.optBoolean("recurring"));form.addView(recurring);Switch active=new Switch(this);active.setText("启用计划扣账");active.setChecked(original==null||original.optBoolean("active"));form.addView(active);
         form.addView(label("短月份会使用当月最后一天。暂停期间不补扣；自动记录不代表平台实际付款成功。收到实际付款通知时仍会核对去重。"));
         EditText expires=dateField(form,"会员到期日期 · 可选",original==null?"":original.optString("expiresOn"),true);expires.setHint("选择会员到期日期");addButton(form,"清除到期日期",false,()->expires.setText(""));
         TextView expiryPreview=label("");form.addView(expiryPreview);form.addView(label("到期日期只用于提醒，不改变计划扣账；未填写时，连续订阅显示下次续费日期。"));
         Runnable refreshExpiry=()->{try{JSONObject preview=original==null?new JSONObject().put("id","preview").put("processedOccurrences",new JSONArray()):LedgerStore.copy(original);preview.put("startDate",start.getText().toString()).put("billingDay",Integer.parseInt(day.getText().toString())).put("recurring",recurring.isChecked()).put("active",active.isChecked()).put("expiresOn",expires.getText().toString());SubscriptionDetails.validateSubscription(preview);SubscriptionDetails.Status status=SubscriptionDetails.expiryStatus(preview,LedgerStore.today());expiryPreview.setText(status.label+" · "+status.detail);expiryPreview.setTextColor(expiryColor(status.tone));}catch(Exception invalid){expiryPreview.setText(invalid.getMessage()==null?"请核对扣账日期和到期日期。":invalid.getMessage());expiryPreview.setTextColor(MUTED);}};
-        watch(expires,refreshExpiry);watch(start,refreshExpiry);watch(day,refreshExpiry);recurring.setOnCheckedChangeListener((v,checked)->refreshExpiry.run());active.setOnCheckedChangeListener((v,checked)->refreshExpiry.run());refreshExpiry.run();
+        day.setEnabled(recurring.isChecked());billingHour.setEnabled(recurring.isChecked());
+        watch(expires,refreshExpiry);watch(start,refreshExpiry);watch(day,refreshExpiry);recurring.setOnCheckedChangeListener((v,checked)->{day.setEnabled(checked);billingHour.setEnabled(checked);refreshExpiry.run();});active.setOnCheckedChangeListener((v,checked)->refreshExpiry.run());refreshExpiry.run();
         SubscriptionLinksEditor identities=new SubscriptionLinksEditor(state,original);form.addView(identities.view);
         EditText note=field(form,"订阅备注 · 可选",original==null?"":original.optString("note"),InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);note.setMaxLines(4);note.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(500)});
         final String[] amountCurrency={original==null?accounts.get(selection).optString("currency","CNY"):original.optString("currency","CNY")};
@@ -742,6 +755,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
             JSONObject latestAccount=findAccount(store.snapshot().getJSONObject("state"),chosen.getString("id"));if(latestAccount==null||!code.equals(latestAccount.optString("currency","CNY")))throw new Exception("扣款账户已变更，请重新打开编辑后填写金额。");
             int billingDay;try{billingDay=Integer.parseInt(day.getText().toString().trim());}catch(Exception e){throw new Exception("扣账日请填写 1 至 31 的整数");}if(billingDay<1||billingDay>31)throw new Exception("扣账日请填写 1 至 31 的整数");
             sub.put("name",requiredText(name,"订阅名称",80)).put("tier",tier.getText().toString().trim()).put("accountId",chosen.getString("id")).put("currency",code).put("amount",positiveMoney(amount,code)).put("category","会员订阅").put("startDate",start.getText().toString()).put("billingDay",billingDay).put("recurring",recurring.isChecked()).put("active",active.isChecked()).put("color",color[0]).put("icon",original==null?"repeat":original.optString("icon","repeat"));
+            sub.put("startHour",startHour.getSelectedItemPosition()).put("billingHour",billingHour.getSelectedItemPosition());
             sub.put("linkedAccounts",identities.read()).put("expiresOn",expires.getText().toString()).put("note",note.getText().toString().trim());
             if(service[0].isEmpty())sub.put("serviceId",JSONObject.NULL);else sub.put("serviceId",service[0]);store.saveSubscription(sub);
         },original==null?null:()->store.deleteSubscription(original.getString("id")),"删除这个订阅计划会停止以后自动记账，历史账单会保留。不会取消平台会员。");

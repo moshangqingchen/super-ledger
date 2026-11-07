@@ -25,10 +25,12 @@ function artifact(source, name, max) {
   if (bytes.length < 1000 || bytes.length > max) throw new Error('Unexpected release artifact size: ' + path.basename(file));
   return { url: `https://github.com/${repository}/releases/download/v${version}/${name}`, sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length, notes };
 }
+const androidArtifact = artifact(values.get('--android'), `SuperLedger-Mobile-${androidVersion}.apk`, 100 * 1024 * 1024);
 const payload = {
   schema: 1, repository, publishedAt: new Date().toISOString(),
   windows: { version, ...artifact(values.get('--windows'), `SuperLedger-Setup-${version}.exe`, 300 * 1024 * 1024) },
-  android: { version: androidVersion, versionCode: androidCode, ...artifact(values.get('--android'), `SuperLedger-Mobile-${androidVersion}.apk`, 100 * 1024 * 1024),
+  android: { version: androidVersion, versionCode: androidCode, ...androidArtifact,
+    sources: [{ id: 'gh-proxy', url: `https://gh-proxy.org/${androidArtifact.url}` }, { id: 'ghfast', url: `https://ghfast.top/${androidArtifact.url}` }, { id: 'github', url: androidArtifact.url }],
     packageName: 'com.moneylab.superledger.mobile', certificateSha256: 'fd5a4af713362682fd1fe4e638decb05077b4ec672966ce3bd75b80558d7e785', minSdk: 26 },
 };
 const privatePath = path.resolve(process.env.LEDGER_UPDATE_SIGNING_KEY || path.join(root, '.release-signing', 'update-signing-private.pem'));

@@ -23,6 +23,30 @@ export function localDate(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+/** Subscription schedules follow Beijing standard time (UTC+8) on every device. */
+export function beijingDateTime(now = new Date()) {
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) fail('当前时间格式不正确');
+  const shifted = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  return {
+    date: `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`,
+    hour: shifted.getUTCHours(),
+  };
+}
+
+function subscriptionClock(now, dateHour = 0) {
+  if (now instanceof Date) {
+    const clock = beijingDateTime(now);
+    date(clock.date, '当前日期');
+    return clock;
+  }
+  date(now, '当前日期');
+  return { date: now, hour: dateHour };
+}
+
+export function subscriptionDueHour(sub, dueDate) {
+  return dueDate.slice(0, 7) === sub.startDate.slice(0, 7) ? sub.startHour ?? 0 : sub.billingHour ?? 0;
+}
+
 function fail(message) { throw new Error(message); }
 function object(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail(`${label}必须是对象`);
@@ -86,9 +110,16 @@ export function occurrenceKey(subscription, dueDate) {
   return `${subscription.id}:${dueDate.slice(0, 7)}`;
 }
 
+/** Retain the schema gate so older applications reject schedules they cannot honor. */
+export function upgradeSchemaVersion(state) {
+  if (state.accounts.some(account => accountCurrency(account) !== 'CNY')) state.schemaVersion = Math.max(state.schemaVersion, 2);
+  if (state.subscriptions.some(sub => own(sub, 'startHour') || own(sub, 'billingHour'))) state.schemaVersion = Math.max(state.schemaVersion, 3);
+  return state;
+}
+
 export function validateState(state) {
   object(state, '账本');
-  if (![1, 2].includes(state.schemaVersion)) fail('不支持此账本版本');
+  if (![1, 2, 3].includes(state.schemaVersion)) fail('不支持此账本版本');
   integer(state.revision, '账本版本号', 0, Number.MAX_SAFE_INTEGER);
   boolean(state.demo, '示例数据标志');
   object(state.settings, '设置');
@@ -140,8 +171,8 @@ export function validateState(state) {
     currencyRate({ currency: recordedCurrency, ...(own(tx, 'cnyRate') ? { cnyRate: tx.cnyRate } : {}) });
     const convertedAmount = transactionCnyAmount(tx);
     // Version 1 historically permits arbitrarily large gross turnover with a safe net balance.
-    // Version 2 also bounds converted report totals before they reach number-based UI charts.
-    if (state.schemaVersion === 2 && tx.type !== 'transfer') {
+    // Version 2 and later bound converted totals before they reach number-based UI charts.
+    if (state.schemaVersion >= 2 && tx.type !== 'transfer') {
       historicalTotals[tx.type] += BigInt(convertedAmount);
       if (historicalTotals[tx.type] > BigInt(MAX_MONEY)) fail('人民币折算累计收支超过支持的范围');
     }
@@ -198,6 +229,9 @@ export function validateState(state) {
     const convertedAmount = toCnyCents(sub.amount, subCurrency, currencyRate(account));
     if (sub.category !== '会员订阅') fail('订阅分类必须为会员订阅');
     date(sub.startDate, '首次扣款日期');
+    if (own(sub, 'startHour')) integer(sub.startHour, '首次扣账小时', 0, 23);
+    if (own(sub, 'billingHour')) integer(sub.billingHour, '每月扣账小时', 0, 23);
+    if (state.schemaVersion < 3 && (own(sub, 'startHour') || own(sub, 'billingHour'))) fail('按小时扣账需要使用版本 3，请使用支持北京时间按小时扣账的新版应用保存');
     if (own(sub, 'expiresOn')) {
       string(sub.expiresOn, '会员到期日期', 10, true);
       if (sub.expiresOn) {
@@ -294,24 +328,25 @@ export function transactionCnyAmount(tx, state) {
   return toCnyCents(tx.amount, code, tx.cnyRate);
 }
 
-function dueDates(sub, today) {
+function dueDates(sub, today, hour = 23) {
   if (sub.startDate > today) return [];
-  if (!sub.recurring) return [sub.startDate];
+  if (!sub.recurring) return sub.startDate < today || subscriptionDueHour(sub, sub.startDate) <= hour ? [sub.startDate] : [];
   const [sy, sm] = sub.startDate.split('-').map(Number);
   const [ty, tm] = today.split('-').map(Number);
   const months = (ty - sy) * 12 + tm - sm;
   const dates = [];
   for (let i = 0; i <= months; i++) {
     const due = addMonthsDue(sub.startDate, i, sub.billingDay);
-    if (due <= today) dates.push(due);
+    if (due < today || due === today && subscriptionDueHour(sub, due) <= hour) dates.push(due);
   }
   return dates;
 }
 
 /** Catch up monthly bookings, exactly once per subscription/month; never initiates bank payments. */
-export function applyRecurring(state, today = localDate()) {
+export function applyRecurring(state, now = new Date()) {
   validateState(state);
-  date(today, '当前日期');
+  // Explicit date-only callers retain their existing whole-day behavior.
+  const { date: today, hour } = subscriptionClock(now, 23);
   const next = clone(state);
   const added = [];
   const existing = new Set(next.transactions.map(tx => tx.occurrenceKey).filter(Boolean));
@@ -320,7 +355,7 @@ export function applyRecurring(state, today = localDate()) {
   for (const sub of next.subscriptions) {
     if (!sub.active) continue;
     const processed = new Set(sub.processedOccurrences);
-    for (const due of dueDates(sub, today)) {
+    for (const due of dueDates(sub, today, hour)) {
       const key = occurrenceKey(sub, due);
       if (processed.has(key)) continue;
       if (!existing.has(key)) {
@@ -350,9 +385,9 @@ export function applyRecurring(state, today = localDate()) {
 }
 
 /** Preserve paid history while intentionally skipping billing periods spent paused. */
-export function setSubscriptionActive(state, subscriptionId, active, today = localDate()) {
+export function setSubscriptionActive(state, subscriptionId, active, now = new Date()) {
   validateState(state);
-  date(today, '当前日期');
+  const { date: today, hour } = subscriptionClock(now);
   boolean(active, '订阅启用状态');
   const next = clone(state);
   const sub = next.subscriptions.find(item => item.id === subscriptionId);
@@ -360,8 +395,8 @@ export function setSubscriptionActive(state, subscriptionId, active, today = loc
   if (sub.active === active) return next;
   if (active) {
     const processed = new Set(sub.processedOccurrences);
-    for (const due of dueDates(sub, today)) {
-      if (due < today) processed.add(occurrenceKey(sub, due));
+    for (const due of dueDates(sub, today, hour)) {
+      if (due < today || subscriptionDueHour(sub, due) < hour) processed.add(occurrenceKey(sub, due));
     }
     sub.processedOccurrences = [...processed].sort();
   }
@@ -376,8 +411,8 @@ export function replaceRecord(records, id, record) {
   records[index] = record;
 }
 
-export function nextSubscriptionDue(sub, today = localDate()) {
-  date(today, '当前日期');
+export function nextSubscriptionDue(sub, now = new Date()) {
+  const { date: today, hour } = subscriptionClock(now);
   if (!sub.active) return null;
   const processed = new Set(sub.processedOccurrences);
   if (!sub.recurring) return processed.has(occurrenceKey(sub, sub.startDate)) ? null : sub.startDate;
@@ -387,18 +422,18 @@ export function nextSubscriptionDue(sub, today = localDate()) {
   const lastSupportedMonth = (2199 - sy) * 12 + 12 - sm;
   for (let i = start; i <= lastSupportedMonth; i++) {
     const due = addMonthsDue(sub.startDate, i, sub.billingDay);
-    if (due >= today && !processed.has(occurrenceKey(sub, due))) return due;
+    if ((due > today || due === today && subscriptionDueHour(sub, due) >= hour) && !processed.has(occurrenceKey(sub, due))) return due;
   }
   return null;
 }
 
 /** Membership expiry is a reminder only; it does not stop or reschedule ledger bookings. */
-export function subscriptionExpiryStatus(sub, referenceDate = localDate()) {
-  date(referenceDate, '当前日期');
+export function subscriptionExpiryStatus(sub, now = new Date()) {
+  const { date: referenceDate } = subscriptionClock(now);
   let target = sub.expiresOn || null;
   let source = target ? 'expiry' : 'none';
   if (!target && sub.recurring && sub.active) {
-    target = nextSubscriptionDue(sub, referenceDate);
+    target = nextSubscriptionDue(sub, now);
     if (target) source = 'renewal';
   }
   if (!target) return {

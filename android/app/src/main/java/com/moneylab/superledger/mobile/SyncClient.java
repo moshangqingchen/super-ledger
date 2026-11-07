@@ -27,6 +27,7 @@ public final class SyncClient {
         public byte[] key;
         public long expiresAt;
         public int protocolVersion;
+        public int supportedSchemaVersion = 2;
     }
     private static final int B64 = Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING;
     public static Pairing parsePairing(String text) throws Exception {
@@ -36,6 +37,7 @@ public final class SyncClient {
         if (!value.optString("app").equals("superledger") || value.optInt("v") != 1) throw new Exception("二维码不属于超级账本，或版本不兼容");
         Pairing result = new Pairing();
         result.protocolVersion = value.optInt("protocolVersion", 1);
+        result.supportedSchemaVersion = value.optInt("supportedSchemaVersion", 2);
         if (result.protocolVersion != 2) throw new Exception("完整手机账本需要电脑 1.7.0 或更新版本，请先更新电脑端，再生成新二维码");
         result.sessionId = value.optString("sessionId"); if (!result.sessionId.matches("[a-fA-F0-9]{32}")) throw new Exception("同步会话标识无效");
         String key = value.optString("key"); if (!key.matches("[A-Za-z0-9_-]{43}")) throw new Exception("配对密钥无效");
@@ -72,6 +74,8 @@ public final class SyncClient {
     }
     public static JSONObject synchronize(Pairing pairing, JSONObject request) throws Exception {
         if (pairing.expiresAt <= System.currentTimeMillis()) throw new Exception("二维码已过期，请在电脑端重新生成并扫码");
+        if (request.optInt("schemaVersion", 1) >= 3 && pairing.supportedSchemaVersion < 3)
+            throw new Exception("按小时扣账需要电脑 1.8.10 或更新版本，请升级电脑端后重新生成同步二维码");
         byte[] body = encrypt(request, pairing).toString().getBytes(StandardCharsets.UTF_8);
         String lastFailure = "未找到电脑";
         for (String address : pairing.addresses) {

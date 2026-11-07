@@ -46,7 +46,7 @@ async function startFixture(t, options = {}) {
     await tick();
   };
   fixture.start = async () => {
-    fixture.server = await createLedgerServer({ port, dataDirectory: directory, authToken: options.authToken });
+    fixture.server = await createLedgerServer({ port, dataDirectory: directory, authToken: options.authToken, now: options.now });
     await new Promise((resolve, reject) => {
       fixture.server.once('error', reject);
       fixture.server.listen(port, '127.0.0.1', resolve);
@@ -257,6 +257,40 @@ test('import records due subscriptions once and later reads do not duplicate the
   await fixture.close();
   await fixture.start();
   assert.deepEqual(await readState(fixture), saved);
+});
+
+test('save, import and restart wait for the scheduled Beijing hour and preserve the hourly schema', async t => {
+  for (const endpoint of ['/api/state', '/api/import']) {
+    let current = new Date('2026-11-06T01:59:59.999Z');
+    const fixture = await startFixture(t, { now: () => current });
+    const before = await readState(fixture);
+    const state = makeEmptyState();
+    state.schemaVersion = 3;
+    state.accounts = [{ id: 'cash', name: '现金', type: '现金', openingBalance: 100000, color: '#123456' }];
+    state.subscriptions = [{ id: 'hourly', name: '按小时订阅', amount: 1900, accountId: 'cash', category: '会员订阅', startDate: '2026-11-06', startHour: 10, billingDay: 6, billingHour: 20, recurring: true, active: true, color: '#123456', icon: 'music', processedOccurrences: [] }];
+    const response = await send(fixture, endpoint, { state, expectedRevision: before.revision }, endpoint === '/api/state' ? 'PUT' : 'POST');
+    assert.equal(response.status, 200);
+    const saved = await response.json();
+    assert.equal(saved.schemaVersion, 3);
+    assert.deepEqual(saved.transactions, [], '09:59 Beijing must not book a 10:00 charge');
+    await fixture.close();
+    await fixture.start();
+    assert.deepEqual(await readState(fixture), saved, 'Restart must retain the unprocessed future hour');
+
+    current = new Date('2026-11-06T02:00:00Z');
+    const booked = await readState(fixture);
+    assert.equal(booked.transactions.length, 1);
+    assert.equal(booked.transactions[0].date, '2026-11-06');
+    assert.deepEqual(await readState(fixture), booked, 'Repeated reconciliation must charge only once');
+
+    current = new Date('2026-12-06T11:59:59Z');
+    assert.equal((await readState(fixture)).transactions.length, 1, 'Following months must wait for billingHour');
+    current = new Date('2026-12-06T12:00:00Z');
+    const nextMonth = await readState(fixture);
+    assert.equal(nextMonth.transactions.length, 2);
+    assert.equal(nextMonth.transactions[1].date, '2026-12-06');
+    assert.equal(nextMonth.schemaVersion, 3);
+  }
 });
 
 async function blockedRecurringFixture(t) {

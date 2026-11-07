@@ -6,11 +6,11 @@
 
 ## 安装与打开
 
-Windows 1.8.9 可从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/tag/v1.8.9) 下载 `SuperLedger-Setup-1.8.9.exe`，也可运行本地构建的 `release/超级账本-安装-1.8.9.exe`。安装程序会为当前用户创建桌面与开始菜单入口。同一发布页提供 Android 1.3.5 的 `SuperLedger-Mobile-1.3.5.apk`，Windows 安装包也内附该版本。
+Windows 1.8.10 和 Android 1.3.6 可从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/tag/v1.8.10) 下载 `SuperLedger-Setup-1.8.10.exe` 和 `SuperLedger-Mobile-1.3.6.apk`，也可运行本地构建的 `release/超级账本-安装-1.8.10.exe`。Windows 安装包也内附该 APK。安装程序会为当前用户创建桌面与开始菜单入口。
 
 也可直接打开 `release/win-unpacked/超级账本.exe`；免安装版必须保留整个 win-unpacked 文件夹。根目录的 `启动账本.cmd` 仅是兼容启动入口，日常使用桌面或开始菜单图标即可。
 
-安卓版 `SuperLedger-Mobile-1.3.4.apk` 可从 GitHub Releases 下载，也内附在 Windows 1.8.6 安装包中。1.3.4 支持直接新增 Apple 余额、选择国家地区（含土耳其 TRY）、填写关联账号，以及订阅关联账号、到期颜色和扣款账户余额。使用这些手机功能前请先覆盖升级。手机「设置 → 应用更新」默认自动尝试两条免费备用线路与 GitHub 原始来源，也可手动选线；清单与安装包都保留签名校验。旧版尚未内置备用来源，可用新版本的备用 APK 链接在手机浏览器覆盖安装一次，无需卸载或每次从电脑传包。详见 [免费更新线路与验证范围](docs/mobile-1.3.2-validation.md)。Windows 1.8.0 内附的 1.2.0 手机包仍可使用。新版手机需电脑 1.7.0 及以上。可先在手机独立建账，再在同一 Wi-Fi/手机热点下扫码合并；外出离线记录，回来扫码同步。详见 [手机记账与扫码同步](docs/mobile-sync-guide.md)。
+Android 1.3.6 支持按北京时间设置首次和每月扣账小时，小时订阅同步需要 Windows 1.8.10 及以上。Apple 余额、国家地区（含土耳其 TRY）、关联账号、到期颜色和扣款账户余额继续可用。手机「设置 → 应用更新」默认自动尝试两条免费备用线路与 GitHub 原始来源，也可手动选线；清单与安装包都保留签名校验。可先在手机独立建账，再在同一 Wi-Fi/手机热点下扫码合并；外出离线记录，回来扫码同步。详见 [手机记账与扫码同步](docs/mobile-sync-guide.md)。
 
 电脑 1.6.0 / 安卓 1.1.0 起支持可选择的覆盖更新。Windows 1.8.3 每次启动加载完成后自动检查一次；从托盘或桌面快捷方式重新打开也检查一次，普通窗口焦点切换不触发请求。运行期间每 6 小时复查，设置里也可手动检查。Android 1.3.4 每次冷启动或从后台重新打开也检查一次；普通页面切换、旋转和权限页返回不重复请求，下载安装期间不打断流程。新版本需你确认才下载，校验发布签名与安装包 SHA-256 后再确认安装，保留原账本。之前不带更新功能的版本，需要先手动安装一次新版。关闭的应用不会自行运行或弹出更新。
 
@@ -19,6 +19,8 @@ Windows 1.8.9 可从 [GitHub Releases](https://github.com/moshangqingchen/super-
 首次打开默认是空账本：账户、收支、订阅、储蓄心愿均为空，预算未设置，所有金额为零。点击「添加账户」后填写自己的余额开始使用。会员服务与 Logo 是可选目录，不会自动创建订阅记录。
 
 ## 功能
+
+- Windows 1.8.10 / Android 1.3.6 的订阅支持首次扣账小时和每月扣账小时，统一使用北京时间 UTC+8。旧订阅按 00:00 处理，到期补记继续按月去重。小时账本使用 schemaVersion 3，两端请一起升级。详见 [1.8.10 更新说明](docs/releases/1.8.10.md)。
 
 - Windows 1.8.9 升级了账户卡片和订阅卡片的外观：柔和四边光、各服务的配色和可爱小元素；同一银行多张卡合并后显示为一叠，可一键全部展开。订阅页新增「详细／简约」切换，并记住你的选择。详见 [1.8.9 更新说明](docs/releases/1.8.9.md)。
 

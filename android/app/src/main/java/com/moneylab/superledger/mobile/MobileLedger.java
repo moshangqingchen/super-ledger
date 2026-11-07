@@ -5,6 +5,9 @@ import org.json.JSONObject;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.LocalDate;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.time.YearMonth;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -19,6 +22,7 @@ public final class MobileLedger {
     private static final BigInteger LIMIT = BigInteger.valueOf(MAX_MONEY), RATE_SCALE = BigInteger.valueOf(100_000_000L);
     private static final String[] CODES = {"CNY","USD","USDT","JPY","EUR","HKD","GBP","KRW","SGD","AUD","CAD","CHF","TRY"};
     public static String[] currencyCodes() { return CODES.clone(); }
+    public static ZonedDateTime beijingDateTime(long millis) { return Instant.ofEpochMilli(millis).atZone(ZoneOffset.ofHours(8)); }
     public static int decimals(String code) throws Exception {
         for (String item : CODES) if (item.equals(code)) return code.equals("USDT") ? 6 : code.equals("JPY") || code.equals("KRW") ? 0 : 2;
         throw new Exception("请选择支持的账户币种");
@@ -88,7 +92,7 @@ public final class MobileLedger {
         JSONObject state=copy(source),empty=emptyState(); Iterator<String> keys=empty.keys();while(keys.hasNext()){String key=keys.next();if(!state.has(key))state.put(key,empty.get(key));} return state;
     }
     public static void validateState(JSONObject state) throws Exception {
-        long schema=integer(state,"schemaVersion",1,2);integer(state,"revision",0,9_007_199_254_740_991L);bool(state,"demo");JSONObject settings=state.getJSONObject("settings");integer(settings,"monthlyBudget",0,MAX_MONEY);if(!"CNY".equals(settings.optString("currency")))throw new Exception("汇总币种必须为 CNY");
+        long schema=integer(state,"schemaVersion",1,3);integer(state,"revision",0,9_007_199_254_740_991L);bool(state,"demo");JSONObject settings=state.getJSONObject("settings");integer(settings,"monthlyBudget",0,MAX_MONEY);if(!"CNY".equals(settings.optString("currency")))throw new Exception("汇总币种必须为 CNY");
         JSONArray accounts=array(state,"accounts",100),transactions=array(state,"transactions",100000),subs=array(state,"subscriptions",1000),goals=array(state,"goals",1000);
         Set<String> accountIds=unique(accounts,80),subIds=unique(subs,80);unique(transactions,128);unique(goals,80);
         for(int i=0;i<accounts.length();i++) { JSONObject a=accounts.getJSONObject(i);text(a,"name",60,false);text(a,"type",40,false);color(a);integer(a,"openingBalance",-MAX_MONEY,MAX_MONEY);String c=currency(a);currencyRate(a);
@@ -102,7 +106,7 @@ public final class MobileLedger {
         Set<String> occurrences=new HashSet<>();BigInteger income=BigInteger.ZERO,expense=BigInteger.ZERO;
         for(int i=0;i<transactions.length();i++){JSONObject tx=transactions.getJSONObject(i);String type=tx.optString("type");if(!type.matches("income|expense|transfer"))throw new Exception("交易类型无效");integer(tx,"amount",1,MAX_MONEY);
             if(!accountIds.contains(tx.optString("accountId")))throw new Exception("交易账户不存在");String code=currency(find(accounts,tx.getString("accountId")));if(!code.equals(currency(tx)))throw new Exception("交易币种与账户不一致");long cny=transactionCnyAmount(tx);
-            if(schema==2&&!type.equals("transfer")){if(type.equals("income"))income=income.add(BigInteger.valueOf(cny));else expense=expense.add(BigInteger.valueOf(cny));if(income.compareTo(LIMIT)>0||expense.compareTo(LIMIT)>0)throw new Exception("累计人民币收支超过支持范围");}
+            if(schema>=2&&!type.equals("transfer")){if(type.equals("income"))income=income.add(BigInteger.valueOf(cny));else expense=expense.add(BigInteger.valueOf(cny));if(income.compareTo(LIMIT)>0||expense.compareTo(LIMIT)>0)throw new Exception("累计人民币收支超过支持范围");}
             if(type.equals("transfer")){String target=tx.optString("toAccountId");if(!accountIds.contains(target)||target.equals(tx.getString("accountId")))throw new Exception("转入账户无效或与转出相同");String to=currency(find(accounts,target)),recorded=tx.has("toCurrency")?tx.getString("toCurrency"):"CNY";decimals(recorded);if(!to.equals(recorded))throw new Exception("转入币种不一致");if(!code.equals(to)&&!tx.has("toAmount"))throw new Exception("跨币种转账必须填写实际到账金额");if(tx.has("toAmount")){long amount=integer(tx,"toAmount",1,MAX_MONEY);if(code.equals(to)&&amount!=tx.getLong("amount"))throw new Exception("同币种转出和到账金额必须相同");}}
             else if(tx.has("toAmount")||tx.has("toCurrency")||!tx.optString("toAccountId","").isEmpty())throw new Exception("非转账不应包含转入账户或金额");
             text(tx,"category",50,false);text(tx,"title",120,false);date(tx.getString("date"));text(tx,"note",2000,true);
@@ -112,6 +116,8 @@ public final class MobileLedger {
         BigInteger recurringTotal=BigInteger.ZERO;
         for(int i=0;i<subs.length();i++){JSONObject sub=subs.getJSONObject(i);text(sub,"name",80,false);if(sub.has("serviceId"))id(sub,"serviceId",80);if(sub.has("tier"))text(sub,"tier",80,true);integer(sub,"amount",1,MAX_MONEY);JSONObject account=find(accounts,sub.optString("accountId"));if(account==null||!currency(account).equals(currency(sub)))throw new Exception("订阅账户或币种无效");long cny=toCnyCents(sub.getLong("amount"),currency(sub),currencyRate(account));
             if(!"会员订阅".equals(sub.optString("category")))throw new Exception("订阅分类必须为会员订阅");date(sub.getString("startDate"));integer(sub,"billingDay",1,31);bool(sub,"active");bool(sub,"recurring");color(sub);text(sub,"icon",80,false);
+            for(String field:new String[]{"startHour","billingHour"})if(sub.has(field))integer(sub,field,0,23);
+            if(schema<3&&(sub.has("startHour")||sub.has("billingHour")))throw new Exception("按小时扣账需要 schemaVersion 3，请升级电脑和手机应用");
             SubscriptionDetails.validateSubscription(sub);
             if(sub.getBoolean("active")&&sub.getBoolean("recurring")){recurringTotal=recurringTotal.add(BigInteger.valueOf(cny));if(recurringTotal.multiply(BigInteger.valueOf(12)).compareTo(LIMIT)>0)throw new Exception("订阅年度折算超过支持范围");}
             JSONArray processed=array(sub,"processedOccurrences",3600);Set<String> unique=new HashSet<>();String prefix=sub.getString("id")+":";for(int j=0;j<processed.length();j++){String key=processed.getString(j);if(!key.startsWith(prefix)||!isValidDate(key.substring(prefix.length())+"-01")||!unique.add(key))throw new Exception("已处理订阅账期无效或重复");}
@@ -132,11 +138,31 @@ public final class MobileLedger {
     public static String addMonthsDue(String start,int index,int billingDay) throws Exception {date(start);if(index<0||index>3599||billingDay<1||billingDay>31)throw new Exception("订阅扣款月份无效");if(index==0)return start;YearMonth month=YearMonth.from(LocalDate.parse(start)).plusMonths(index);if(month.getYear()>2199)throw new Exception("订阅日期超过支持范围");return month.atDay(Math.min(billingDay,month.lengthOfMonth())).toString();}
     private static JSONArray dueDates(JSONObject sub,String today) throws Exception {date(today);JSONArray dates=new JSONArray();String start=sub.getString("startDate");if(start.compareTo(today)>0)return dates;if(!sub.getBoolean("recurring"))return dates.put(start);YearMonth first=YearMonth.from(LocalDate.parse(start)),last=YearMonth.from(LocalDate.parse(today));int count=(last.getYear()-first.getYear())*12+last.getMonthValue()-first.getMonthValue();for(int i=0;i<=count;i++){String due=addMonthsDue(start,i,sub.getInt("billingDay"));if(due.compareTo(today)<=0)dates.put(due);}return dates;}
     private static Set<String> strings(JSONArray values) throws Exception {Set<String> result=new java.util.TreeSet<>();for(int i=0;i<values.length();i++)result.add(values.getString(i));return result;}
-    public static JSONObject setSubscriptionActive(JSONObject sub,boolean active,String today) throws Exception {JSONObject result=copy(sub);if(active&&!sub.getBoolean("active")){Set<String> processed=strings(sub.getJSONArray("processedOccurrences"));JSONArray dates=dueDates(sub,today);for(int i=0;i<dates.length();i++){String due=dates.getString(i);if(due.compareTo(today)<0)processed.add(sub.getString("id")+":"+due.substring(0,7));}result.put("processedOccurrences",new JSONArray(processed));}return result.put("active",active);}
+    public static int subscriptionDueHour(JSONObject sub,String due) throws Exception {
+        String field=due.substring(0,7).equals(sub.getString("startDate").substring(0,7))?"startHour":"billingHour";
+        return sub.has(field)?(int)integer(sub,field,0,23):0;
+    }
+    public static JSONObject setSubscriptionActive(JSONObject sub,boolean active,String today) throws Exception { return setSubscriptionActive(sub,active,today,0); }
+    public static JSONObject setSubscriptionActive(JSONObject sub,boolean active,String today,int currentHour) throws Exception {
+        if(currentHour<0||currentHour>23)throw new Exception("当前小时必须为 0 至 23");
+        JSONObject result=copy(sub);
+        if(active&&!sub.getBoolean("active")){
+            Set<String> processed=strings(sub.getJSONArray("processedOccurrences"));
+            JSONArray dates=dueDates(sub,today);
+            for(int i=0;i<dates.length();i++){
+                String due=dates.getString(i);
+                if(due.compareTo(today)<0||due.equals(today)&&subscriptionDueHour(sub,due)<currentHour)
+                    processed.add(sub.getString("id")+":"+due.substring(0,7));
+            }
+            result.put("processedOccurrences",new JSONArray(processed));
+        }
+        return result.put("active",active);
+    }
     public static String nextSubscriptionDue(JSONObject sub,String today) throws Exception {date(today);if(!sub.getBoolean("active"))return null;Set<String> processed=strings(sub.getJSONArray("processedOccurrences"));String start=sub.getString("startDate"),id=sub.getString("id");if(!sub.getBoolean("recurring"))return processed.contains(id+":"+start.substring(0,7))?null:start;YearMonth first=YearMonth.from(LocalDate.parse(start)),current=YearMonth.from(LocalDate.parse(today));int offset=Math.max(0,(current.getYear()-first.getYear())*12+current.getMonthValue()-first.getMonthValue()),last=(2199-first.getYear())*12+12-first.getMonthValue();for(int i=offset;i<=last;i++){String due=addMonthsDue(start,i,sub.getInt("billingDay"));if(due.compareTo(today)>=0&&!processed.contains(id+":"+due.substring(0,7)))return due;}return null;}
     /** Exactly once per subscription/month. This records expenses; it never makes a payment. */
-    public static JSONObject applyRecurring(JSONObject state,String today) throws Exception {validateState(state);date(today);JSONObject next=copy(state);JSONArray added=new JSONArray(),txs=next.getJSONArray("transactions"),subs=next.getJSONArray("subscriptions");Set<String> occurrences=new HashSet<>(),ids=new HashSet<>();for(int i=0;i<txs.length();i++){JSONObject tx=txs.getJSONObject(i);ids.add(tx.getString("id"));if(tx.has("occurrenceKey"))occurrences.add(tx.getString("occurrenceKey"));}
-        for(int i=0;i<subs.length();i++){JSONObject sub=subs.getJSONObject(i);if(!sub.getBoolean("active"))continue;Set<String> processed=strings(sub.getJSONArray("processedOccurrences"));JSONArray dates=dueDates(sub,today);for(int j=0;j<dates.length();j++){String due=dates.getString(j),key=sub.getString("id")+":"+due.substring(0,7);if(processed.contains(key))continue;if(!occurrences.contains(key)){String id="rec_"+sub.getString("id")+"_"+due.substring(0,7).replace("-","");if(!ids.add(id))throw new Exception("自动记账 ID 冲突");String tier=sub.optString("tier"),title=sub.getString("name")+(tier.isEmpty()?"":" · "+tier);JSONObject account=find(next.getJSONArray("accounts"),sub.getString("accountId"));JSONObject tx=new JSONObject().put("id",id).put("type","expense").put("amount",sub.getLong("amount")).put("accountId",sub.getString("accountId")).put("category","会员订阅").put("title",title.substring(0,Math.min(120,title.length()))).put("date",due).put("note","订阅到期自动记账"+(tier.isEmpty()?"":" · 会员档位："+tier)).put("subscriptionId",sub.getString("id")).put("occurrenceKey",key);if(!currency(account).equals("CNY"))tx.put("currency",currency(account)).put("cnyRate",currencyRate(account));txs.put(tx);added.put(copy(tx));occurrences.add(key);}processed.add(key);}sub.put("processedOccurrences",new JSONArray(processed));}
+    public static JSONObject applyRecurring(JSONObject state,String today) throws Exception { return applyRecurring(state,today,23); }
+    public static JSONObject applyRecurring(JSONObject state,String today,int currentHour) throws Exception {validateState(state);date(today);if(currentHour<0||currentHour>23)throw new Exception("当前小时必须为 0 至 23");JSONObject next=copy(state);JSONArray added=new JSONArray(),txs=next.getJSONArray("transactions"),subs=next.getJSONArray("subscriptions");Set<String> occurrences=new HashSet<>(),ids=new HashSet<>();for(int i=0;i<txs.length();i++){JSONObject tx=txs.getJSONObject(i);ids.add(tx.getString("id"));if(tx.has("occurrenceKey"))occurrences.add(tx.getString("occurrenceKey"));}
+        for(int i=0;i<subs.length();i++){JSONObject sub=subs.getJSONObject(i);if(!sub.getBoolean("active"))continue;Set<String> processed=strings(sub.getJSONArray("processedOccurrences"));JSONArray dates=dueDates(sub,today);for(int j=0;j<dates.length();j++){String due=dates.getString(j),key=sub.getString("id")+":"+due.substring(0,7);if(due.equals(today)&&subscriptionDueHour(sub,due)>currentHour||processed.contains(key))continue;if(!occurrences.contains(key)){String id="rec_"+sub.getString("id")+"_"+due.substring(0,7).replace("-","");if(!ids.add(id))throw new Exception("自动记账 ID 冲突");String tier=sub.optString("tier"),title=sub.getString("name")+(tier.isEmpty()?"":" · "+tier);JSONObject account=find(next.getJSONArray("accounts"),sub.getString("accountId"));JSONObject tx=new JSONObject().put("id",id).put("type","expense").put("amount",sub.getLong("amount")).put("accountId",sub.getString("accountId")).put("category","会员订阅").put("title",title.substring(0,Math.min(120,title.length()))).put("date",due).put("note","订阅到期自动记账"+(tier.isEmpty()?"":" · 会员档位："+tier)).put("subscriptionId",sub.getString("id")).put("occurrenceKey",key);if(!currency(account).equals("CNY"))tx.put("currency",currency(account)).put("cnyRate",currencyRate(account));txs.put(tx);added.put(copy(tx));occurrences.add(key);}processed.add(key);}sub.put("processedOccurrences",new JSONArray(processed));}
         validateState(next);return new JSONObject().put("state",next).put("added",added);
     }
 }

@@ -77,6 +77,7 @@ public final class LedgerStoreTest {
         JSONArray fullOps=store.syncRequest(UUID.randomUUID().toString()).getJSONArray("operations");int subscriptionIndex=-1,autoIndex=-1;for(int i=0;i<fullOps.length();i++){JSONObject entry=fullOps.getJSONObject(i);if(entry.optString("entity").equals("subscription"))subscriptionIndex=i;if(entry.optString("entity").equals("transaction")&&entry.getJSONObject("transaction").has("occurrenceKey"))autoIndex=i;}
         check(subscriptionIndex>=0&&autoIndex>subscriptionIndex,"subscription and processed history queued before dependent auto transaction");
         check(store.syncRequest(UUID.randomUUID().toString()).getInt("protocolVersion")==2,"generic entity queue declares protocol 2");
+        check(store.syncRequest(UUID.randomUUID().toString()).getInt("supportedSchemaVersion")==3,"sync declares hourly ledger support before transmitting offline operations");
         JSONObject firstAccount=fullOps.getJSONObject(0);check(firstAccount.isNull("base")&&firstAccount.getJSONObject("record").getString("name").equals("美元账户"),"repeated account edits retain earliest null base and queue position");
         store.deleteSubscription("music");JSONArray detached=store.snapshot().getJSONObject("state").getJSONArray("transactions");for(int i=0;i<detached.length();i++)check(!detached.getJSONObject(i).has("subscriptionId"),"subscription deletion keeps expenses without dangling link");
         for(int i=0;i<store.snapshot().getJSONArray("operations").length();i++){JSONObject entry=store.snapshot().getJSONArray("operations").getJSONObject(i);if(entry.optString("entity").equals("transaction")&&entry.optString("kind").equals("put"))check(!entry.getJSONObject("transaction").has("subscriptionId"),"pending transaction put detached with deleted subscription");}
@@ -137,6 +138,26 @@ public final class LedgerStoreTest {
         store.applyResponse(response(duplicateRequest,state(new JSONArray().put(existing)),new JSONArray(),new JSONArray().put(new JSONObject().put("operationId",duplicateOp).put("current",JSONObject.NULL).put("candidate",existing).put("reason","同一条通知内容变化").put("canKeepPhone",false).put("resolutionHint","请采用电脑记录后编辑已有账单"))),duplicateRequest);
         before=store.snapshot().toString();try{store.resolveConflict(duplicateOp,true);throw new AssertionError("immutable duplicate incorrectly resubmitted");}catch(AssertionError e){throw e;}catch(Exception expected){check(expected.getMessage().contains("编辑已有账单"),"immutable duplicate gives actionable guidance");}check(before.equals(store.snapshot().toString()),"blocked duplicate resolution does not alter queued work or another record");
         store.resolveConflict(duplicateOp,false);check(store.snapshot().getJSONObject("state").getJSONArray("transactions").length()==1&&store.snapshot().getJSONObject("state").getJSONArray("transactions").getJSONObject(0).getString("id").equals("existing"),"adopting candidate leaves existing transaction unchanged");
+        store=fresh(new File(workspace,"hourly-subscription"));store.saveAccount(MobileLedgerTest.account("bank","CNY",10000,null));
+        String futureDay=java.time.LocalDate.parse(LedgerStore.today()).plusDays(1).toString();
+        store.saveSubscription(MobileLedgerTest.subscription("hourly","bank",100,futureDay,true).put("startHour",18).put("billingHour",9));
+        JSONObject hourlyBackup=store.snapshot(),hourlyState=hourlyBackup.getJSONObject("state");
+        check(hourlyState.getInt("schemaVersion")==3&&hourlyState.getJSONArray("transactions").length()==0,"normal save upgrades hourly scheduling and waits for a future charge");
+        JSONObject hourlyRequest=store.syncRequest(UUID.randomUUID().toString());JSONObject hourlyRecord=null;
+        check(hourlyRequest.getInt("schemaVersion")==3&&hourlyRequest.getInt("supportedSchemaVersion")==3,"hourly upload advertises both required schema and client capability");
+        for(int i=0;i<hourlyRequest.getJSONArray("operations").length();i++){JSONObject entry=hourlyRequest.getJSONArray("operations").getJSONObject(i);if(entry.optString("entity").equals("subscription"))hourlyRecord=entry.getJSONObject("record");}
+        check(hourlyRecord!=null&&hourlyRecord.getInt("startHour")==18&&hourlyRecord.getInt("billingHour")==9,"outbound synchronization retains separate first and monthly hours");
+        store.saveAccount(MobileLedgerTest.account("usd","USD",10000,"7.2"));
+        check(store.snapshot().getJSONObject("state").getInt("schemaVersion")==3,"foreign account edits preserve an hourly ledger's schema");
+        store.restoreBackup(hourlyBackup);
+        check(store.snapshot().getJSONObject("state").getJSONArray("subscriptions").getJSONObject(0).getInt("startHour")==18,"mobile backup restore preserves hourly scheduling");
+        JSONObject pairingQr=new JSONObject().put("app","superledger").put("v",1).put("protocolVersion",2).put("sessionId","1".repeat(32)).put("key","A".repeat(43)).put("expiresAt",System.currentTimeMillis()+60_000).put("addresses",new JSONArray().put("http://192.168.1.20:8787"));
+        SyncClient.Pairing oldDesktop=SyncClient.parsePairing(pairingQr.toString());
+        check(oldDesktop.supportedSchemaVersion==2,"older desktop pairing defaults to the previous schema capability");
+        oldDesktop.key=null;
+        try{SyncClient.synchronize(oldDesktop,hourlyRequest);throw new AssertionError("hourly request reached an older desktop");}catch(AssertionError error){throw error;}catch(Exception expected){check(expected.getMessage().contains("1.8.10"),"hourly upload to an old desktop is rejected before encryption or network access");}
+        pairingQr.put("supportedSchemaVersion",3);
+        check(SyncClient.parsePairing(pairingQr.toString()).supportedSchemaVersion==3,"new desktop pairing advertises hourly support");
         System.out.println("LedgerStore: " + checks + " checks passed (host adapters, not Android runtime)");
     }
 }

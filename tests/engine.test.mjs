@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   makeInitialState, makeEmptyState, validateState, applyRecurring, getBalances,
   moneyToCents, addMonthsDue, setSubscriptionActive, nextSubscriptionDue, replaceRecord,
+  beijingDateTime, subscriptionDueHour, subscriptionExpiryStatus, upgradeSchemaVersion,
 } from '../engine.mjs';
 
 function fixture(startDate = '2024-01-31', billingDay = 31) {
@@ -58,6 +59,133 @@ test('future first date remains future and subsequent month obeys billing day', 
   assert.equal(may.added.length, 1);
   assert.equal(may.added[0].date, '2024-05-20');
   assert.equal(nextSubscriptionDue(may.state.subscriptions[0], '2024-06-19'), '2024-06-20');
+});
+
+test('Beijing subscription clocks use UTC+8 across day and year boundaries', () => {
+  assert.deepEqual(beijingDateTime(new Date('2026-11-06T16:00:00Z')), { date: '2026-11-07', hour: 0 });
+  assert.deepEqual(beijingDateTime(new Date('2026-12-31T15:59:59Z')), { date: '2026-12-31', hour: 23 });
+  assert.deepEqual(beijingDateTime(new Date('2026-12-31T16:00:00Z')), { date: '2027-01-01', hour: 0 });
+  assert.throws(() => beijingDateTime(new Date('invalid')), /当前时间/);
+});
+
+test('first and monthly charges wait for their configured Beijing hour and remain idempotent', () => {
+  const state = fixture('2024-01-31', 31);
+  Object.assign(state.subscriptions[0], { startHour: 9, billingHour: 18 });
+  upgradeSchemaVersion(state);
+  assert.equal(applyRecurring(state, new Date('2024-01-31T00:59:59Z')).added.length, 0);
+  const january = applyRecurring(state, new Date('2024-01-31T01:00:00Z'));
+  assert.deepEqual(january.added.map(tx => tx.date), ['2024-01-31']);
+  assert.equal(applyRecurring(january.state, new Date('2024-01-31T01:59:59Z')).added.length, 0);
+  assert.equal(applyRecurring(january.state, new Date('2024-02-29T09:59:59Z')).added.length, 0);
+  const february = applyRecurring(january.state, new Date('2024-02-29T10:00:00Z'));
+  assert.deepEqual(february.added.map(tx => tx.date), ['2024-02-29']);
+  assert.equal(applyRecurring(february.state, new Date('2024-02-29T10:30:00Z')).added.length, 0);
+  assert.equal(state.transactions.length, 0);
+  assert.equal(subscriptionDueHour(state.subscriptions[0], '2024-01-31'), 9);
+  assert.equal(subscriptionDueHour(state.subscriptions[0], '2024-02-29'), 18);
+});
+
+test('hourly catch-up books earlier periods while waiting for the current hour', () => {
+  const state = fixture('2024-01-31', 31);
+  Object.assign(state.subscriptions[0], { startHour: 23, billingHour: 20 });
+  upgradeSchemaVersion(state);
+  const result = applyRecurring(state, new Date('2024-03-31T11:59:59Z'));
+  assert.deepEqual(result.added.map(tx => tx.date), ['2024-01-31', '2024-02-29']);
+  assert.deepEqual(applyRecurring(result.state, new Date('2024-03-31T12:00:00Z')).added.map(tx => tx.date), ['2024-03-31']);
+  assert.deepEqual(applyRecurring(state, '2024-03-31').added.map(tx => tx.date), ['2024-01-31', '2024-02-29', '2024-03-31']);
+});
+
+test('legacy subscriptions book at Beijing midnight and one-time subscriptions respect their hour', () => {
+  const legacy = fixture('2026-11-07', 7);
+  assert.equal(subscriptionDueHour(legacy.subscriptions[0], '2026-11-07'), 0);
+  assert.equal(subscriptionDueHour(legacy.subscriptions[0], '2026-12-07'), 0);
+  assert.equal(applyRecurring(legacy, new Date('2026-11-06T15:59:59Z')).added.length, 0);
+  assert.equal(applyRecurring(legacy, new Date('2026-11-06T16:00:00Z')).added.length, 1);
+  const once = fixture('2026-11-07', 7);
+  Object.assign(once.subscriptions[0], { recurring: false, startHour: 14, billingHour: 3 });
+  upgradeSchemaVersion(once);
+  assert.equal(applyRecurring(once, new Date('2026-11-07T05:59:59Z')).added.length, 0);
+  const booked = applyRecurring(once, new Date('2026-11-07T06:00:00Z'));
+  assert.equal(booked.added.length, 1);
+  assert.equal(applyRecurring(booked.state, new Date('2027-01-01T00:00:00Z')).added.length, 0);
+});
+
+test('hourly next-charge dates and renewal reminders share the Beijing clock', () => {
+  const sub = fixture('2026-11-07', 7).subscriptions[0];
+  Object.assign(sub, { startHour: 9, billingHour: 18 });
+  assert.equal(nextSubscriptionDue(sub, new Date('2026-11-07T00:59:59Z')), '2026-11-07');
+  assert.equal(nextSubscriptionDue(sub, new Date('2026-11-07T01:30:00Z')), '2026-11-07');
+  assert.equal(nextSubscriptionDue(sub, new Date('2026-11-07T02:00:00Z')), '2026-12-07');
+  assert.equal(nextSubscriptionDue(sub, '2026-11-07'), '2026-11-07');
+  const status = subscriptionExpiryStatus(sub, new Date('2026-11-06T16:01:00Z'));
+  assert.equal(status.date, '2026-11-07');
+  assert.equal(status.days, 0);
+  assert.equal(subscriptionExpiryStatus({ ...sub, expiresOn: '2026-11-07' }, new Date('2026-11-07T16:00:00Z')).days, -1);
+});
+
+test('resuming subscriptions skips earlier Beijing hours and preserves a pending same-hour charge', () => {
+  const state = fixture('2026-11-07', 7);
+  Object.assign(state.subscriptions[0], { startHour: 9, billingHour: 18, active: false });
+  upgradeSchemaVersion(state);
+  const early = setSubscriptionActive(state, 'music', true, new Date('2026-11-07T00:00:00Z'));
+  assert.equal(applyRecurring(early, new Date('2026-11-07T00:59:59Z')).added.length, 0);
+  assert.equal(applyRecurring(early, new Date('2026-11-07T01:00:00Z')).added.length, 1);
+  const sameHour = setSubscriptionActive(state, 'music', true, new Date('2026-11-07T01:30:00Z'));
+  assert.equal(applyRecurring(sameHour, new Date('2026-11-07T01:30:00Z')).added.length, 1);
+  const late = setSubscriptionActive(state, 'music', true, new Date('2026-11-07T02:00:00Z'));
+  assert.equal(applyRecurring(late, new Date('2026-11-07T02:00:00Z')).added.length, 0);
+  assert.deepEqual(late.subscriptions[0].processedOccurrences, ['music:2026-11']);
+});
+
+test('subscription hours are optional integers from zero to twenty-three and survive backups', () => {
+  const state = fixture();
+  assert.equal(validateState(state), true);
+  state.schemaVersion = 3;
+  for (const field of ['startHour', 'billingHour']) {
+    for (const invalid of [-1, 24, 1.5, '9', null]) {
+      state.subscriptions[0][field] = invalid;
+      assert.throws(() => validateState(state), /扣账小时/);
+    }
+    state.subscriptions[0][field] = 0;
+    assert.equal(validateState(state), true);
+    state.subscriptions[0][field] = 23;
+    assert.equal(validateState(state), true);
+  }
+  const restored = JSON.parse(JSON.stringify(state));
+  assert.equal(validateState(restored), true);
+  assert.equal(restored.subscriptions[0].startHour, 23);
+  assert.equal(restored.subscriptions[0].billingHour, 23);
+});
+
+test('hour schedules require schema three and promotion never downgrades existing schemas', () => {
+  const legacy = fixture();
+  assert.equal(upgradeSchemaVersion(legacy), legacy);
+  assert.equal(legacy.schemaVersion, 1);
+  for (const field of ['startHour', 'billingHour']) {
+    const state = fixture();
+    state.subscriptions[0][field] = 0;
+    assert.throws(() => validateState(state), /按小时扣账需要使用版本 3/);
+    state.schemaVersion = 2;
+    assert.throws(() => validateState(state), /按小时扣账需要使用版本 3/);
+    upgradeSchemaVersion(state);
+    assert.equal(state.schemaVersion, 3);
+    assert.equal(validateState(state), true);
+    delete state.subscriptions[0][field];
+    upgradeSchemaVersion(state);
+    assert.equal(state.schemaVersion, 3);
+  }
+  const foreign = fixture();
+  Object.assign(foreign.accounts[0], { currency: 'USD', cnyRate: '7.2' });
+  foreign.subscriptions[0].currency = 'USD';
+  upgradeSchemaVersion(foreign);
+  assert.equal(foreign.schemaVersion, 2);
+  foreign.subscriptions[0].startHour = 9;
+  upgradeSchemaVersion(foreign);
+  assert.equal(foreign.schemaVersion, 3);
+  assert.equal(validateState(foreign), true);
+  foreign.schemaVersion = 4;
+  upgradeSchemaVersion(foreign);
+  assert.throws(() => validateState(foreign), /不支持此账本版本/);
 });
 
 test('next due preserves a future first date across years and follows month-end billing after it', () => {

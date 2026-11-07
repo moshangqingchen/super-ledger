@@ -1,7 +1,7 @@
 import http from 'node:http';
 import os from 'node:os';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
-import { validateState } from './engine.mjs';
+import { validateState, upgradeSchemaVersion, beijingDateTime, subscriptionDueHour, addMonthsDue, isValidDate } from './engine.mjs';
 
 export const SESSION_MS = 10 * 60 * 1000;
 const MAX_WIRE_BYTES = 4 * 1024 * 1024;
@@ -116,19 +116,31 @@ function sameScheduledCharge(left, right) {
     && left.amount === right.amount && left.date === right.date && (left.currency || 'CNY') === (right.currency || 'CNY');
 }
 
-export function mergeMobileOperations(state, payload) {
+function subscriptionOccurrencePending(sub, monthKey, clock) {
+  const [year, month] = monthKey.split('-').map(Number);
+  const [startYear, startMonth] = sub.startDate.split('-').map(Number);
+  const offset = (year - startYear) * 12 + month - startMonth;
+  const due = sub.recurring && offset >= 0 ? addMonthsDue(sub.startDate, offset, sub.billingDay) : sub.startDate;
+  return due > clock.date || due === clock.date && subscriptionDueHour(sub, due) > clock.hour;
+}
+
+export function mergeMobileOperations(state, payload, now = new Date()) {
   const metadata = checkedMetadata(state);
   if (!object(payload) || typeof payload.deviceId !== 'string' || !ID.test(payload.deviceId)
       || typeof payload.requestId !== 'string' || !ID.test(payload.requestId)
       || !Array.isArray(payload.operations) || payload.operations.length > MAX_OPERATIONS) throw fail(400, '手机同步请求格式不正确，单次最多同步 500 项。');
   const fullLedger = payload.protocolVersion === MOBILE_PROTOCOL_VERSION;
   if (payload.protocolVersion !== undefined && ![1, MOBILE_PROTOCOL_VERSION].includes(payload.protocolVersion)) throw fail(400, '手机同步版本不兼容，请更新两端应用。');
+  if (state.schemaVersion >= 3 && (!Number.isSafeInteger(payload.supportedSchemaVersion) || payload.supportedSchemaVersion < 3)) {
+    throw fail(409, '此账本包含北京时间按小时扣账，请先升级手机到 1.3.6 或更新版本再同步。');
+  }
   if (payload.bookId !== metadata.bookId && !(payload.bookId === null && (payload.operations.length === 0 || fullLedger))) {
     throw fail(409, '此手机绑定的是另一份账本，或电脑账本已恢复/重置。请在手机上处理未同步记录，再重新配对。');
   }
   let next = structuredClone(state);
   const accepted = [], conflicts = [], summary = { added: 0, updated: 0, deleted: 0, duplicates: 0 };
   const batchIds = new Set();
+  const clock = beijingDateTime(now);
   for (const operation of payload.operations) {
     const operationId = operation?.id;
     if (!object(operation) || typeof operationId !== 'string' || !ID.test(operationId) || batchIds.has(operationId)) throw fail(400, '同步操作标识缺失或重复。');
@@ -181,8 +193,16 @@ export function mergeMobileOperations(state, payload) {
         else if (current) candidate[collection][candidate[collection].findIndex(item => item.id === recordId)] = record;
         else candidate[collection].push(record);
       }
-      candidate.schemaVersion = 2;
-      try { validateState(candidate); } catch (error) { reject(error.message); continue; }
+      candidate.schemaVersion = Math.max(candidate.schemaVersion, 2);
+      try { upgradeSchemaVersion(candidate); validateState(candidate); } catch (error) { reject(error.message); continue; }
+      if (entity === 'subscription' && operation.kind === 'put' && candidate.schemaVersion >= 3) {
+        const sub = candidate.subscriptions.find(item => item.id === recordId);
+        const processed = new Set(current?.processedOccurrences || []);
+        const pending = sub.processedOccurrences.some(key => !processed.has(key)
+          && !candidate.transactions.some(tx => tx.occurrenceKey === key)
+          && subscriptionOccurrencePending(sub, key.slice(sub.id.length + 1), clock));
+        if (pending) { reject('订阅的已记账账期尚未到北京时间扣账时间，请核对两端时间后重试。'); continue; }
+      }
       candidate._mobileSync.receipts[receiptKey] = digest; next = candidate; accepted.push(operationId);
       summary[operation.kind === 'delete' ? 'deleted' : current ? 'updated' : 'added']++;
       continue;
@@ -227,6 +247,16 @@ export function mergeMobileOperations(state, payload) {
       if (!fullLedger && current?.subscriptionId && (tx.subscriptionId !== current.subscriptionId || tx.occurrenceKey !== current.occurrenceKey)) { reject('旧版手机不能修改订阅账单关联，请升级。'); continue; }
       if (!fullLedger && !current && (tx.subscriptionId || tx.occurrenceKey)) { reject('订阅计划请在电脑端创建。'); continue; }
       if (fullLedger && !current && tx.subscriptionId && (!tx.occurrenceKey || tx.id !== `rec_${tx.subscriptionId}_${tx.date?.slice(0, 7).replace('-', '')}`)) { reject('订阅自动账单的标识或账期无效。'); continue; }
+      if (fullLedger && !current && tx.subscriptionId && next.schemaVersion >= 3 && isValidDate(tx.date)) {
+        const sub = next.subscriptions.find(item => item.id === tx.subscriptionId);
+        if (sub) {
+          if (subscriptionOccurrencePending(sub, tx.date.slice(0, 7), clock)) {
+            reject('电脑上的订阅计划尚未到扣账时间，请先核对两端的扣账日期和小时。', undefined, {
+              canKeepPhone: false, resolutionHint: '请先处理订阅计划的冲突。确认实际已付款时，可采用电脑记录后手动添加支出。',
+            }); continue;
+          }
+        }
+      }
       const duplicate = !current && duplicateOf(next, tx);
       if (duplicate?.exact) {
         next._mobileSync.receipts[receiptKey] = digest; accepted.push(operationId); summary.duplicates++; continue;
@@ -239,8 +269,8 @@ export function mergeMobileOperations(state, payload) {
       if (current) candidate.transactions[candidate.transactions.findIndex(item => item.id === transactionId)] = tx;
       else candidate.transactions.push(tx);
     }
-    if (fullLedger) candidate.schemaVersion = 2;
-    try { validateState(candidate); }
+    if (fullLedger) candidate.schemaVersion = Math.max(candidate.schemaVersion, 2);
+    try { upgradeSchemaVersion(candidate); validateState(candidate); }
     catch (error) { reject(error.message); continue; }
     candidate._mobileSync.receipts[receiptKey] = digest;
     next = candidate;
@@ -306,7 +336,7 @@ export function createMobileSync({ ensureBook, synchronize, interfaces = network
     if (current && now() >= current.expiresAt) stop();
     const choices = interfaces();
     return { active: Boolean(current), expiresAt: current?.expiresAt || null, addresses: current ? [current.address] : [], networkChoices: choices,
-      qrPayload: current ? JSON.stringify({ app: 'superledger', v: 1, protocolVersion: MOBILE_PROTOCOL_VERSION, addresses: [current.address], sessionId: current.id, key: current.key.toString('base64url'), expiresAt: current.expiresAt }) : null,
+      qrPayload: current ? JSON.stringify({ app: 'superledger', v: 1, protocolVersion: MOBILE_PROTOCOL_VERSION, supportedSchemaVersion: 3, addresses: [current.address], sessionId: current.id, key: current.key.toString('base64url'), expiresAt: current.expiresAt }) : null,
       lastResult };
   };
   async function start(address) {

@@ -232,6 +232,8 @@ test('foreign ledgers require a newer schema so older CNY-only apps fail closed'
   cnyOnly.schemaVersion = 2;
   assert.equal(validateState(cnyOnly), true, 'removing the last foreign account need not downgrade the ledger');
   cnyOnly.schemaVersion = 3;
+  assert.equal(validateState(cnyOnly), true, 'hourly schedules use schema 3 and retain currency support');
+  cnyOnly.schemaVersion = 4;
   assert.throws(() => validateState(cnyOnly), /版本/);
 });
 

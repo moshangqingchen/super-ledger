@@ -11,9 +11,8 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.text.SimpleDateFormat;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -90,8 +89,8 @@ public final class LedgerStore {
             else data.getJSONObject("mappings").put(pkg, accountId);
         });
     }
-    public static String today() { return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date()); }
-    public static String date(long millis) { return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date(millis)); }
+    public static String today() { return date(System.currentTimeMillis()); }
+    public static String date(long millis) { return MobileLedger.beijingDateTime(millis).toLocalDate().toString(); }
     public static String hash(String value) throws Exception {
         byte[] bytes = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)); StringBuilder result = new StringBuilder();
         for (byte b : bytes) result.append(String.format(Locale.US, "%02x", b)); return result.toString();
@@ -147,7 +146,13 @@ public final class LedgerStore {
         String[] clearable=entity.equals("account")?new String[]{"providerId","bankId","lastFour","rateAsOf","rateSource","appleRegion","appleAccount"}:entity.equals("subscription")?new String[]{"serviceId"}:entity.equals("goal")?new String[]{"cover"}:new String[0];
         for(String key:clearable)if(input.has(key)&&input.isNull(key))merged.remove(key);return merged;
     }
-    private void promoteSchema() throws Exception {JSONArray accounts=state().getJSONArray("accounts");for(int i=0;i<accounts.length();i++)if(!MobileLedger.currency(accounts.getJSONObject(i)).equals("CNY")){state().put("schemaVersion",2);return;}}
+    private void promoteSchema() throws Exception {
+        int schema=state().getInt("schemaVersion");
+        JSONArray accounts=state().getJSONArray("accounts"),subscriptions=state().getJSONArray("subscriptions");
+        for(int i=0;i<accounts.length();i++)if(!MobileLedger.currency(accounts.getJSONObject(i)).equals("CNY"))schema=Math.max(schema,2);
+        for(int i=0;i<subscriptions.length();i++)if(subscriptions.getJSONObject(i).has("startHour")||subscriptions.getJSONObject(i).has("billingHour"))schema=3;
+        state().put("schemaVersion",schema);
+    }
     public synchronized void saveAccount(JSONObject input) throws Exception {
         requireIdle();change(()->{JSONObject value=mergedRecord("account",input,"acc_"),old=getRecord(state(),"account",value.getString("id"));defaultValue(value,"type","其他账户");defaultValue(value,"color","#8bc8ab");defaultValue(value,"openingBalance",0);defaultValue(value,"currency","CNY");
             if(old!=null&&!MobileLedger.currency(old).equals(MobileLedger.currency(value))){String id=old.getString("id");JSONArray txs=state().getJSONArray("transactions"),subs=state().getJSONArray("subscriptions");for(int i=0;i<txs.length();i++){JSONObject tx=txs.getJSONObject(i);if(id.equals(tx.optString("accountId"))||id.equals(tx.optString("toAccountId")))throw new Exception("账户已有交易，不能更改币种");}for(int i=0;i<subs.length();i++)if(id.equals(subs.getJSONObject(i).optString("accountId")))throw new Exception("账户已有关联订阅，不能更改币种");}
@@ -176,8 +181,9 @@ public final class LedgerStore {
         requireIdle();change(()->{JSONObject value=mergedRecord("subscription",input,"sub_"),old=getRecord(state(),"subscription",value.getString("id"));JSONObject account=getRecord(state(),"account",value.optString("accountId"));if(account==null)throw new Exception("请选择订阅扣款账户");value.put("currency",MobileLedger.currency(account)).put("category","会员订阅");defaultValue(value,"active",true);defaultValue(value,"recurring",true);defaultValue(value,"color","#8bc8ab");defaultValue(value,"icon","repeat");defaultValue(value,"tier","");defaultValue(value,"billingDay",Integer.parseInt(value.getString("startDate").substring(8)));
             // Billing history is not user-editable; retaining it prevents deleted charges being recreated.
             value.put("processedOccurrences",old==null?new JSONArray():copyArray(old.getJSONArray("processedOccurrences")));
-            if(old!=null&&!old.getBoolean("active")&&value.getBoolean("active")){value.put("active",false);value=MobileLedger.setSubscriptionActive(value,true,today());}
-            queueRecord("subscription",value.getString("id"),value);MobileLedger.validateState(state());applyRecurringInternal(today());});
+            ZonedDateTime now=MobileLedger.beijingDateTime(System.currentTimeMillis());
+            if(old!=null&&!old.getBoolean("active")&&value.getBoolean("active")){value.put("active",false);value=MobileLedger.setSubscriptionActive(value,true,now.toLocalDate().toString(),now.getHour());}
+            queueRecord("subscription",value.getString("id"),value);promoteSchema();MobileLedger.validateState(state());applyRecurringInternal(now.toLocalDate().toString(),now.getHour());});
     }
     public synchronized void deleteSubscription(String id) throws Exception {
         requireIdle();change(()->{if(getRecord(state(),"subscription",id)==null)return;queueRecord("subscription",id,null);
@@ -185,14 +191,15 @@ public final class LedgerStore {
             JSONArray ops=data.getJSONArray("operations");for(int i=0;i<ops.length();i++){JSONObject op=ops.getJSONObject(i),tx=record(op);if(entity(op).equals("transaction")&&op.optString("kind").equals("put")&&tx!=null&&id.equals(tx.optString("subscriptionId"))){JSONObject detached=copy(tx);detached.remove("subscriptionId");detached.remove("occurrenceKey");op.put("transaction",detached).put("record",copy(detached));}}
             MobileLedger.validateState(state());});
     }
-    private void applyRecurringInternal(String date) throws Exception {
-        JSONObject result=MobileLedger.applyRecurring(state(),date),next=result.getJSONObject("state");JSONArray subs=next.getJSONArray("subscriptions");
+    private void applyRecurringInternal(String date,int currentHour) throws Exception {
+        JSONObject result=MobileLedger.applyRecurring(state(),date,currentHour),next=result.getJSONObject("state");JSONArray subs=next.getJSONArray("subscriptions");
         for(int i=0;i<subs.length();i++){JSONObject sub=subs.getJSONObject(i);if(!same(getRecord(state(),"subscription",sub.getString("id")),sub))queueRecord("subscription",sub.getString("id"),sub);}
         JSONArray added=result.getJSONArray("added");for(int i=0;i<added.length();i++)queuePut(added.getJSONObject(i));MobileLedger.validateState(state());
     }
-    private void persistRecurring(String date) throws Exception {if(data.getJSONArray("conflicts").length()>0)return;JSONObject previous=copy(data);try{applyRecurringInternal(date);if(!same(previous,data))persist();}catch(Exception error){data=previous;throw error;}}
-    public synchronized void applyRecurring(String date) throws Exception {requireIdle();persistRecurring(date);}
-    public synchronized void applyRecurring() throws Exception {applyRecurring(today());}
+    private void persistRecurring(String date,int currentHour) throws Exception {if(data.getJSONArray("conflicts").length()>0)return;JSONObject previous=copy(data);try{applyRecurringInternal(date,currentHour);if(!same(previous,data))persist();}catch(Exception error){data=previous;throw error;}}
+    private void persistRecurring() throws Exception {ZonedDateTime now=MobileLedger.beijingDateTime(System.currentTimeMillis());persistRecurring(now.toLocalDate().toString(),now.getHour());}
+    public synchronized void applyRecurring(String date) throws Exception {requireIdle();persistRecurring(date,23);}
+    public synchronized void applyRecurring() throws Exception {requireIdle();persistRecurring();}
     /** Import the complete mobile backup only after UI confirmation; archive the current complete store first. */
     public synchronized void restoreBackup(JSONObject backup) throws Exception {
         requireIdle();JSONObject replacement=copy(backup);replacement.remove("captureError");
@@ -263,11 +270,11 @@ public final class LedgerStore {
         } return false;
     }
     public synchronized JSONObject syncRequest(String requestId) throws Exception {
-        persistRecurring(today());
+        persistRecurring();
         Set<String> unresolved = new HashSet<>(); JSONArray conflicts = data.getJSONArray("conflicts");
         for (int i = 0; i < conflicts.length(); i++) unresolved.add(conflicts.getJSONObject(i).optString("operationId"));
         JSONArray selected = new JSONArray(), operations = data.getJSONArray("operations");
-        JSONObject request = new JSONObject().put("protocolVersion",2).put("requestId", requestId).put("deviceId", data.getString("deviceId")).put("deviceName", Build.MANUFACTURER + " " + Build.MODEL)
+        JSONObject request = new JSONObject().put("protocolVersion",2).put("supportedSchemaVersion",3).put("schemaVersion",state().getInt("schemaVersion")).put("requestId", requestId).put("deviceId", data.getString("deviceId")).put("deviceName", Build.MANUFACTURER + " " + Build.MODEL)
             .put("bookId", data.opt("bookId")).put("operations", selected);
         int bytes = request.toString().getBytes(StandardCharsets.UTF_8).length;
         for (int i = 0; i < operations.length() && selected.length() < 500; i++) {

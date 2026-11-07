@@ -115,7 +115,7 @@ test('session expiry removes its endpoint and cancelling an in-flight start cann
   assert.equal(sync.status().active, false);
 });
 
-async function fixture(t) {
+async function fixture(t, options = {}) {
   const address = networkChoices().find(i => !i.virtual)?.address;
   if (!address) { t.skip('No local RFC1918 interface available'); return; }
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'superledger-sync-test-'));
@@ -130,7 +130,7 @@ async function fixture(t) {
   });
   const result = { address, directory, close };
   result.start = async () => {
-    server = await createLedgerServer({ port: 0, dataDirectory: directory, authToken: 'test-token', mobileSyncOptions: { interfaces: () => [{ address, label: 'test' }] } });
+    server = await createLedgerServer({ port: 0, dataDirectory: directory, authToken: 'test-token', now: options.now, mobileSyncOptions: { interfaces: () => [{ address, label: 'test' }] } });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     result.base = `http://127.0.0.1:${server.address().port}`;
   };
@@ -152,6 +152,36 @@ async function fixture(t) {
   await result.start();
   return result;
 }
+
+test('encrypted hourly sync advertises support, blocks older phones and waits for the Beijing hour', async t => {
+  let current = new Date('2026-11-06T01:59:59Z');
+  const f = await fixture(t, { now: () => current });
+  if (!f) return;
+  let state = (await f.api('/api/state')).body;
+  state.schemaVersion = 3;
+  state.accounts = ledger().accounts;
+  state.subscriptions = [{ id: 'hourly', name: '小时订阅', amount: 1200, accountId: 'wallet', category: '会员订阅', startDate: '2026-11-06', startHour: 10, billingDay: 6, billingHour: 18, recurring: true, active: true, color: '#123456', icon: 'music', processedOccurrences: [] }];
+  assert.equal((await f.api('/api/state', { state, expectedRevision: state.revision }, 'PUT')).status, 200);
+  await f.pair();
+  assert.equal(f.qr.supportedSchemaVersion, 3);
+  state = (await f.api('/api/state')).body;
+  const oldPhone = await f.sync(request(state, [], { protocolVersion: 2 }));
+  assert.equal(oldPhone.status, 409);
+  assert.match(oldPhone.body.error, /升级手机/);
+
+  const mobileRequest = request(state, [], { protocolVersion: 2, supportedSchemaVersion: 3 });
+  const pending = await f.sync(mobileRequest);
+  assert.equal(pending.status, 200);
+  assert.equal(pending.body.state.schemaVersion, 3);
+  assert.deepEqual(pending.body.state.transactions, []);
+  current = new Date('2026-11-06T02:00:00Z');
+  const due = await f.sync({ ...mobileRequest, requestId: randomUUID() });
+  assert.equal(due.status, 200);
+  assert.equal(due.body.state.transactions.length, 1);
+  assert.equal(due.body.state.transactions[0].date, '2026-11-06');
+  const repeated = await f.sync({ ...mobileRequest, requestId: randomUUID() });
+  assert.equal(repeated.body.state.transactions.length, 1);
+});
 
 test('real local transport encrypts ledger, restricts routes, persists receipts across restart and protects imports', async t => {
   const f = await fixture(t); if (!f) return;

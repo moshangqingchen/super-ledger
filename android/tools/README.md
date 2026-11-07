@@ -16,7 +16,7 @@ Only `setup.ps1` downloads dependencies, explicitly through
 `http://127.0.0.1:10090`. A failed proxy stops the download; there is no direct
 fallback. `build.ps1` uses installed files and makes no network requests.
 
-The output is `android/release/SuperLedger-Mobile-1.3.5.apk`, with a SHA-256
+The output is `android/release/SuperLedger-Mobile-1.3.6.apk`, with a SHA-256
 checksum file. The script compiles resources with AAPT2, Java with the installed
 JDK, DEX with D8, aligns the APK, signs it with APK Signature Schemes v2/v3, and
 verifies both the signature and alignment. No native `.so` files are included.
@@ -34,7 +34,7 @@ source archives or share it with the APK.
 For later releases increment both the Android version name and version code:
 
 ```powershell
-& .\android\build.ps1 -VersionName 1.3.5 -VersionCode 10305
+& .\android\build.ps1 -VersionName 1.3.6 -VersionCode 10306
 ```
 
 ## Dependency records and licenses

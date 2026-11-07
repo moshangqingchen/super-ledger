@@ -17,6 +17,7 @@ $Sources = @(
   (Join-Path $Source 'AppleBalance.java'),
   (Join-Path $Source 'SubscriptionDetails.java'),
   (Join-Path $Source 'LedgerStore.java'),
+  (Join-Path $Source 'SyncClient.java'),
   (Join-Path $Source 'UpdatePolicy.java'),
   (Join-Path $Source 'UpdatePresentation.java'),
   (Join-Path $Source 'UpdateTransport.java'),

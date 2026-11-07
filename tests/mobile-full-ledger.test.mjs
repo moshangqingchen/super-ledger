@@ -10,7 +10,7 @@ function state() {
   ] };
 }
 function payload(book, operations, more = {}) {
-  return { protocolVersion: 2, deviceId: 'phone-full', requestId: randomUUID(), bookId: book._mobileSync.bookId, operations, ...more };
+  return { protocolVersion: 2, supportedSchemaVersion: 3, deviceId: 'phone-full', requestId: randomUUID(), bookId: book._mobileSync.bookId, operations, ...more };
 }
 function put(entity, record, base = null) { return { id: randomUUID(), entity, kind: 'put', recordId: entity === 'settings' ? 'settings' : record.id, record, base }; }
 function remove(entity, record) { return { id: randomUUID(), entity, kind: 'delete', recordId: record.id, base: record }; }
@@ -22,6 +22,125 @@ function subscription(more = {}) {
   return { id: 'member', name: '会员', amount: 1000, accountId: 'cash', category: '会员订阅', startDate: '2026-11-05', billingDay: 5,
     recurring: true, active: true, color: '#445566', icon: 'star', processedOccurrences: [], ...more };
 }
+
+test('hourly subscription sync promotes and retains schema 3 across entity and transaction edits', () => {
+  const desktop = state();
+  const sub = subscription({ startHour: 10, billingHour: 20 });
+  let result = mergeMobileOperations(desktop, payload(desktop, [put('subscription', sub)]));
+  assert.equal(result.conflicts.length, 0);
+  assert.equal(result.next.schemaVersion, 3);
+  assert.deepEqual(result.next.subscriptions[0], sub);
+  assert.equal(applyRecurring(result.next, new Date('2026-11-05T01:59:59Z')).added.length, 0);
+
+  const account = result.next.accounts[0];
+  result = mergeMobileOperations(result.next, payload(result.next, [put('account', { ...account, name: '手机现金' }, account), tx(payment())]));
+  assert.equal(result.conflicts.length, 0);
+  assert.equal(result.next.schemaVersion, 3, 'Unrelated sync operations must not downgrade the hourly ledger');
+  assert.equal(validateState(result.next), true);
+
+  const changed = { ...sub, startHour: 11 };
+  result = mergeMobileOperations(result.next, payload(result.next, [put('subscription', changed, sub)]));
+  assert.equal(result.conflicts.length, 0);
+  assert.equal(result.next.subscriptions[0].startHour, 11);
+  const conflict = mergeMobileOperations(result.next, payload(result.next, [put('subscription', { ...sub, startHour: 12 }, sub)]));
+  assert.equal(conflict.conflicts.length, 1, 'Concurrent hour edits must participate in conflict detection');
+  assert.equal(conflict.next.subscriptions[0].startHour, 11);
+  const invalid = mergeMobileOperations(result.next, payload(result.next, [
+    put('account', { ...result.next.accounts[0], currency: 'INVALID' }, result.next.accounts[0]),
+    put('subscription', { ...changed, billingHour: 24 }, changed),
+    put('goal', { id: 'valid-goal', name: '旅行', target: 10000, saved: 0, color: '#123456' }),
+  ]));
+  assert.equal(invalid.conflicts.length, 2, 'Invalid currency and hour remain individual conflicts');
+  assert.equal(invalid.accepted.length, 1, 'A valid independent operation must still succeed');
+  assert.equal(invalid.next.schemaVersion, 3);
+});
+
+test('older phones cannot upload prematurely generated charges into an hourly ledger', () => {
+  const desktop = state();
+  desktop.schemaVersion = 3;
+  const sub = subscription({ startHour: 18, billingHour: 18 });
+  desktop.subscriptions.push(sub);
+  const oldSub = structuredClone(sub);
+  delete oldSub.startHour;
+  delete oldSub.billingHour;
+  const oldPhone = state();
+  oldPhone.subscriptions.push(oldSub);
+  const early = applyRecurring(oldPhone, '2026-11-05').state;
+  const operations = [put('subscription', early.subscriptions[0], oldSub), tx(early.transactions[0])];
+  const before = structuredClone(desktop);
+  for (const batch of [operations, []]) {
+    const legacyPayload = payload(desktop, batch);
+    delete legacyPayload.supportedSchemaVersion;
+    assert.throws(() => mergeMobileOperations(desktop, legacyPayload), error => error.status === 409 && /升级手机/.test(error.message));
+    assert.deepEqual(desktop, before, 'Reject the entire old-client batch before applying edits or receipts');
+  }
+  const legacyBook = state();
+  assert.doesNotThrow(() => mergeMobileOperations(legacyBook, payload(legacyBook, [], { supportedSchemaVersion: undefined })));
+});
+
+test('a stale phone schedule cannot charge before the desktop scheduled hour', () => {
+  const phone = state();
+  phone.schemaVersion = 3;
+  const original = subscription({ startHour: 10, billingHour: 10 });
+  phone.subscriptions.push(original);
+  const charged = applyRecurring(phone, new Date('2026-11-05T02:00:00Z')).state;
+  const desktop = structuredClone(phone);
+  desktop.subscriptions[0].startHour = 18;
+  const operations = [put('subscription', charged.subscriptions[0], original), tx(charged.transactions[0])];
+  const result = mergeMobileOperations(desktop, payload(desktop, operations), new Date('2026-11-05T02:00:00Z'));
+  assert.equal(result.accepted.length, 0);
+  assert.equal(result.conflicts.length, 2);
+  assert.match(result.conflicts[1].reason, /尚未到扣账时间/);
+  assert.equal(result.conflicts[1].canKeepPhone, false);
+  assert.equal(result.next.transactions.length, 0);
+  assert.deepEqual(result.next.subscriptions[0].processedOccurrences, []);
+  const due = applyRecurring(result.next, new Date('2026-11-05T10:00:00Z'));
+  assert.equal(due.added.length, 1, 'The accepted desktop schedule remains eligible at its actual due hour');
+});
+
+test('a phone one second ahead cannot suppress the desktop charge with an early processed marker', () => {
+  const desktop = state();
+  desktop.schemaVersion = 3;
+  const sub = subscription({ startHour: 18, billingHour: 18 });
+  desktop.subscriptions.push(sub);
+  const phone = applyRecurring(desktop, new Date('2026-11-05T10:00:00Z')).state;
+  const operations = [put('subscription', phone.subscriptions[0], sub), tx(phone.transactions[0])];
+  const request = payload(desktop, operations);
+  const result = mergeMobileOperations(desktop, request, new Date('2026-11-05T09:59:59Z'));
+  assert.deepEqual(result.accepted, []);
+  assert.equal(result.conflicts.length, 2);
+  assert.match(result.conflicts[0].reason, /尚未到北京时间扣账时间/);
+  assert.equal(result.next.transactions.length, 0);
+  assert.deepEqual(result.next.subscriptions[0].processedOccurrences, []);
+  assert.deepEqual(result.next._mobileSync.receipts, desktop._mobileSync.receipts);
+  assert.equal(applyRecurring(result.next, new Date('2026-11-05T10:00:00Z')).added.length, 1);
+
+  const retry = mergeMobileOperations(result.next, request, new Date('2026-11-05T10:00:00Z'));
+  assert.equal(retry.conflicts.length, 0);
+  assert.equal(retry.accepted.length, 2);
+  assert.equal(retry.next.transactions.length, 1);
+  assert.deepEqual(retry.next.subscriptions[0].processedOccurrences, ['member:2026-11']);
+  assert.equal(applyRecurring(retry.next, new Date('2026-11-05T10:00:00Z')).added.length, 0);
+});
+
+test('hourly sync retains already processed or recorded periods when a schedule moves later', () => {
+  for (const preserveMarker of [true, false]) {
+    const desktop = state();
+    desktop.schemaVersion = 3;
+    const sub = subscription({ startHour: 18, billingHour: 18 });
+    if (preserveMarker) sub.processedOccurrences = ['member:2026-11'];
+    desktop.subscriptions.push(sub);
+    if (!preserveMarker) {
+      const booked = applyRecurring(desktop, new Date('2026-11-05T10:00:00Z')).state;
+      desktop.transactions = booked.transactions;
+    }
+    const changed = { ...sub, name: '调整后的会员', processedOccurrences: ['member:2026-11'] };
+    const result = mergeMobileOperations(desktop, payload(desktop, [put('subscription', changed, sub)]), new Date('2026-11-05T09:59:59Z'));
+    assert.equal(result.conflicts.length, 0);
+    assert.equal(result.accepted.length, 1);
+    assert.deepEqual(result.next.subscriptions[0].processedOccurrences, ['member:2026-11']);
+  }
+});
 
 test('first full-ledger pairing merges offline accounts, foreign payments, transfers, budget and goals without replacing desktop data', () => {
   const desktop = state();

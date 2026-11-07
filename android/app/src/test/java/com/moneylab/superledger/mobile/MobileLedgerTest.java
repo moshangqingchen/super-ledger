@@ -66,6 +66,42 @@ public final class MobileLedgerTest {
         JSONObject applied=MobileLedger.applyRecurring(recurring,"2026-11-05");check(applied.getJSONArray("added").length()==4,"catch up monthly and single charge once");JSONObject next=applied.getJSONObject("state");check(MobileLedger.find(next.getJSONArray("transactions"),"rec_monthly_202609").getString("date").equals("2026-09-30"),"desktop-compatible deterministic recurring ID and date");check(MobileLedger.applyRecurring(next,"2026-11-05").getJSONArray("added").length()==0,"repeated recurrence idempotent");
         next.getJSONArray("transactions").remove(0);check(MobileLedger.applyRecurring(next,"2026-11-05").getJSONArray("added").length()==0,"deleted paid occurrence is not recreated");
         JSONObject paused=subscription("pause","bank",100,"2026-01-31",true).put("active",false);JSONObject resumed=MobileLedger.setSubscriptionActive(paused,true,"2026-03-31");check(resumed.getJSONArray("processedOccurrences").length()==2,"resume intentionally skips earlier paused months");check(MobileLedger.nextSubscriptionDue(resumed,"2026-03-31").equals("2026-03-31"),"resume today keeps today due");
+        JSONObject hourly=MobileLedger.emptyState().put("schemaVersion",3);hourly.getJSONArray("accounts").put(account("bank","CNY",10000,null));
+        JSONObject plan=subscription("hourly","bank",100,"2026-11-07",true).put("billingDay",7).put("startHour",18).put("billingHour",9);
+        hourly.getJSONArray("subscriptions").put(plan);
+        check(MobileLedger.applyRecurring(hourly,"2026-11-07",17).getJSONArray("added").length()==0,"first charge waits for its Beijing hour");
+        check(MobileLedger.applyRecurring(hourly,"2026-11-07",18).getJSONArray("added").length()==1,"first charge books at the configured hour");
+        JSONObject booked=MobileLedger.applyRecurring(hourly,"2026-11-07",18).getJSONObject("state");
+        check(MobileLedger.applyRecurring(booked,"2026-11-07",23).getJSONArray("added").length()==0,"hourly polling never duplicates a booked month");
+        check(MobileLedger.applyRecurring(booked,"2026-12-07",8).getJSONArray("added").length()==0,"later months use billingHour");
+        check(MobileLedger.applyRecurring(booked,"2026-12-07",9).getJSONArray("added").length()==1,"later months book at billingHour");
+        check(MobileLedger.applyRecurring(hourly,"2026-12-07",8).getJSONArray("added").length()==1,"catch-up books past months but waits for today's hour");
+        check(MobileLedger.applyRecurring(hourly,"2026-11-07").getJSONArray("added").length()==1,"date-only callers retain whole-day behavior");
+        JSONObject single=MobileLedger.copy(hourly);single.getJSONArray("subscriptions").getJSONObject(0).put("recurring",false);
+        check(MobileLedger.applyRecurring(single,"2026-11-07",17).getJSONArray("added").length()==0,"single charge also waits for startHour");
+        check(MobileLedger.applyRecurring(single,"2026-11-07",18).getJSONArray("added").length()==1,"single charge books at startHour");
+        JSONObject oldHours=MobileLedger.copy(hourly);oldHours.getJSONArray("subscriptions").getJSONObject(0).remove("startHour");oldHours.getJSONArray("subscriptions").getJSONObject(0).remove("billingHour");
+        check(MobileLedger.applyRecurring(oldHours,"2026-11-07",0).getJSONArray("added").length()==1,"legacy subscriptions retain midnight scheduling");
+        JSONObject downgraded=MobileLedger.copy(hourly).put("schemaVersion",2);
+        rejects(()->MobileLedger.validateState(downgraded),"hourly fields require a schema older apps reject");
+        downgraded.getJSONArray("subscriptions").getJSONObject(0).put("startHour",0).put("billingHour",0);
+        rejects(()->MobileLedger.validateState(downgraded),"explicit midnight fields also require schema 3");
+        JSONObject pausedHour=MobileLedger.copy(plan).put("active",false);
+        check(MobileLedger.setSubscriptionActive(pausedHour,true,"2026-11-07",18).getJSONArray("processedOccurrences").length()==0,"same-hour resume keeps today's charge eligible");
+        check(MobileLedger.setSubscriptionActive(pausedHour,true,"2026-11-07",19).getJSONArray("processedOccurrences").length()==1,"resume skips a paused charge from an earlier hour");
+        for(Object invalidHour:new Object[]{-1,24,1.5,"9",JSONObject.NULL}){
+            JSONObject invalidPlan=MobileLedger.copy(hourly);invalidPlan.getJSONArray("subscriptions").getJSONObject(0).put("startHour",invalidHour);
+            rejects(()->MobileLedger.validateState(invalidPlan),"invalid startHour is rejected");
+            invalidPlan.getJSONArray("subscriptions").getJSONObject(0).put("startHour",0).put("billingHour",invalidHour);
+            rejects(()->MobileLedger.validateState(invalidPlan),"invalid billingHour is rejected");
+        }
+        java.util.TimeZone originalZone=java.util.TimeZone.getDefault();
+        try{
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"));
+            long boundary=java.time.Instant.parse("2026-11-06T16:00:00Z").toEpochMilli();
+            check(MobileLedger.beijingDateTime(boundary).toLocalDate().toString().equals("2026-11-07")&&MobileLedger.beijingDateTime(boundary).getHour()==0,"Beijing day boundary ignores device timezone");
+            check(LedgerStore.date(boundary).equals("2026-11-07"),"mobile date storage consistently uses Beijing time");
+        }finally{java.util.TimeZone.setDefault(originalZone);}
         JSONObject corrupted=MobileLedger.copy(next);corrupted.getJSONObject("settings").put("monthlyBudget",1.5);rejects(()->MobileLedger.validateState(corrupted),"fractional minor units rejected");
         System.out.println("MobileLedger: "+checks+" financial checks passed");
     }
