@@ -156,3 +156,12 @@ test('the transparent expiry border overrides the legacy line on resting and hov
   assert.ok(stylesheets.indexOf('/subscription-polish.css') > stylesheets.indexOf('/fresh-ui.css'));
   assert.doesNotMatch(css, /border-top(?:-color)?\s*:[^;}]*var\(--expiry-dot/);
 });
+
+test('decorative themes preserve card and funding subgrid alignment', () => {
+  assert.match(css, /@supports\s*\(grid-template-rows:\s*subgrid\)/);
+  for (const selector of ['.subscription-grid > .subscription-card', '.subscription-card > .subscription-payment']) {
+    assert.ok(rules.some(rule => rule.selector === selector
+      && /^subgrid(?:\s|$)/.test(rule.declarations.get('grid-template-rows') || '')),
+    `${selector} retains its subgrid tracks`);
+  }
+});

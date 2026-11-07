@@ -192,6 +192,37 @@
 .subscription-grid > .add-card:hover { background: #f2effc; border-color: #baaedb; color: #75629f; }
 .subscription-grid > .add-card > svg { color: #9a8bbc; background: #eeebf8; box-shadow: 0 4px 10px #594a8b06; }
 
+/* Share section heights only between cards in the same visual row. The five
+   funding tracks also keep balances aligned when an account name wraps. */
+@supports (grid-template-rows: subgrid) {
+  @media (min-width: 601px) {
+    .subscription-grid > :is(.subscription-card, .add-card) { grid-row: span 14; }
+    .subscription-grid > .subscription-card {
+      display: grid;
+      align-self: stretch;
+      grid-template-rows: subgrid [logo] [name] [tier] [price] [expiry] [funding] [funding-name] [funding-amounts] [funding-result] [funding-note] [logins] [dates] [note] [toggle] [end];
+      row-gap: 0;
+    }
+    .subscription-card > .subscription-top { grid-row: logo; }
+    .subscription-card > h3 { grid-row: name; }
+    .subscription-card > .membership-tier-badge { grid-row: tier; justify-self: start; align-self: start; }
+    .subscription-card > .money { grid-row: price; }
+    .subscription-card > .expiry-banner { grid-row: expiry; }
+    .subscription-card > .subscription-payment {
+      grid-row: funding / logins;
+      display: grid;
+      grid-template-rows: subgrid;
+      row-gap: 0;
+      margin-bottom: 0;
+    }
+    .subscription-card > .subscription-payment .subscription-payment-account { align-items: flex-start; }
+    .subscription-card > .subscription-logins { grid-row: logins; }
+    .subscription-card > .subscription-dates { grid-row: dates; }
+    .subscription-card > .subscription-note { grid-row: note; }
+    .subscription-card > .toggle-row { grid-row: toggle; }
+  }
+}
+
 /* Compact view: the same brand surface, reduced to the key facts. */
 .subscription-view-switch { margin-left: auto; }
 .subscription-view-switch button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 7px 13px; }
