@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <linearGradient id="opal" x1="66" y1="68" x2="163" y2="181" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".27" stop-color="#8eb5fa"/><stop offset=".55" stop-color="#8a83e9"/><stop offset=".79" stop-color="#b58fe9"/><stop offset="1" stop-color="#f6a7c7"/>
+    </linearGradient>
+    <linearGradient id="small" x1="162" y1="29" x2="203" y2="82" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".36" stop-color="#b4c1fc"/><stop offset="1" stop-color="#eda3d1"/>
+    </linearGradient>
+    <radialGradient id="shine" cx=".45" cy=".25" r=".8"><stop stop-color="#fff" stop-opacity=".85"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-30%" y="-100%" width="160%" height="300%"><feGaussianBlur stdDeviation="6"/></filter>
+  </defs>
+  <ellipse cx="118" cy="205" rx="58" ry="8" fill="#8975da" opacity=".2" filter="url(#shadow)"/>
+  <!-- A plump four-point opal with rounded tips and a broad, quiet face. -->
+  <path d="M104 57C108 48 116 48 120 57c13 33 23 48 57 60 15 5 15 15 0 20-34 12-44 27-57 60-4 9-12 9-16 0-13-33-23-48-57-60-15-5-15-15 0-20 34-12 44-27 57-60Z" fill="url(#opal)" stroke="#f9f9ff" stroke-width="2"/>
+  <path d="M70 115c17-10 29-26 36-46 2-5 7-4 8 1 3 26-6 49-30 58-14 5-25-6-14-13Z" fill="url(#shine)"/>
+  <path d="M63 136c26 7 40 29 49 50 0-28-10-43-35-54Z" fill="#dfeaff" opacity=".24"/>
+  <path d="M109 69c-4 16-12 29-24 37" stroke="#fff" stroke-width="3.5" stroke-linecap="round" opacity=".82"/>
+  <circle cx="165" cy="126" r="2.5" fill="#fff" opacity=".78"/>
+  <g fill="#f49bb7" opacity=".36"><ellipse cx="80" cy="143" rx="9" ry="5"/><ellipse cx="144" cy="143" rx="9" ry="5"/></g>
+  <g fill="#343450"><circle cx="93" cy="133" r="6.5"/><circle cx="131" cy="133" r="6.5"/></g>
+  <g fill="#fff"><circle cx="91" cy="130.5" r="2"/><circle cx="129" cy="130.5" r="2"/></g>
+  <path d="M106 144q6 10 12 0" stroke="#343450" stroke-width="3" stroke-linecap="round"/>
+  <path d="M179 31q4-8 8 0c5 15 10 20 25 25q8 4 0 8c-15 5-20 10-25 25q-4 8-8 0c-5-15-10-20-25-25q-8-4 0-8c15-5 20-10 25-25Z" fill="url(#small)" stroke="#fff" stroke-width="2"/>
+  <path d="M180 42c-2 8-6 12-13 16" stroke="#fff" stroke-width="2.5" stroke-linecap="round" opacity=".9"/>
+</svg>

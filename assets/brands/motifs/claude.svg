@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <!-- The blocky Claude Code mascot. Coordinates are multiples of 13.125 x 26.25, so
+       each block lands on whole pixels at the card's 128px display size. -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="48.75" x2="0" y2="180" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e48c6c"/><stop offset=".55" stop-color="#d97757"/><stop offset="1" stop-color="#c9674a"/>
+    </linearGradient>
+    <filter id="ground" x="20" y="170" width="200" height="44" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+  </defs>
+  <ellipse cx="120" cy="192" rx="72" ry="7" fill="#d97757" opacity=".24" filter="url(#ground)"/>
+  <g shape-rendering="crispEdges">
+    <g fill="url(#body)">
+      <rect x="41.25" y="48.75" width="157.5" height="26.25"/>
+      <rect x="41.25" y="75" width="157.5" height="26.25"/>
+      <rect x="15" y="101.25" width="210" height="26.25"/>
+      <rect x="41.25" y="127.5" width="157.5" height="26.25"/>
+      <rect x="54.375" y="153.75" width="13.125" height="26.25"/>
+      <rect x="80.625" y="153.75" width="13.125" height="26.25"/>
+      <rect x="146.25" y="153.75" width="13.125" height="26.25"/>
+      <rect x="172.5" y="153.75" width="13.125" height="26.25"/>
+    </g>
+    <rect x="41.25" y="48.75" width="157.5" height="13.125" fill="#fff" fill-opacity=".14"/>
+    <rect x="67.5" y="75" width="13.125" height="26.25" fill="#2a1b16"/>
+    <rect x="159.375" y="75" width="13.125" height="26.25" fill="#2a1b16"/>
+  </g>
+</svg>

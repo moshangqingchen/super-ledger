@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <linearGradient id="cloud" x1="65" y1="112" x2="150" y2="200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".34" stop-color="#d4eaff"/><stop offset="1" stop-color="#5b9ded"/>
+    </linearGradient>
+    <linearGradient id="back" x1="69" y1="80" x2="177" y2="161" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f3f8ff"/><stop offset=".42" stop-color="#89b9fc"/><stop offset="1" stop-color="#2f7df4"/>
+    </linearGradient>
+    <linearGradient id="front" x1="87" y1="112" x2="160" y2="179" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff" stop-opacity=".95"/><stop offset=".34" stop-color="#afd2ff" stop-opacity=".92"/><stop offset="1" stop-color="#468eeb"/>
+    </linearGradient>
+    <linearGradient id="arrow" x1="114" y1="41" x2="151" y2="95" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".4" stop-color="#9bc9ff"/><stop offset="1" stop-color="#2f7df4"/>
+    </linearGradient>
+    <radialGradient id="shine" cx=".35" cy=".15" r=".85"><stop stop-color="#fff" stop-opacity=".85"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-50%" y="-150%" width="200%" height="400%"><feGaussianBlur stdDeviation="7"/></filter>
+  </defs>
+  <ellipse cx="121" cy="207" rx="69" ry="7" fill="#2f7df4" opacity=".2" filter="url(#shadow)"/>
+  <!-- The smaller folder and upload arrow perch above the cloud's face. -->
+  <g transform="translate(58 -8) scale(.7)">
+  <path d="M65 150v-62c0-7 5-12 12-12h25l13 13h53c7 0 12 5 12 12v49c0 9-6 15-15 15H80c-9 0-15-6-15-15Z" fill="url(#back)" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M72 110h105c7 0 10 5 8 12l-10 40c-1 6-6 10-13 10H84c-7 0-12-4-13-10l-7-40c-1-7 2-12 8-12Z" fill="url(#front)" stroke="#fff" stroke-width="2"/>
+  <path d="M77 117h92M77 88h20" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity=".85"/>
+  <path d="M120 84V64h-12l24-25 24 25h-12v20c0 4-3 7-7 7h-10c-4 0-7-3-7-7Z" fill="url(#arrow)" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m120 58 12-12 6 6" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M89 143h31" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".54"/>
+  </g>
+  <path d="M63 194c-20 0-33-13-33-30 0-17 12-30 29-31 4-21 20-34 41-34 22 0 39 15 42 34 7-7 16-11 26-11 22 0 40 17 40 37 0 20-16 35-39 35Z" fill="url(#cloud)" stroke="#fff" stroke-width="2"/>
+  <path d="M52 153c6-8 17-7 21-21 4-12 15-20 27-20 14 0 25 9 29 20-18 20-52 29-77 21Z" fill="url(#shine)"/>
+  <path d="M75 129c4-12 15-20 27-20" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".88"/>
+  <ellipse cx="47" cy="155" rx="7" ry="3.5" transform="rotate(-27 47 155)" fill="#fff" opacity=".8"/>
+  <path d="M66 185h99c16 0 28-9 32-21" stroke="#dceeff" stroke-width="3" stroke-linecap="round" opacity=".7"/>
+  <g fill="#f49bb7" opacity=".36"><ellipse cx="87" cy="168" rx="9" ry="5"/><ellipse cx="151" cy="168" rx="9" ry="5"/></g>
+  <g fill="#343450"><circle cx="100" cy="158" r="6.5"/><circle cx="138" cy="158" r="6.5"/></g>
+  <g fill="#fff"><circle cx="98" cy="155.5" r="2"/><circle cx="136" cy="155.5" r="2"/></g>
+  <path d="M113 169q6 10 12 0" stroke="#343450" stroke-width="3" stroke-linecap="round"/>
+</svg>

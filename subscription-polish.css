@@ -6,33 +6,108 @@
   align-items: start;
 }
 .subscription-grid > .subscription-card {
-  --subscription-accent: #8271c2;
+  --subscription-accent: #7d6fc0;
+  --sub-glow: #8b7cf6;
+  --sub-tint: #ecebfb;
+  --sub-motif: url(/assets/brands/motifs/generic.svg);
+  --halo-a: 16%;
+  --halo-b: 9%;
+  --halo-c: 20%;
   position: relative;
+  isolation: isolate;
   min-width: 0;
   padding: 25px;
-  border: 1px solid #e7e9f2;
-  border-top: 2px solid var(--expiry-dot, #d7dbe9);
+  border: 1px solid transparent;
   border-radius: 22px;
-  background: radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--subscription-accent) 11%, transparent), transparent 42%), linear-gradient(155deg, #fff 35%, #fcfcff);
-  box-shadow: inset 0 1px 0 #fff, 0 3px 6px #26324a03, 0 12px 30px #26324a06;
-  transition: box-shadow .2s ease, border-color .2s ease;
+  background:
+    radial-gradient(110% 240px at 100% 0, color-mix(in srgb, var(--sub-glow) 13%, transparent), transparent 100%),
+    linear-gradient(180deg, color-mix(in srgb, var(--sub-tint) 72%, #fff) 0, #fff 280px);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--sub-glow) 16%, #fff),
+    0 0 8px color-mix(in srgb, var(--sub-glow) var(--halo-a), transparent),
+    0 0 22px 1px color-mix(in srgb, var(--sub-glow) var(--halo-b), transparent),
+    0 12px 24px -16px color-mix(in srgb, var(--sub-glow) var(--halo-c), transparent),
+    inset 0 0 0 1px #ffffffd9,
+    inset 0 1px 0 #fff;
+  transition: box-shadow .2s ease, transform .2s ease;
 }
+/* Equal specificity to fresh-ui's expiry hover rule, loaded after it. */
+.subscription-grid > .subscription-card[data-expiry] { border-top-color: transparent; }
 .subscription-grid > .subscription-card:hover {
-  border-color: #d9deec;
-  border-top-color: var(--expiry-dot, #c7cddd);
-  box-shadow: inset 0 1px 0 #fff, 0 5px 12px #26324a05, 0 16px 34px #26324a0a;
+  --halo-a: 26%;
+  --halo-b: 15%;
+  --halo-c: 32%;
+  transform: translateY(-2px);
 }
-.subscription-card:has(.service-logo[data-service="chatgpt"]),
-.subscription-card:has(.service-logo[data-service="grok"]) { --subscription-accent: #536671; }
-.subscription-card:has(.service-logo[data-service="claude"]) { --subscription-accent: #cf8c72; }
-.subscription-card:has(.service-logo[data-service="gemini"]) { --subscription-accent: #728ed4; }
-.subscription-card:has(.service-logo[data-service="ttvoice"]) { --subscription-accent: #8173d0; }
-.subscription-card:has(.service-logo[data-service="suno"]) { --subscription-accent: #d08e80; }
-.subscription-card:has(.service-logo[data-service="kugou"]),
-.subscription-card:has(.service-logo[data-service="icloud"]) { --subscription-accent: #6ba3d2; }
-.subscription-card:has(.service-logo[data-service="baidu"]) { --subscription-accent: #698fd0; }
-.subscription-card:has(.service-logo[data-service="netease"]) { --subscription-accent: #cf7e87; }
-.subscription-card:has(.service-logo[data-service="bilibili"]) { --subscription-accent: #ce8fac; }
+.subscription-card:has(.service-logo[data-service="chatgpt"]) {
+  --subscription-accent: #0f8f70; --sub-glow: #10a37f; --sub-tint: #dcf4ec;
+  --sub-motif: url(/assets/brands/motifs/chatgpt.svg);
+}
+.subscription-card:has(.service-logo[data-service="claude"]) {
+  --subscription-accent: #c4694a; --sub-glow: #d97757; --sub-tint: #fae9e0;
+  --sub-motif: url(/assets/brands/motifs/claude.svg);
+}
+.subscription-card:has(.service-logo[data-service="gemini"]) {
+  --subscription-accent: #5b78d8; --sub-glow: #6a8df2; --sub-tint: #e6ebfe;
+  --sub-motif: url(/assets/brands/motifs/gemini.svg);
+}
+.subscription-card:has(.service-logo[data-service="ttvoice"]) {
+  --subscription-accent: #5a64dd; --sub-glow: #5e69f5; --sub-tint: #e7e9fe;
+  --sub-motif: url(/assets/brands/motifs/ttvoice.svg);
+}
+.subscription-card:has(.service-logo[data-service="suno"]) {
+  --subscription-accent: #d2704f; --sub-glow: #f0825a; --sub-tint: #fce8df;
+  --sub-motif: url(/assets/brands/motifs/suno.svg);
+}
+.subscription-card:has(.service-logo[data-service="grok"]) {
+  --subscription-accent: #4c5563; --sub-glow: #5a6270; --sub-tint: #e7e9ed;
+  --sub-motif: url(/assets/brands/motifs/grok.svg);
+}
+.subscription-card:has(.service-logo[data-service="kugou"]) {
+  --subscription-accent: #0a86d0; --sub-glow: #009df4; --sub-tint: #dcf1fe;
+  --sub-motif: url(/assets/brands/motifs/kugou.svg);
+}
+.subscription-card:has(.service-logo[data-service="baidu"]) {
+  --subscription-accent: #2a6fd8; --sub-glow: #2f7df4; --sub-tint: #e1edfe;
+  --sub-motif: url(/assets/brands/motifs/baidu.svg);
+}
+.subscription-card:has(.service-logo[data-service="netease"]) {
+  --subscription-accent: #cf3338; --sub-glow: #e6343b; --sub-tint: #fde4e4;
+  --sub-motif: url(/assets/brands/motifs/netease.svg);
+}
+.subscription-card:has(.service-logo[data-service="bilibili"]) {
+  --subscription-accent: #e55f88; --sub-glow: #fb7299; --sub-tint: #ffe7ef;
+  --sub-motif: url(/assets/brands/motifs/bilibili.svg);
+}
+.subscription-card:has(.service-logo[data-service="icloud"]) {
+  --subscription-accent: #3a8ce0; --sub-glow: #479ff8; --sub-tint: #e3f1fe;
+  --sub-motif: url(/assets/brands/motifs/icloud.svg);
+}
+/* Decorative layers are out of flow and never add a subgrid track. */
+.subscription-grid > .subscription-card::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  top: 58px;
+  right: 16px;
+  width: 128px;
+  height: 128px;
+  background: var(--sub-motif) center/contain no-repeat;
+}
+/* Motifs stay whole, so text wraps before reaching them instead of fading them. */
+.subscription-grid .subscription-card:not(.is-compact) > :is(h3, .membership-tier-badge) { max-width: calc(100% - 136px); }
+.subscription-grid > .subscription-card::after {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border: 1px solid #ffffffa8;
+  border-radius: 16px;
+  pointer-events: none;
+  z-index: -1;
+}
+.subscription-grid > .subscription-card.paused { --halo-a: 8%; --halo-b: 4%; --halo-c: 10%; }
+.subscription-grid > .subscription-card.paused::before { filter: saturate(.3); opacity: .55; }
 .subscription-grid .subscription-top { align-items: center; gap: 14px; min-height: 52px; }
 .subscription-grid .subscription-top > :is(.service-logo, .service-icon) {
   width: 52px;
@@ -53,7 +128,7 @@
 }
 .subscription-grid .subscription-top-actions .icon-btn:hover { background: #fff; color: #495672; border-color: #d9deeb; }
 .subscription-grid .subscription-top-actions .status-pill.paused { background: #edf0f5; color: #637087; border: 1px solid #e3e7ef; font-size: 10px; }
-.subscription-grid .subscription-card > h3 { margin: 19px 0 8px; color: #303b52; font-size: 19px; line-height: 1.45; font-weight: 700; letter-spacing: -.025em; }
+.subscription-grid .subscription-card > h3 { margin: 19px 0 8px; color: #303b52; font-size: 19px; line-height: 1.45; font-weight: 700; letter-spacing: -.025em; text-shadow: 0 1px 0 #fff, 0 0 4px #fff, 0 0 8px #fff; }
 .subscription-grid .membership-tier-badge {
   max-width: 100%;
   margin: 0 0 10px;
@@ -111,7 +186,7 @@
 .subscription-grid .toggle-row { padding-top: 14px; border-top: 1px solid #e9edf4; margin-top: 10px; color: #6c7890; font-size: 11px; line-height: 1.6; }
 .subscription-grid .switch { width: 40px; height: 24px; background: #dfe4ee; box-shadow: inset 0 1px 3px #25344e0c; }
 .subscription-grid .switch::after { width: 18px; height: 18px; top: 3px; left: 3px; box-shadow: 0 1px 4px #25344e1c; }
-.subscription-grid .switch.on { background: #8e7acb; }
+.subscription-grid .switch.on { background: var(--subscription-accent); }
 .subscription-grid .switch.on::after { left: 19px; }
 .subscription-grid > .add-card { min-height: 250px; border: 1px dashed #d8ddec; border-radius: 22px; background: linear-gradient(150deg, #fcfcff, #f4f5fc); color: #74809b; box-shadow: inset 0 1px 0 #fff; }
 .subscription-grid > .add-card:hover { background: #f2effc; border-color: #baaedb; color: #75629f; }
@@ -188,6 +263,8 @@
 @media (max-width: 600px) {
   .subscription-grid { grid-template-columns: minmax(0, 1fr); }
   .subscription-grid > .subscription-card { border-radius: 19px; }
+  .subscription-grid > .subscription-card::before { width: calc(6px * 240 / 13.125); height: calc(6px * 240 / 13.125); }
+  .subscription-grid > .subscription-card::after { border-radius: 13px; }
   .subscription-grid .subscription-card > .money { font-size: 32px; }
   .subscription-grid > .add-card { min-height: 175px; border-radius: 19px; }
   #subscription-form .membership-shortcuts { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 7px; }
@@ -211,4 +288,5 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .subscription-grid > .subscription-card, #subscription-form .membership-choice { transition: none; }
+  .subscription-grid > .subscription-card:hover { transform: none; }
 }

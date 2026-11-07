@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <linearGradient id="glass" x1="57" y1="51" x2="176" y2="183" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".3" stop-color="#b7e6ff"/><stop offset=".68" stop-color="#43b7f4"/><stop offset="1" stop-color="#087fca"/>
+    </linearGradient>
+    <linearGradient id="cushion" x1="64" y1="117" x2="87" y2="175" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#eefaff"/><stop offset=".45" stop-color="#8fd5fb"/><stop offset="1" stop-color="#269de2"/>
+    </linearGradient>
+    <linearGradient id="notes" x1="191" y1="69" x2="214" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#c5edff"/><stop offset="1" stop-color="#0089d6"/>
+    </linearGradient>
+    <radialGradient id="puppy" cx=".34" cy=".23" r=".86">
+      <stop stop-color="#fffdf5"/><stop offset=".45" stop-color="#f2f5ff"/><stop offset=".78" stop-color="#c7e3f5"/><stop offset="1" stop-color="#79b9de"/>
+    </radialGradient>
+    <linearGradient id="ears" x1="72" y1="87" x2="169" y2="166" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#dbeafa"/><stop offset=".5" stop-color="#91bce1"/><stop offset="1" stop-color="#4b8cbf"/>
+    </linearGradient>
+    <radialGradient id="shine"><stop stop-color="#fff" stop-opacity=".8"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-50%" y="-150%" width="200%" height="400%"><feGaussianBlur stdDeviation="7"/></filter>
+  </defs>
+  <!-- A round little glass puppy wears the original sky-blue headphones. -->
+  <ellipse cx="122" cy="201" rx="65" ry="8" fill="#009df4" opacity=".2" filter="url(#shadow)"/>
+  <path d="M51 140v-28a69 69 0 0 1 138 0v28h-18v-28a51 51 0 0 0-102 0v28Z" fill="url(#glass)" stroke="#fff" stroke-width="2"/>
+  <path d="M59 109a61 61 0 0 1 122 0" stroke="#fff" stroke-opacity=".72" stroke-width="3" stroke-linecap="round"/>
+  <path d="M84 84c-15-4-26 8-28 28l-2 49c-1 17 9 28 21 23 10-4 15-23 17-43l3-37c1-10-4-17-11-20Z" fill="url(#ears)" stroke="#fff" stroke-width="2"/>
+  <path d="M156 84c15-4 26 8 28 28l2 49c1 17-9 28-21 23-10-4-15-23-17-43l-3-37c-1-10 4-17 11-20Z" fill="url(#ears)" stroke="#fff" stroke-width="2"/>
+  <ellipse cx="120" cy="127" rx="53" ry="54" fill="url(#puppy)" stroke="#fff" stroke-width="2"/>
+  <ellipse cx="109" cy="98" rx="31" ry="19" fill="url(#shine)"/>
+  <path d="M87 100c7-11 17-17 29-18" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".85"/>
+  <circle cx="146" cy="95" r="3.5" fill="#fff" opacity=".8"/>
+  <ellipse cx="120" cy="146" rx="22" ry="17" fill="#fffdf7" opacity=".6"/>
+  <g fill="#f49bb7" opacity=".36"><ellipse cx="88" cy="140" rx="9" ry="5"/><ellipse cx="152" cy="140" rx="9" ry="5"/></g>
+  <g fill="#343450"><circle cx="101" cy="130" r="6.5"/><circle cx="139" cy="130" r="6.5"/></g>
+  <g fill="#fff"><circle cx="99" cy="128" r="2"/><circle cx="137" cy="128" r="2"/></g>
+  <path d="M116 138q4-3 8 0q0 5-4 5-4 0-4-5Z" fill="#343450"/>
+  <path d="M114 146q6 10 12 0" stroke="#343450" stroke-width="3" stroke-linecap="round"/>
+  <path d="M99 171c15 6 33 4 44-4" stroke="#eef8ff" stroke-width="2.5" stroke-linecap="round" opacity=".75"/>
+  <path d="M54 121h14v52H54c-9 0-15-8-15-18v-16c0-10 6-18 15-18Z" fill="url(#glass)" stroke="#fff" stroke-width="2"/>
+  <path d="M186 121h-14v52h14c9 0 15-8 15-18v-16c0-10-6-18-15-18Z" fill="url(#glass)" stroke="#fff" stroke-width="2"/>
+  <rect x="55" y="115" width="22" height="65" rx="11" fill="url(#cushion)" stroke="#fff" stroke-width="2"/>
+  <rect x="163" y="115" width="22" height="65" rx="11" fill="url(#cushion)" stroke="#fff" stroke-width="2"/>
+  <path d="M62 128v33M170 128v33" stroke="#fff" stroke-opacity=".7" stroke-width="3" stroke-linecap="round"/>
+  <!-- Two floating notes, deliberately unrelated to the official mark. -->
+  <path d="M202 102V73l14 5v10l-8-3v19c0 6-5 10-11 10-5 0-8-3-8-6s4-8 9-8l4 2Z" fill="url(#notes)" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/>
+  <path d="M31 97V77l11 4v8l-5-2v12c0 5-4 8-9 8-4 0-6-2-6-5s3-6 7-6l2 1Z" fill="url(#cushion)" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/>
+  <ellipse cx="80" cy="67" rx="11" ry="4" transform="rotate(-38 80 67)" fill="#fff" opacity=".85"/>
+</svg>

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <linearGradient id="glass" x1="-30" y1="-66" x2="38" y2="63" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f5fffb"/><stop offset=".28" stop-color="#8cdec9"/><stop offset=".62" stop-color="#27ac90"/><stop offset="1" stop-color="#087e69"/>
+    </linearGradient>
+    <radialGradient id="spark"><stop stop-color="#fff"/><stop offset=".45" stop-color="#e7fff6"/><stop offset="1" stop-color="#87dac1" stop-opacity="0"/></radialGradient>
+    <radialGradient id="pearl" cx=".3" cy=".2" r=".85">
+      <stop stop-color="#f0fff9"/><stop offset=".35" stop-color="#a8ebd9"/><stop offset=".7" stop-color="#52c7af"/><stop offset="1" stop-color="#188f7b"/>
+    </radialGradient>
+    <filter id="shadow" x="-30%" y="-100%" width="160%" height="300%"><feGaussianBlur stdDeviation="6"/></filter>
+  </defs>
+  <ellipse cx="122" cy="202" rx="65" ry="8" fill="#10a37f" opacity=".2" filter="url(#shadow)"/>
+  <!-- Three plump glass loops weave around a little turquoise pearl. -->
+  <g transform="translate(120 116)" stroke-linecap="round">
+    <g><ellipse rx="38" ry="68" stroke="#edfff9" stroke-width="18"/><ellipse rx="38" ry="68" stroke="url(#glass)" stroke-width="14"/><path d="M-27-46C-17-72 13-74 27-47" stroke="#fff" stroke-opacity=".8" stroke-width="2"/></g>
+    <g transform="rotate(60)"><ellipse rx="38" ry="68" stroke="#edfff9" stroke-width="18"/><ellipse rx="38" ry="68" stroke="url(#glass)" stroke-width="14"/><path d="M-27-46C-17-72 13-74 27-47" stroke="#fff" stroke-opacity=".7" stroke-width="2"/></g>
+    <g transform="rotate(120)"><ellipse rx="38" ry="68" stroke="#edfff9" stroke-width="18"/><ellipse rx="38" ry="68" stroke="url(#glass)" stroke-width="14"/><path d="M-27-46C-17-72 13-74 27-47" stroke="#fff" stroke-opacity=".7" stroke-width="2"/></g>
+    <g><path d="M0-68A38 68 0 0 1 38 0" stroke="#edfff9" stroke-width="18"/><path d="M0-68A38 68 0 0 1 38 0" stroke="url(#glass)" stroke-width="14"/><path d="M4-66c15 3 26 20 30 39" stroke="#fff" stroke-opacity=".75" stroke-width="2"/></g>
+    <g transform="rotate(60)"><path d="M0-68A38 68 0 0 1 38 0" stroke="#edfff9" stroke-width="18"/><path d="M0-68A38 68 0 0 1 38 0" stroke="url(#glass)" stroke-width="14"/><path d="M4-66c15 3 26 20 30 39" stroke="#fff" stroke-opacity=".65" stroke-width="2"/></g>
+    <g transform="rotate(120)"><path d="M0-68A38 68 0 0 1 38 0" stroke="#edfff9" stroke-width="18"/><path d="M0-68A38 68 0 0 1 38 0" stroke="url(#glass)" stroke-width="14"/><path d="M4-66c15 3 26 20 30 39" stroke="#fff" stroke-opacity=".65" stroke-width="2"/></g>
+  </g>
+  <circle cx="120" cy="116" r="46" fill="url(#pearl)" stroke="#edfff9" stroke-width="2"/>
+  <ellipse cx="108" cy="94" rx="29" ry="19" fill="url(#spark)" opacity=".65"/>
+  <path d="M91 92c5-8 13-12 22-13" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".85"/>
+  <circle cx="135" cy="86" r="3" fill="#fff" opacity=".8"/>
+  <path d="M96 150c15 9 34 7 45-6" stroke="#bcf3df" stroke-width="3" stroke-linecap="round" opacity=".65"/>
+  <g fill="#f49bb7" opacity=".36"><ellipse cx="88" cy="132" rx="9" ry="5"/><ellipse cx="152" cy="132" rx="9" ry="5"/></g>
+  <g fill="#343450"><circle cx="101" cy="122" r="6.5"/><circle cx="139" cy="122" r="6.5"/></g>
+  <g fill="#fff"><circle cx="99.2" cy="119.6" r="2"/><circle cx="137.2" cy="119.6" r="2"/></g>
+  <path d="M114 132q6 10 12 0" stroke="#343450" stroke-width="3" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <linearGradient id="sun" x1="83" y1="52" x2="154" y2="173" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff8e8"/><stop offset=".35" stop-color="#ffd2a2"/><stop offset="1" stop-color="#f8a37c" stop-opacity=".65"/>
+    </linearGradient>
+    <linearGradient id="sound" x1="64" y1="166" x2="163" y2="207" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff5e5"/><stop offset=".3" stop-color="#ffbd87"/><stop offset=".6" stop-color="#f0825a"/><stop offset="1" stop-color="#da6471"/>
+    </linearGradient>
+    <radialGradient id="shine"><stop stop-color="#fff" stop-opacity=".85"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-30%" y="-100%" width="160%" height="300%"><feGaussianBlur stdDeviation="6"/></filter>
+  </defs>
+  <ellipse cx="120" cy="215" rx="72" ry="8" fill="#ed815f" opacity=".21" filter="url(#shadow)"/>
+  <!-- The complete resin sun floats above a row of short, pill-shaped waves. -->
+  <circle cx="120" cy="111" r="62" fill="url(#sun)" stroke="#fff5e8" stroke-width="2"/>
+  <ellipse cx="110" cy="82" rx="38" ry="24" fill="url(#shine)"/>
+  <path d="M73 92c7-17 21-28 38-30" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".8"/>
+  <circle cx="151" cy="77" r="4" fill="#fff" opacity=".8"/>
+  <path d="M79 147c18 20 46 24 69 11" stroke="#fff0db" stroke-width="3" stroke-linecap="round" opacity=".8"/>
+  <g stroke="#f4b694" stroke-width="4" stroke-linecap="round" opacity=".75">
+    <path d="M120 29v9M69 43l6 8m96-8-6 8M42 77l9 5m147-5-9 5M36 117h9m159 0h-9"/>
+  </g>
+  <g fill="#f49bb7" opacity=".36"><ellipse cx="88" cy="130" rx="9" ry="5"/><ellipse cx="152" cy="130" rx="9" ry="5"/></g>
+  <g fill="#343450"><circle cx="101" cy="120" r="6.5"/><circle cx="139" cy="120" r="6.5"/></g>
+  <g fill="#fff"><circle cx="99" cy="118" r="2"/><circle cx="137" cy="118" r="2"/></g>
+  <path d="M114 131q6 10 12 0" stroke="#343450" stroke-width="3" stroke-linecap="round"/>
+  <g fill="url(#sound)" stroke="#fff2e6" stroke-width="2">
+    <rect x="40" y="168" width="16" height="24" rx="8"/>
+    <rect x="64" y="168" width="16" height="32" rx="8"/>
+    <rect x="88" y="171" width="16" height="36" rx="8"/>
+    <rect x="112" y="176" width="16" height="25" rx="8"/>
+    <rect x="136" y="171" width="16" height="36" rx="8"/>
+    <rect x="160" y="168" width="16" height="32" rx="8"/>
+    <rect x="184" y="168" width="16" height="24" rx="8"/>
+  </g>
+  <g stroke="#fff" stroke-width="2.5" stroke-linecap="round" opacity=".85">
+    <path d="M45 175v7m24-7v11m24-8v13m24-8v7m24-12v13m24-16v11m24-11v7"/>
+  </g>
+</svg>

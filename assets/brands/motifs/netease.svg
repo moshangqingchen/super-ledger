@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <linearGradient id="vinyl" x1="58" y1="52" x2="169" y2="193" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e3e5ed"/><stop offset=".16" stop-color="#535b6a"/><stop offset=".43" stop-color="#222735"/><stop offset=".7" stop-color="#424a5a"/><stop offset="1" stop-color="#171d2a"/>
+    </linearGradient>
+    <linearGradient id="label" x1="79" y1="78" x2="137" y2="169" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff3ef"/><stop offset=".27" stop-color="#ffb4b0"/><stop offset=".65" stop-color="#f77980"/><stop offset="1" stop-color="#bb3042"/>
+    </linearGradient>
+    <radialGradient id="shine"><stop stop-color="#fff" stop-opacity=".72"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    <linearGradient id="arm" x1="160" y1="65" x2="184" y2="176" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".36" stop-color="#cdd4e0"/><stop offset=".65" stop-color="#778395"/><stop offset="1" stop-color="#f4f5fa"/>
+    </linearGradient>
+    <filter id="shadow" x="-50%" y="-150%" width="200%" height="400%"><feGaussianBlur stdDeviation="7"/></filter>
+  </defs>
+  <ellipse cx="119" cy="205" rx="71" ry="8" fill="#e6343b" opacity=".17" filter="url(#shadow)"/>
+  <circle cx="109" cy="121" r="77" fill="url(#vinyl)" stroke="#fff" stroke-opacity=".9" stroke-width="2"/>
+  <!-- A few broad grooves frame the rounded, glass-red centre. -->
+  <g stroke="#ced5e3" stroke-opacity=".22" stroke-width="1">
+    <circle cx="109" cy="121" r="68"/><circle cx="109" cy="121" r="62"/>
+    <circle cx="109" cy="121" r="56"/>
+  </g>
+  <path d="M49 105c5-22 20-39 42-45M55 113c4-22 19-40 41-45" stroke="#fff" stroke-opacity=".45" stroke-width="2" stroke-linecap="round"/>
+  <path d="M124 182c19-5 33-18 41-36" stroke="#fff" stroke-opacity=".23" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="109" cy="121" r="47" fill="url(#label)" stroke="#fff" stroke-opacity=".85" stroke-width="2"/>
+  <ellipse cx="97" cy="99" rx="29" ry="17" fill="url(#shine)"/>
+  <path d="M76 101c5-10 15-17 26-18" stroke="#fff" stroke-width="3.5" stroke-linecap="round" opacity=".8"/>
+  <circle cx="117" cy="85" r="3" fill="#fff" opacity=".8"/>
+  <path d="M93 159c14 5 28 1 36-7" stroke="#ffced1" stroke-width="3" stroke-linecap="round" opacity=".55"/>
+  <g fill="#f49bb7" opacity=".36"><ellipse cx="77" cy="140" rx="9" ry="5"/><ellipse cx="141" cy="140" rx="9" ry="5"/></g>
+  <g fill="#343450"><circle cx="90" cy="130" r="6.5"/><circle cx="128" cy="130" r="6.5"/></g>
+  <g fill="#fff"><circle cx="88" cy="127.5" r="2"/><circle cx="126" cy="127.5" r="2"/></g>
+  <path d="M103 140q6 10 12 0" stroke="#343450" stroke-width="3" stroke-linecap="round"/>
+  <!-- The angled pickup arm sits off the record's red centre. -->
+  <circle cx="190" cy="66" r="13" fill="url(#arm)" stroke="#fff" stroke-width="2"/>
+  <circle cx="190" cy="66" r="4" fill="#657080"/>
+  <path d="m190 75-15 77-22 17" stroke="#252d3c" stroke-opacity=".35" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m189 74-17 75-20 17" stroke="url(#arm)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m188 75-18 73-17 14" stroke="#fff" stroke-opacity=".85" stroke-width="2" stroke-linecap="round"/>
+  <path d="m146 159 11 12-16 15-11-12Z" fill="#c94b57" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m140 170 5 5" stroke="#ffccce" stroke-width="2" stroke-linecap="round"/>
+</svg>

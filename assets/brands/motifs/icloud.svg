@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <linearGradient id="rear" x1="101" y1="58" x2="181" y2="140" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".4" stop-color="#d3ebff"/><stop offset="1" stop-color="#75b7f5"/>
+    </linearGradient>
+    <linearGradient id="front" x1="64" y1="102" x2="145" y2="186" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".35" stop-color="#f2faff"/><stop offset=".7" stop-color="#b4dcff"/><stop offset="1" stop-color="#479ff8"/>
+    </linearGradient>
+    <radialGradient id="shine" cx=".3" cy=".1" r=".9">
+      <stop stop-color="#fff" stop-opacity=".9"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-50%" y="-150%" width="200%" height="400%"><feGaussianBlur stdDeviation="7"/></filter>
+  </defs>
+  <ellipse cx="121" cy="205" rx="70" ry="8" fill="#479ff8" opacity=".2" filter="url(#shadow)"/>
+  <!-- Two separate, offset cloud silhouettes with luminous rounded edges. -->
+  <path d="M112 142c-19 0-32-12-32-28 0-15 10-26 25-29 3-18 17-30 34-30 19 0 34 14 36 33 4-2 9-3 14-3 17 0 30 13 30 29s-13 28-31 28Z" fill="url(#rear)" stroke="#fff" stroke-width="2"/>
+  <path d="M114 80c5-12 15-18 26-18 8 0 15 3 20 9" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".84"/>
+  <path d="M64 191c-23 0-38-15-38-34 0-18 13-32 31-34 2-23 20-39 43-39 22 0 40 15 44 36 6-5 14-8 23-8 23 0 41 18 41 40s-18 39-42 39Z" fill="url(#front)" stroke="#fff" stroke-width="2"/>
+  <ellipse cx="99" cy="120" rx="30" ry="22" fill="url(#shine)"/>
+  <path d="M42 148c5-8 12-13 22-13 7-1 7-5 8-12 3-15 15-26 30-26 10 0 19 4 26 12" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".84"/>
+  <path d="M64 182h100c17 0 30-10 33-24" stroke="#d9efff" stroke-width="3" stroke-linecap="round" opacity=".8"/>
+  <ellipse cx="84" cy="105" rx="9" ry="4" transform="rotate(-28 84 105)" fill="#fff" opacity=".82"/>
+  <g fill="#f49bb7" opacity=".36"><ellipse cx="84" cy="161" rx="9" ry="5"/><ellipse cx="148" cy="161" rx="9" ry="5"/></g>
+  <g fill="#343450"><circle cx="97" cy="151" r="6.5"/><circle cx="135" cy="151" r="6.5"/></g>
+  <g fill="#fff"><circle cx="95" cy="148.5" r="2"/><circle cx="133" cy="148.5" r="2"/></g>
+  <path d="M110 162q6 10 12 0" stroke="#343450" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="54" cy="82" r="5" fill="#d0eaff" stroke="#fff" stroke-width="2"/>
+  <circle cx="184" cy="58" r="3" fill="#8fcaff"/>
+  <circle cx="210" cy="161" r="4" fill="#b9dfff" stroke="#fff" stroke-width="1.5"/>
+  <path d="M73 52v10m-5-5h10" stroke="#93caff" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

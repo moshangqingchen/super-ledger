@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <linearGradient id="body" x1="87" y1="49" x2="151" y2="154" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".25" stop-color="#bec5ff"/><stop offset=".65" stop-color="#777ce9"/><stop offset="1" stop-color="#505ac7"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="85" y1="111" x2="155" y2="197" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e4e8ff"/><stop offset=".4" stop-color="#929ae7"/><stop offset="1" stop-color="#535fc2"/>
+    </linearGradient>
+    <linearGradient id="waves" x1="45" y1="73" x2="193" y2="140" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#c3cbff"/><stop offset=".5" stop-color="#707ce6"/><stop offset="1" stop-color="#929aef"/>
+    </linearGradient>
+    <radialGradient id="shine"><stop stop-color="#fff" stop-opacity=".8"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-30%" y="-100%" width="160%" height="300%"><feGaussianBlur stdDeviation="6"/></filter>
+  </defs>
+  <ellipse cx="120" cy="207" rx="48" ry="7" fill="#5e69f5" opacity=".2" filter="url(#shadow)"/>
+  <!-- Symmetric voice waves, floating clear of the microphone silhouette. -->
+  <g stroke="url(#waves)" stroke-width="6" stroke-linecap="round">
+    <path d="M59 84c-9 11-9 30 0 41m-17-55c-18 18-18 51 0 69"/>
+    <path d="M181 84c9 11 9 30 0 41m17-55c18 18 18 51 0 69"/>
+  </g>
+  <g stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity=".7">
+    <path d="M57 84c-8 11-8 28 0 39m-17-53c-16 18-16 49 0 67M179 84c9 11 9 28 0 39m17-53c18 18 18 49 0 67"/>
+  </g>
+  <rect x="113" y="163" width="14" height="27" rx="7" fill="url(#metal)" stroke="#f2f3ff" stroke-width="2"/>
+  <rect x="83" y="183" width="74" height="15" rx="7.5" fill="url(#metal)" stroke="#f2f3ff" stroke-width="2"/>
+  <path d="M67 120v8c0 27 22 43 53 43s53-16 53-43v-8" stroke="#f6f7ff" stroke-width="11" stroke-linecap="round"/>
+  <path d="M67 120v8c0 27 22 43 53 43s53-16 53-43v-8" stroke="url(#metal)" stroke-width="7" stroke-linecap="round"/>
+  <!-- A broad glass capsule leaves room for the low-set, shared little face. -->
+  <rect x="76" y="47" width="88" height="106" rx="44" fill="url(#body)" stroke="#fff" stroke-width="2"/>
+  <ellipse cx="110" cy="77" rx="29" ry="20" fill="url(#shine)"/>
+  <path d="M87 81c4-13 15-22 28-24" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".85"/>
+  <circle cx="143" cy="74" r="3.5" fill="#fff" opacity=".8"/>
+  <path d="M108 83h24" stroke="#7e86d5" stroke-width="3" stroke-linecap="round" opacity=".35"/>
+  <g fill="#f49bb7" opacity=".36"><ellipse cx="88" cy="122" rx="9" ry="5"/><ellipse cx="152" cy="122" rx="9" ry="5"/></g>
+  <g fill="#343450"><circle cx="101" cy="112" r="6.5"/><circle cx="139" cy="112" r="6.5"/></g>
+  <g fill="#fff"><circle cx="99" cy="110" r="2"/><circle cx="137" cy="110" r="2"/></g>
+  <path d="M114 123q6 10 12 0" stroke="#343450" stroke-width="3" stroke-linecap="round"/>
+  <path d="M104 144c13 4 27 1 36-6" stroke="#e3e5ff" stroke-width="2.5" stroke-linecap="round" opacity=".65"/>
+  <path d="M92 188h33" stroke="#fff" stroke-width="2.5" stroke-linecap="round" opacity=".75"/>
+</svg>

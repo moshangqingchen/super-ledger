@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <linearGradient id="ring" x1="61" y1="51" x2="173" y2="181" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".22" stop-color="#d6d3ff"/><stop offset=".6" stop-color="#9d91ef"/><stop offset="1" stop-color="#6e67c8"/>
+    </linearGradient>
+    <linearGradient id="gem" x1="88" y1="80" x2="146" y2="172" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".4" stop-color="#b0bfff"/><stop offset="1" stop-color="#8271d9"/>
+    </linearGradient>
+    <radialGradient id="shine"><stop stop-color="#fff" stop-opacity=".8"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-50%" y="-150%" width="200%" height="400%"><feGaussianBlur stdDeviation="7"/></filter>
+  </defs>
+  <ellipse cx="120" cy="200" rx="65" ry="8" fill="#8b7cf6" opacity=".2" filter="url(#shadow)"/>
+  <!-- Two continuous curved arrows describe a renewal cycle. -->
+  <path d="M52 114a69 69 0 0 1 118-43l10-14 13 44-44-3 11-14a51 51 0 0 0-90 31Z" fill="url(#ring)" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M188 126A69 69 0 0 1 70 169l-10 14-13-44 44 3-11 14a51 51 0 0 0 90-31Z" fill="url(#ring)" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M62 98a61 61 0 0 1 43-40" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity=".85"/>
+  <path d="M177 139a61 61 0 0 1-40 42" stroke="#e9e5ff" stroke-width="3" stroke-linecap="round" opacity=".8"/>
+  <!-- Rounded shoulders and broad facets keep the jewel soft and recognisable. -->
+  <path d="M96 82h48c7 0 11 4 15 10l13 20c4 6 3 12-1 18l-36 36c-8 8-22 8-30 0l-36-36c-4-6-5-12-1-18l13-20c4-6 8-10 15-10Z" fill="url(#gem)" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M69 112h25l20 58c-3-1-6-2-9-4l-36-36c-4-6-5-12 0-18Z" fill="#9a9de8" fill-opacity=".36"/>
+  <path d="M171 112h-25l-20 58c3-1 6-2 9-4l36-36c4-6 5-12 0-18Z" fill="#6e75cf" fill-opacity=".32"/>
+  <path d="m97 83 13 29h20l13-29Z" fill="#f4f5ff" fill-opacity=".42"/>
+  <path d="M94 112h52l-20 58c-4 1-8 1-12 0Z" fill="#d0d5ff" fill-opacity=".28"/>
+  <path d="M72 112h96m-71-27 13 27m33-27-13 27" stroke="#fff" stroke-opacity=".6" stroke-width="1.5" stroke-linejoin="round"/>
+  <ellipse cx="106" cy="97" rx="27" ry="12" fill="url(#shine)"/>
+  <path d="m86 101 7-10h20" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="137" cy="91" r="3" fill="#fff" opacity=".8"/>
+  <g fill="#f49bb7" opacity=".36"><ellipse cx="88" cy="135" rx="9" ry="5"/><ellipse cx="152" cy="135" rx="9" ry="5"/></g>
+  <g fill="#343450"><circle cx="101" cy="125" r="6.5"/><circle cx="139" cy="125" r="6.5"/></g>
+  <g fill="#fff"><circle cx="99" cy="122.5" r="2"/><circle cx="137" cy="122.5" r="2"/></g>
+  <path d="M114 135q6 10 12 0" stroke="#343450" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="191" cy="116" r="3" fill="#b7acf7"/>
+</svg>

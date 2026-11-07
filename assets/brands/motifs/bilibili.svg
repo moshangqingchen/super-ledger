@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <linearGradient id="case" x1="51" y1="79" x2="177" y2="184" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".25" stop-color="#ffd2e1"/><stop offset=".68" stop-color="#fb8bb0"/><stop offset="1" stop-color="#dc5686"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="61" y1="96" x2="146" y2="155" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff"/><stop offset=".46" stop-color="#ffedf5"/><stop offset="1" stop-color="#e6cee4"/>
+    </linearGradient>
+    <radialGradient id="shine"><stop stop-color="#fff" stop-opacity=".85"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    <linearGradient id="blue" x1="166" y1="109" x2="216" y2="128" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e9faff"/><stop offset="1" stop-color="#00a1d6"/>
+    </linearGradient>
+    <filter id="shadow" x="-50%" y="-150%" width="200%" height="400%"><feGaussianBlur stdDeviation="7"/></filter>
+  </defs>
+  <ellipse cx="112" cy="202" rx="65" ry="7" fill="#fb7299" opacity=".21" filter="url(#shadow)"/>
+  <!-- A plump retro television with a soft, round-eyed screen face. -->
+  <path d="m106 81-23-29m31 29 28-32" stroke="#dc6893" stroke-width="8" stroke-linecap="round"/>
+  <path d="m105 78-22-27m30 27 28-30" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="82" cy="50" r="5" fill="#ffbed4" stroke="#fff" stroke-width="2"/>
+  <circle cx="143" cy="47" r="5" fill="#ffbed4" stroke="#fff" stroke-width="2"/>
+  <path d="m66 177-5 12m92-12 5 12" stroke="#c65b86" stroke-width="9" stroke-linecap="round"/>
+  <rect x="34" y="77" width="148" height="108" rx="30" fill="url(#case)" stroke="#fff" stroke-width="2"/>
+  <path d="M60 176h91c11 0 20-7 22-16" stroke="#ffcade" stroke-width="3" stroke-linecap="round" opacity=".65"/>
+  <rect x="49" y="91" width="105" height="78" rx="23" fill="url(#screen)" stroke="#fff" stroke-width="2"/>
+  <ellipse cx="85" cy="109" rx="32" ry="14" fill="url(#shine)"/>
+  <path d="M59 112v-3c0-6 5-10 11-10h16" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity=".95"/>
+  <g fill="#f49bb7" opacity=".36"><ellipse cx="69" cy="142" rx="9" ry="5"/><ellipse cx="133" cy="142" rx="9" ry="5"/></g>
+  <g fill="#343450"><circle cx="82" cy="132" r="6.5"/><circle cx="120" cy="132" r="6.5"/></g>
+  <g fill="#fff"><circle cx="80" cy="129.5" r="2"/><circle cx="118" cy="129.5" r="2"/></g>
+  <path d="M95 142q6 10 12 0" stroke="#343450" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="168" cy="150" r="5" fill="#fff" fill-opacity=".8" stroke="#df6997" stroke-width="1.5"/>
+  <path d="M163 162h10" stroke="#c85383" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- Two compact floating comment bars, one with a cool blue accent. -->
+  <rect x="168" y="107" width="48" height="12" rx="6" fill="url(#blue)" stroke="#fff" stroke-width="2"/>
+  <rect x="182" y="127" width="33" height="11" rx="5.5" fill="url(#case)" stroke="#fff" stroke-width="2"/>
+  <path d="M54 87h30" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".85"/>
+</svg>
