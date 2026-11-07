@@ -112,7 +112,7 @@ test('paused and one-time subscriptions retain explicit expiry and otherwise sho
   assert.equal(subscriptionExpiryStatus(exhausted, '2199-12-01').tone, 'unset');
 });
 
-test('expiry reminders and linked accounts never change booking amounts, schedule or idempotency', () => {
+test('automatic expiry renewal preserves booking amounts, schedule, linked accounts and idempotency', () => {
   const plain = fixture();
   const detailed = fixture({
     expiresOn: '2024-01-02', note: '到期后另行续费',
@@ -123,9 +123,9 @@ test('expiry reminders and linked accounts never change booking amounts, schedul
   assert.deepEqual(detailedResult.added, plainResult.added);
   assert.equal(detailedResult.added.length, 3);
   assert.deepEqual(detailedResult.state.subscriptions[0].linkedAccounts, detailed.subscriptions[0].linkedAccounts);
-  assert.equal(detailedResult.state.subscriptions[0].expiresOn, '2024-01-02');
+  assert.equal(detailedResult.state.subscriptions[0].expiresOn, '2024-04-02');
   assert.equal(applyRecurring(detailedResult.state, '2024-03-01').added.length, 0);
   const paused = setSubscriptionActive(detailedResult.state, 'member', false, '2024-03-01');
-  assert.equal(subscriptionExpiryStatus(paused.subscriptions[0], '2024-03-01').tone, 'expired');
+  assert.equal(subscriptionExpiryStatus(paused.subscriptions[0], '2024-03-01').tone, 'normal');
   assert.deepEqual(paused.subscriptions[0].linkedAccounts, detailed.subscriptions[0].linkedAccounts);
 });

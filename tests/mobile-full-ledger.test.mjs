@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { makeEmptyState, applyRecurring, setSubscriptionActive, validateState, getBalances, getNetWorth } from '../engine.mjs';
+import { makeEmptyState, applyRecurring, setSubscriptionActive, validateState, getBalances, getNetWorth, resetSubscriptionExpiry } from '../engine.mjs';
 import { newSyncMetadata, mergeMobileOperations } from '../mobile-sync.mjs';
 
 function state() {
@@ -22,6 +22,163 @@ function subscription(more = {}) {
   return { id: 'member', name: '会员', amount: 1000, accountId: 'cash', category: '会员订阅', startDate: '2026-11-05', billingDay: 5,
     recurring: true, active: true, color: '#445566', icon: 'star', processedOccurrences: [], ...more };
 }
+
+function renewalState(expiresOn = '2026-11-05') {
+  const book = state();
+  const sub = subscription({ expiresOn });
+  resetSubscriptionExpiry(sub, []);
+  book.subscriptions.push(sub);
+  return book;
+}
+
+test('both devices renewing one period merge one expiry extension and allow an unrelated phone rename', () => {
+  const original = renewalState();
+  const desktop = applyRecurring(original, '2026-11-05').state;
+  const phone = applyRecurring(original, '2026-11-05').state;
+  const renamed = { ...phone.subscriptions[0], name: '手机改名' };
+  const operations = [put('subscription', renamed, original.subscriptions[0]), tx(phone.transactions[0])];
+  const now = new Date('2026-11-05T02:00:00Z');
+  const merged = mergeMobileOperations(desktop, payload(desktop, operations), now);
+  assert.equal(merged.conflicts.length, 0);
+  assert.equal(merged.next.subscriptions[0].name, '手机改名');
+  assert.equal(merged.next.subscriptions[0].expiresOn, '2026-12-05');
+  assert.deepEqual(merged.next.subscriptions[0].expiryRenewal.renewedOccurrences, ['member:2026-11']);
+  assert.equal(merged.next.transactions.length, 1);
+  const retried = mergeMobileOperations(merged.next, payload(merged.next, operations), now);
+  assert.equal(retried.summary.duplicates, 2);
+  assert.equal(retried.next.subscriptions[0].expiresOn, '2026-12-05');
+});
+
+test('devices with different catch-up counts merge distinct periods and keep the original month-end anchor', () => {
+  const original = renewalState('2027-01-31');
+  const desktop = applyRecurring(original, '2026-11-05').state;
+  const phone = applyRecurring(original, '2026-12-05').state;
+  assert.equal(desktop.subscriptions[0].expiresOn, '2027-02-28');
+  assert.equal(phone.subscriptions[0].expiresOn, '2027-03-31');
+  const operations = [put('subscription', phone.subscriptions[0], original.subscriptions[0]), ...phone.transactions.map(record => tx(record))];
+  const merged = mergeMobileOperations(desktop, payload(desktop, operations), new Date('2026-12-05T02:00:00Z'));
+  assert.equal(merged.conflicts.length, 0);
+  assert.equal(merged.next.transactions.length, 2);
+  assert.equal(merged.next.subscriptions[0].expiresOn, '2027-03-31');
+  assert.deepEqual(merged.next.subscriptions[0].expiryRenewal.renewedOccurrences, ['member:2026-11', 'member:2026-12']);
+});
+
+test('legacy phone baselines can rename a subscription after automatic expiry initialization', () => {
+  const original = state();
+  original.subscriptions.push(subscription({ expiresOn: '2026-11-05' }));
+  const desktop = applyRecurring(original, '2026-11-05').state;
+  const renamed = { ...original.subscriptions[0], name: '旧基线改名' };
+  const merged = mergeMobileOperations(desktop, payload(desktop, [put('subscription', renamed, original.subscriptions[0])]), new Date('2026-11-05T02:00:00Z'));
+  assert.equal(merged.conflicts.length, 0);
+  assert.equal(merged.next.subscriptions[0].name, renamed.name);
+  assert.equal(merged.next.subscriptions[0].expiresOn, '2026-12-05');
+});
+
+test('manual expiry changes establish a baseline over desktop payments without hiding a rollback to the original base date', () => {
+  const original = renewalState('2026-12-07');
+  const paid = applyRecurring(original, '2026-11-05').state;
+  assert.equal(paid.subscriptions[0].expiresOn, '2027-01-07');
+  const rollback = structuredClone(paid.subscriptions[0]);
+  rollback.expiresOn = '2026-12-07';
+  resetSubscriptionExpiry(rollback, paid.transactions);
+  let merged = mergeMobileOperations(paid, payload(paid, [put('subscription', rollback, paid.subscriptions[0])]), new Date('2026-11-05T02:00:00Z'));
+  assert.equal(merged.conflicts.length, 0);
+  assert.equal(merged.next.subscriptions[0].expiresOn, '2026-12-07');
+  assert.deepEqual(merged.next.subscriptions[0].expiryRenewal.baselineOccurrences, ['member:2026-11']);
+  assert.deepEqual(merged.next.subscriptions[0].expiryRenewal.renewedOccurrences, []);
+  const legacyRollback = { ...paid.subscriptions[0], expiresOn: '2026-12-07' };
+  delete legacyRollback.expiryRenewal;
+  const legacyMerged = mergeMobileOperations(paid, payload(paid, [put('subscription', legacyRollback, paid.subscriptions[0])]), new Date('2026-11-05T02:00:00Z'));
+  assert.equal(legacyMerged.conflicts.length, 0);
+  assert.equal(legacyMerged.next.subscriptions[0].expiresOn, '2026-12-07');
+  assert.deepEqual(legacyMerged.next.subscriptions[0].expiryRenewal.baselineOccurrences, ['member:2026-11']);
+
+  const desktop = applyRecurring(paid, '2026-12-05').state;
+  const manual = structuredClone(paid.subscriptions[0]);
+  manual.expiresOn = '2026-12-31';
+  resetSubscriptionExpiry(manual, paid.transactions);
+  merged = mergeMobileOperations(desktop, payload(desktop, [put('subscription', manual, paid.subscriptions[0])]), new Date('2026-12-05T02:00:00Z'));
+  assert.equal(merged.conflicts.length, 0);
+  assert.equal(merged.next.subscriptions[0].expiresOn, '2026-12-31');
+  assert.deepEqual(merged.next.subscriptions[0].expiryRenewal.baselineOccurrences, ['member:2026-11', 'member:2026-12']);
+  assert.equal(applyRecurring(merged.next, '2027-01-05').state.subscriptions[0].expiresOn, '2027-01-31');
+});
+
+test('concurrent manual expiry edits still conflict and an old client manual edit covers existing paid periods', () => {
+  const paid = applyRecurring(renewalState(), '2026-11-05').state;
+  const desktop = structuredClone(paid);
+  desktop.subscriptions[0].expiresOn = '2027-01-31';
+  resetSubscriptionExpiry(desktop.subscriptions[0], desktop.transactions);
+  const mobile = structuredClone(paid.subscriptions[0]);
+  mobile.expiresOn = '2027-02-15';
+  resetSubscriptionExpiry(mobile, paid.transactions);
+  const conflict = mergeMobileOperations(desktop, payload(desktop, [put('subscription', mobile, paid.subscriptions[0])]), new Date('2026-11-05T02:00:00Z'));
+  assert.equal(conflict.conflicts.length, 1);
+  assert.equal(conflict.accepted.length, 0);
+  assert.deepEqual(conflict.next, desktop);
+  const legacy = { ...paid.subscriptions[0], expiresOn: '2027-01-31' };
+  delete legacy.expiryRenewal;
+  const merged = mergeMobileOperations(paid, payload(paid, [put('subscription', legacy, paid.subscriptions[0])]), new Date('2026-11-05T02:00:00Z'));
+  assert.equal(merged.conflicts.length, 0);
+  assert.equal(merged.next.subscriptions[0].expiresOn, '2027-01-31');
+  assert.deepEqual(merged.next.subscriptions[0].expiryRenewal.baselineOccurrences, ['member:2026-11']);
+});
+
+test('a manual date edit followed by an offline renewal retains its new month-end anchor', () => {
+  const paid = applyRecurring(renewalState('2026-12-07'), '2026-11-05').state;
+  const phone = structuredClone(paid);
+  phone.subscriptions[0].expiresOn = '2027-01-31';
+  resetSubscriptionExpiry(phone.subscriptions[0], phone.transactions);
+  const renewed = applyRecurring(phone, '2026-12-05').state;
+  const operations = [put('subscription', renewed.subscriptions[0], paid.subscriptions[0]), tx(renewed.transactions[1])];
+  const merged = mergeMobileOperations(paid, payload(paid, operations), new Date('2026-12-05T02:00:00Z'));
+  assert.equal(merged.conflicts.length, 0);
+  assert.equal(merged.next.subscriptions[0].expiryRenewal.baseDate, '2027-01-31');
+  assert.equal(merged.next.subscriptions[0].expiresOn, '2027-02-28');
+  assert.equal(applyRecurring(merged.next, '2027-01-05').state.subscriptions[0].expiresOn, '2027-03-31');
+});
+
+test('a rejected pending automatic transaction does not extend expiry, while its successful retry extends once', () => {
+  const desktop = renewalState();
+  const phone = applyRecurring(desktop, '2026-11-05').state;
+  const badCharge = { ...phone.transactions[0], accountId: 'missing-account' };
+  const now = new Date('2026-11-05T02:00:00Z');
+  const result = mergeMobileOperations(desktop, payload(desktop, [put('subscription', phone.subscriptions[0], desktop.subscriptions[0]), tx(badCharge)]), now);
+  assert.equal(result.accepted.length, 1);
+  assert.equal(result.conflicts.length, 1);
+  assert.equal(result.next.transactions.length, 0);
+  assert.equal(result.next.subscriptions[0].expiresOn, '2026-11-05');
+  assert.deepEqual(result.next.subscriptions[0].expiryRenewal.renewedOccurrences, []);
+  const retried = mergeMobileOperations(result.next, payload(result.next, [tx(phone.transactions[0])]), now);
+  assert.equal(retried.conflicts.length, 0);
+  assert.equal(retried.next.subscriptions[0].expiresOn, '2026-12-05');
+  assert.equal(retried.next.transactions.length, 1);
+});
+
+test('paid renewal receipts survive deleted phone transactions and reject future receipts before their Beijing hour', () => {
+  const desktop = renewalState();
+  const phone = applyRecurring(desktop, '2026-11-05').state;
+  const accepted = mergeMobileOperations(desktop, payload(desktop, [put('subscription', phone.subscriptions[0], desktop.subscriptions[0])]), new Date('2026-11-05T02:00:00Z'));
+  assert.equal(accepted.conflicts.length, 0);
+  assert.equal(accepted.next.transactions.length, 0);
+  assert.equal(accepted.next.subscriptions[0].expiresOn, '2026-12-05');
+  const future = mergeMobileOperations(desktop, payload(desktop, [put('subscription', phone.subscriptions[0], desktop.subscriptions[0]), tx(phone.transactions[0])]), new Date('2026-11-04T02:00:00Z'));
+  assert.equal(future.accepted.length, 0);
+  assert.equal(future.conflicts.length, 2);
+  assert.equal(future.next.subscriptions[0].expiresOn, '2026-11-05');
+  assert.equal(future.next.transactions.length, 0);
+
+  const hourly = renewalState();
+  hourly.schemaVersion = 3;
+  Object.assign(hourly.subscriptions[0], { startHour: 18, billingHour: 18, processedOccurrences: ['member:2026-11'] });
+  const earlyReceipt = structuredClone(hourly.subscriptions[0]);
+  earlyReceipt.expiryRenewal.renewedOccurrences = ['member:2026-11'];
+  earlyReceipt.expiresOn = '2026-12-05';
+  const early = mergeMobileOperations(hourly, payload(hourly, [put('subscription', earlyReceipt, hourly.subscriptions[0])]), new Date('2026-11-05T09:59:59Z'));
+  assert.equal(early.accepted.length, 0, 'An existing skipped-period marker must not authorize an early renewal');
+  assert.equal(early.conflicts.length, 1);
+  assert.equal(early.next.subscriptions[0].expiresOn, '2026-11-05');
+});
 
 test('hourly subscription sync promotes and retains schema 3 across entity and transaction edits', () => {
   const desktop = state();
@@ -190,34 +347,34 @@ test('linked subscription accounts, expiry and notes survive sync, phone edits, 
   };
   const sub = subscription(details);
   const wire = value => JSON.parse(JSON.stringify(value));
-  const checkDetails = book => {
-    for (const field of Object.keys(details)) assert.deepEqual(book.subscriptions[0][field], details[field], field);
+  const checkDetails = (book, expiry = '2027-02-05') => {
+    for (const field of Object.keys(details)) assert.deepEqual(book.subscriptions[0][field], field === 'expiresOn' ? expiry : details[field], field);
     assert.equal(validateState(book), true);
   };
   let result = mergeMobileOperations(desktop, wire(payload(desktop, [put('subscription', sub)])));
   assert.equal(result.conflicts.length, 0); assert.equal(result.accepted.length, 1); checkDetails(result.next);
   let booked = applyRecurring(result.next, '2026-11-05');
-  assert.equal(booked.added.length, 1); checkDetails(booked.state);
+  assert.equal(booked.added.length, 1); checkDetails(booked.state, '2027-03-05');
 
   // The existing phone editor copies the entire subscription before changing its visible fields.
   const phoneBase = wire(booked.state.subscriptions[0]);
   const renamed = { ...phoneBase, name: '手机修改会员名称' };
   result = mergeMobileOperations(booked.state, wire(payload(booked.state, [put('subscription', renamed, phoneBase)])));
-  assert.equal(result.conflicts.length, 0); assert.equal(result.next.subscriptions[0].name, renamed.name); checkDetails(result.next);
+  assert.equal(result.conflicts.length, 0); assert.equal(result.next.subscriptions[0].name, renamed.name); checkDetails(result.next, '2027-03-05');
 
   const beforePause = wire(result.next.subscriptions[0]);
   const paused = setSubscriptionActive(result.next, sub.id, false, '2026-11-06');
   result = mergeMobileOperations(result.next, wire(payload(result.next, [put('subscription', paused.subscriptions[0], beforePause)])));
-  assert.equal(result.conflicts.length, 0); checkDetails(result.next);
+  assert.equal(result.conflicts.length, 0); checkDetails(result.next, '2027-03-05');
   booked = applyRecurring(result.next, '2026-12-05');
-  assert.equal(booked.added.length, 0); checkDetails(booked.state);
+  assert.equal(booked.added.length, 0); checkDetails(booked.state, '2027-03-05');
 
   const beforeResume = wire(booked.state.subscriptions[0]);
   const resumed = setSubscriptionActive(booked.state, sub.id, true, '2027-01-04');
   result = mergeMobileOperations(booked.state, wire(payload(booked.state, [put('subscription', resumed.subscriptions[0], beforeResume)])));
-  assert.equal(result.conflicts.length, 0); checkDetails(result.next);
+  assert.equal(result.conflicts.length, 0); checkDetails(result.next, '2027-03-05');
   booked = applyRecurring(result.next, '2027-01-05');
-  assert.deepEqual(booked.added.map(item => item.date), ['2027-01-05']); checkDetails(booked.state);
+  assert.deepEqual(booked.added.map(item => item.date), ['2027-01-05']); checkDetails(booked.state, '2027-04-05');
   assert.equal(booked.state.transactions.length, 2);
   assert.equal(applyRecurring(booked.state, '2027-01-05').added.length, 0);
 });

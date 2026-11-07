@@ -110,6 +110,66 @@ export function occurrenceKey(subscription, dueDate) {
   return `${subscription.id}:${dueDate.slice(0, 7)}`;
 }
 
+function subscriptionOccurrenceSet(values, sub, label) {
+  array(values, label, 3600);
+  const occurrences = new Set();
+  const prefix = `${sub.id}:`;
+  for (const key of values) {
+    string(key, label, 100);
+    if (!key.startsWith(prefix) || !isValidDate(`${key.slice(prefix.length)}-01`)) fail(`订阅${label}格式不正确`);
+    if (occurrences.has(key)) fail(`订阅${label}不能重复`);
+    occurrences.add(key);
+  }
+  return occurrences;
+}
+
+function renewedExpiry(renewal) {
+  return addMonthsDue(renewal.baseDate, renewal.renewedOccurrences.length, Number(renewal.baseDate.slice(8)));
+}
+
+/** A manual expiry edit covers all existing paid periods and starts a new calendar anchor. */
+export function resetSubscriptionExpiry(sub, transactions) {
+  if (!sub.recurring || !sub.expiresOn) {
+    delete sub.expiryRenewal;
+    return sub;
+  }
+  const baseline = new Set([
+    ...(sub.expiryRenewal?.baselineOccurrences || []),
+    ...(sub.expiryRenewal?.renewedOccurrences || []),
+    ...transactions.filter(tx => tx.type === 'expense' && tx.subscriptionId === sub.id && tx.occurrenceKey).map(tx => tx.occurrenceKey),
+  ]);
+  sub.expiryRenewal = { baseDate: sub.expiresOn, baselineOccurrences: [...baseline].sort(), renewedOccurrences: [] };
+  return sub;
+}
+
+/** Extend an explicit membership expiry once for each paid recurring period. */
+export function reconcileSubscriptionExpiry(state, now = new Date(), newOccurrences = []) {
+  const { date: today } = subscriptionClock(now);
+  const newlyPaid = new Set(newOccurrences);
+  const payments = new Map();
+  for (const tx of state.transactions) {
+    if (tx.type !== 'expense' || !tx.subscriptionId || !tx.occurrenceKey) continue;
+    if (!payments.has(tx.subscriptionId)) payments.set(tx.subscriptionId, []);
+    payments.get(tx.subscriptionId).push(tx);
+  }
+  for (const sub of state.subscriptions) {
+    if (!sub.recurring || !sub.expiresOn) continue;
+    const initialized = own(sub, 'expiryRenewal');
+    const renewal = sub.expiryRenewal || { baseDate: sub.expiresOn, baselineOccurrences: [], renewedOccurrences: [] };
+    const baseline = new Set(renewal.baselineOccurrences), renewed = new Set(renewal.renewedOccurrences);
+    for (const tx of payments.get(sub.id) || []) {
+      const key = tx.occurrenceKey;
+      if (baseline.has(key) || renewed.has(key)) continue;
+      if (!newlyPaid.has(key) && tx.date > today) continue;
+      if (newlyPaid.has(key) || initialized || tx.date >= renewal.baseDate) renewed.add(key);
+      else baseline.add(key);
+    }
+    sub.expiryRenewal = { baseDate: renewal.baseDate, baselineOccurrences: [...baseline].sort(), renewedOccurrences: [...renewed].sort() };
+    sub.expiresOn = renewedExpiry(sub.expiryRenewal);
+  }
+  return state;
+}
+
 /** Retain the schema gate so older applications reject schedules they cannot honor. */
 export function upgradeSchemaVersion(state) {
   if (state.accounts.some(account => accountCurrency(account) !== 'CNY')) state.schemaVersion = Math.max(state.schemaVersion, 2);
@@ -239,6 +299,16 @@ export function validateState(state) {
         if (sub.expiresOn < sub.startDate) fail('会员到期日期不能早于首次扣款日期');
       }
     }
+    if (own(sub, 'expiryRenewal')) {
+      if (!sub.recurring) fail('到期顺延记录需要连续订阅');
+      const renewal = sub.expiryRenewal;
+      object(renewal, '到期顺延记录');
+      date(renewal.baseDate, '到期顺延基准日期');
+      const baseline = subscriptionOccurrenceSet(renewal.baselineOccurrences, sub, '已覆盖到期账期');
+      const renewed = subscriptionOccurrenceSet(renewal.renewedOccurrences, sub, '已顺延到期账期');
+      if ([...renewed].some(key => baseline.has(key))) fail('到期顺延账期不能与已覆盖账期重复');
+      if (!sub.expiresOn || sub.expiresOn !== renewedExpiry(renewal)) fail('会员到期日期与到期顺延记录不一致');
+    }
     integer(sub.billingDay, '每月扣款日', 1, 31);
     boolean(sub.recurring, '连续订阅');
     boolean(sub.active, '订阅启用状态');
@@ -248,15 +318,7 @@ export function validateState(state) {
     }
     color(sub.color, '订阅颜色');
     string(sub.icon, '订阅图标', 80);
-    array(sub.processedOccurrences, '已处理订阅账期', 3600);
-    const processed = new Set();
-    for (const key of sub.processedOccurrences) {
-      string(key, '已处理订阅账期', 100);
-      const prefix = `${sub.id}:`;
-      if (!key.startsWith(prefix) || !isValidDate(`${key.slice(prefix.length)}-01`)) fail('订阅已处理账期格式不正确');
-      if (processed.has(key)) fail('订阅已处理账期不能重复');
-      processed.add(key);
-    }
+    subscriptionOccurrenceSet(sub.processedOccurrences, sub, '已处理订阅账期');
   }
   for (const goal of state.goals) {
     string(goal.name, '储蓄目标名称', 80);
@@ -380,6 +442,7 @@ export function applyRecurring(state, now = new Date()) {
     }
     sub.processedOccurrences = [...processed].sort();
   }
+  reconcileSubscriptionExpiry(next, now, added.map(tx => tx.occurrenceKey));
   validateState(next);
   return { state: next, added };
 }

@@ -24,6 +24,13 @@ public class AndroidInteropHarness {
       store.saveGoal(new JSONObject().put("id","mobile_goal").put("name","手机储蓄心愿").put("target",500000).put("saved",25000).put("color","#778899"));
       store.saveSettings(new JSONObject().put("monthlyBudget",123456).put("currency","CNY"));
       store.saveSubscription(new JSONObject().put("id","mobile_sub").put("name","手机订阅").put("amount",500).put("currency","CNY").put("accountId","wallet").put("category","会员订阅").put("startDate",LedgerStore.today()).put("billingDay",Integer.parseInt(LedgerStore.today().substring(8))).put("active",true).put("recurring",true).put("icon","repeat").put("color","#778899").put("processedOccurrences",new JSONArray()));
+    } else if(action.equals("membership-renew")) {
+      String today=LedgerStore.today();
+      store.saveSubscription(new JSONObject().put("id","renewing_membership").put("name","自动顺延会员").put("accountId","wallet").put("amount",100).put("category","会员订阅").put("startDate",today).put("billingDay",Integer.parseInt(today.substring(8))).put("recurring",true).put("active",true).put("expiresOn",today));
+      output.put("expectedExpiry",LocalDate.parse(today).plusMonths(1).toString());
+    } else if(action.equals("membership-edit-expiry")) {
+      String expiry=LocalDate.parse(LedgerStore.today()).plusDays(10).toString();
+      store.saveSubscription(new JSONObject().put("id","renewing_membership").put("expiresOn",expiry));output.put("expectedExpiry",expiry);
     } else if(action.equals("apple-edit")) {
       store.saveAccount(new JSONObject().put("id","desktop_apple_tr").put("openingBalance",20050));
     } else if(action.equals("apple-convert")) {

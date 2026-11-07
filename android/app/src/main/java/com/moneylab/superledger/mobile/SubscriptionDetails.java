@@ -4,8 +4,10 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 /** Optional membership details, with the same schema and calendar rules as engine.mjs. */
 public final class SubscriptionDetails {
@@ -58,6 +60,28 @@ public final class SubscriptionDetails {
                 if (!MobileLedger.isValidDate(expiry)) throw new Exception("会员到期日期必须为 1900 至 2199 年的有效 YYYY-MM-DD");
                 if (expiry.compareTo(sub.getString("startDate")) < 0) throw new Exception("会员到期日期不能早于首次扣款日期");
             }
+        }
+        if (sub.has("expiryRenewal")) {
+            JSONObject renewal = sub.optJSONObject("expiryRenewal");
+            if (renewal == null || !sub.optBoolean("recurring") || sub.optString("expiresOn").isEmpty())
+                throw new Exception("到期续期记录需要连续订阅和会员到期日期");
+            String baseDate = text(renewal.opt("baseDate"), "续期基准日期", 10, false);
+            if (!MobileLedger.isValidDate(baseDate)) throw new Exception("续期基准日期无效");
+            Set<String> keys = new HashSet<>();
+            for (String field : new String[]{"baselineOccurrences", "renewedOccurrences"}) {
+                JSONArray occurrences = renewal.optJSONArray(field);
+                if (occurrences == null || occurrences.length() > 3600) throw new Exception("到期续期账期列表无效");
+                String prefix = sub.getString("id") + ":";
+                for (int i = 0; i < occurrences.length(); i++) {
+                    Object raw = occurrences.get(i);
+                    if (!(raw instanceof String)) throw new Exception("到期续期账期格式无效");
+                    String key = (String) raw;
+                    if (!key.startsWith(prefix) || !MobileLedger.isValidDate(key.substring(prefix.length()) + "-01") || !keys.add(key))
+                        throw new Exception("到期续期账期无效或重复");
+                }
+            }
+            String expected = MobileLedger.addMonthsDue(baseDate, renewal.getJSONArray("renewedOccurrences").length(), LocalDate.parse(baseDate).getDayOfMonth());
+            if (!expected.equals(sub.getString("expiresOn"))) throw new Exception("会员到期日期与续期记录不一致");
         }
     }
 

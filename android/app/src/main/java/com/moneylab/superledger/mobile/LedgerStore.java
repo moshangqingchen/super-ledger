@@ -181,6 +181,9 @@ public final class LedgerStore {
         requireIdle();change(()->{JSONObject value=mergedRecord("subscription",input,"sub_"),old=getRecord(state(),"subscription",value.getString("id"));JSONObject account=getRecord(state(),"account",value.optString("accountId"));if(account==null)throw new Exception("请选择订阅扣款账户");value.put("currency",MobileLedger.currency(account)).put("category","会员订阅");defaultValue(value,"active",true);defaultValue(value,"recurring",true);defaultValue(value,"color","#8bc8ab");defaultValue(value,"icon","repeat");defaultValue(value,"tier","");defaultValue(value,"billingDay",Integer.parseInt(value.getString("startDate").substring(8)));
             // Billing history is not user-editable; retaining it prevents deleted charges being recreated.
             value.put("processedOccurrences",old==null?new JSONArray():copyArray(old.getJSONArray("processedOccurrences")));
+            if(old!=null&&old.has("expiryRenewal"))value.put("expiryRenewal",copy(old.getJSONObject("expiryRenewal")));else value.remove("expiryRenewal");
+            if(old!=null&&(!old.optString("expiresOn").equals(value.optString("expiresOn"))||old.getBoolean("recurring")!=value.getBoolean("recurring")))
+                value=MobileLedger.resetSubscriptionExpiry(value,state().getJSONArray("transactions"));
             ZonedDateTime now=MobileLedger.beijingDateTime(System.currentTimeMillis());
             if(old!=null&&!old.getBoolean("active")&&value.getBoolean("active")){value.put("active",false);value=MobileLedger.setSubscriptionActive(value,true,now.toLocalDate().toString(),now.getHour());}
             queueRecord("subscription",value.getString("id"),value);promoteSchema();MobileLedger.validateState(state());applyRecurringInternal(now.toLocalDate().toString(),now.getHour());});

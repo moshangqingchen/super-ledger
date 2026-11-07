@@ -5,6 +5,7 @@ import {
   makeInitialState, makeEmptyState, validateState, applyRecurring, getBalances,
   moneyToCents, addMonthsDue, setSubscriptionActive, nextSubscriptionDue, replaceRecord,
   beijingDateTime, subscriptionDueHour, subscriptionExpiryStatus, upgradeSchemaVersion,
+  reconcileSubscriptionExpiry, resetSubscriptionExpiry,
 } from '../engine.mjs';
 
 function fixture(startDate = '2024-01-31', billingDay = 31) {
@@ -186,6 +187,199 @@ test('hour schedules require schema three and promotion never downgrades existin
   foreign.schemaVersion = 4;
   upgradeSchemaVersion(foreign);
   assert.throws(() => validateState(foreign), /不支持此账本版本/);
+});
+
+test('a successful Beijing-hour payment advances explicit membership expiry once', () => {
+  const state = fixture('2026-11-07', 7);
+  Object.assign(state.subscriptions[0], { startHour: 10, billingHour: 10, expiresOn: '2026-11-07' });
+  upgradeSchemaVersion(state);
+  const original = structuredClone(state);
+  const before = applyRecurring(state, new Date('2026-11-07T01:59:59Z'));
+  assert.equal(before.added.length, 0);
+  assert.equal(before.state.subscriptions[0].expiresOn, '2026-11-07');
+  const paid = applyRecurring(before.state, new Date('2026-11-07T02:00:00Z'));
+  assert.equal(paid.added.length, 1);
+  assert.equal(paid.state.subscriptions[0].expiresOn, '2026-12-07');
+  assert.deepEqual(paid.state.subscriptions[0].expiryRenewal, {
+    baseDate: '2026-11-07', baselineOccurrences: [], renewedOccurrences: ['music:2026-11'],
+  });
+  assert.equal(subscriptionExpiryStatus(paid.state.subscriptions[0], '2026-11-07').days, 30);
+  assert.deepEqual(applyRecurring(paid.state, new Date('2026-11-07T02:30:00Z')).state, paid.state);
+  assert.deepEqual(state, original);
+});
+
+test('expiry renewal keeps its original calendar-day anchor across catch-up and short months', () => {
+  for (const [start, afterFirst, afterSecond, afterThird] of [
+    ['2024-01-31', '2024-02-29', '2024-03-31', '2024-04-30'],
+    ['2023-01-31', '2023-02-28', '2023-03-31', '2023-04-30'],
+  ]) {
+    const state = fixture(start, 31);
+    state.subscriptions[0].expiresOn = start;
+    const first = applyRecurring(state, start);
+    assert.equal(first.state.subscriptions[0].expiresOn, afterFirst);
+    const second = applyRecurring(first.state, afterFirst);
+    assert.equal(second.state.subscriptions[0].expiresOn, afterSecond);
+    const third = applyRecurring(second.state, afterSecond);
+    assert.equal(third.state.subscriptions[0].expiresOn, afterThird);
+    assert.deepEqual(applyRecurring(state, afterSecond).state, third.state);
+    const restored = JSON.parse(JSON.stringify(third.state));
+    assert.equal(validateState(restored), true);
+    assert.deepEqual(applyRecurring(restored, afterSecond).state, restored);
+  }
+  const leap = fixture('2024-02-29', 29);
+  leap.subscriptions[0].expiresOn = '2024-02-29';
+  const january = applyRecurring(leap, '2025-01-29');
+  assert.equal(january.state.subscriptions[0].expiresOn, '2025-02-28');
+  assert.equal(applyRecurring(january.state, '2025-02-28').state.subscriptions[0].expiresOn, '2025-03-29');
+});
+
+test('new payments extend an already future explicit expiry without shortening it', () => {
+  const state = fixture('2026-11-07', 7);
+  state.subscriptions[0].expiresOn = '2026-12-31';
+  const paid = applyRecurring(state, '2026-11-07');
+  assert.equal(paid.state.subscriptions[0].expiresOn, '2027-01-31');
+  assert.equal(paid.state.subscriptions[0].expiryRenewal.baseDate, '2026-12-31');
+});
+
+test('existing paid subscriptions repair stale expiry once and baseline already covered history', () => {
+  const legacy = applyRecurring(fixture('2026-11-07', 7), '2026-11-07').state;
+  legacy.subscriptions[0].expiresOn = '2026-11-07';
+  const original = structuredClone(legacy);
+  const repaired = applyRecurring(legacy, '2026-11-07');
+  assert.equal(repaired.added.length, 0);
+  assert.equal(repaired.state.subscriptions[0].expiresOn, '2026-12-07');
+  assert.deepEqual(repaired.state.transactions, legacy.transactions);
+  assert.deepEqual(applyRecurring(repaired.state, '2026-11-07').state, repaired.state);
+  assert.deepEqual(legacy, original);
+
+  const future = structuredClone(legacy);
+  future.subscriptions[0].expiresOn = '2026-12-31';
+  const covered = applyRecurring(future, '2026-11-07');
+  assert.equal(covered.state.subscriptions[0].expiresOn, '2026-12-31');
+  assert.deepEqual(covered.state.subscriptions[0].expiryRenewal.baselineOccurrences, ['music:2026-11']);
+  assert.deepEqual(covered.state.subscriptions[0].expiryRenewal.renewedOccurrences, []);
+
+  const history = applyRecurring(fixture(), '2024-03-31').state;
+  history.subscriptions[0].expiresOn = '2024-01-31';
+  assert.equal(applyRecurring(history, '2024-03-31').state.subscriptions[0].expiresOn, '2024-04-30');
+});
+
+test('expiry renewal requires a real recurring payment and retains history after transaction deletion', () => {
+  const state = fixture('2026-11-07', 7);
+  Object.assign(state.subscriptions[0], { expiresOn: '2026-11-07', processedOccurrences: ['music:2026-11'] });
+  const skipped = applyRecurring(state, '2026-11-07');
+  assert.equal(skipped.state.subscriptions[0].expiresOn, '2026-11-07');
+  assert.deepEqual(skipped.state.subscriptions[0].expiryRenewal.renewedOccurrences, []);
+  const paused = fixture('2026-11-07', 7);
+  Object.assign(paused.subscriptions[0], { expiresOn: '2026-11-07', active: false });
+  assert.equal(applyRecurring(paused, '2026-12-07').state.subscriptions[0].expiresOn, '2026-11-07');
+
+  const once = fixture('2026-11-07', 7);
+  Object.assign(once.subscriptions[0], { expiresOn: '2026-11-07', recurring: false });
+  const single = applyRecurring(once, '2026-11-07');
+  assert.equal(single.added.length, 1);
+  assert.equal(single.state.subscriptions[0].expiresOn, '2026-11-07');
+  assert.equal(Object.hasOwn(single.state.subscriptions[0], 'expiryRenewal'), false);
+  const noExpiry = applyRecurring(fixture('2026-11-07', 7), '2026-11-07');
+  assert.equal(Object.hasOwn(noExpiry.state.subscriptions[0], 'expiryRenewal'), false);
+  assert.equal(nextSubscriptionDue(noExpiry.state.subscriptions[0], '2026-11-07'), '2026-12-07');
+
+  const paid = fixture('2026-11-07', 7);
+  paid.subscriptions[0].expiresOn = '2026-11-07';
+  const deleted = applyRecurring(paid, '2026-11-07').state;
+  deleted.transactions = [];
+  assert.deepEqual(applyRecurring(deleted, '2026-11-07').state, deleted);
+});
+
+test('newly synchronized real expenses advance an initialized expiry only after their Beijing date arrives', () => {
+  const state = fixture('2026-11-07', 7);
+  state.subscriptions[0].expiresOn = '2026-11-07';
+  const initialized = applyRecurring(state, '2026-11-06').state;
+  const paid = applyRecurring(state, '2026-11-07').state;
+  initialized.transactions = paid.transactions;
+  assert.equal(reconcileSubscriptionExpiry(initialized, '2026-11-06'), initialized);
+  assert.equal(initialized.subscriptions[0].expiresOn, '2026-11-07');
+  reconcileSubscriptionExpiry(initialized, '2026-11-07');
+  assert.equal(initialized.subscriptions[0].expiresOn, '2026-12-07');
+  const snapshot = structuredClone(initialized);
+  reconcileSubscriptionExpiry(initialized, '2026-11-07');
+  assert.deepEqual(initialized, snapshot);
+});
+
+test('future imported payments remain uncovered until their Beijing date arrives', () => {
+  const imported = applyRecurring(fixture('2026-11-07', 7), '2026-11-07').state;
+  imported.subscriptions[0].expiresOn = '2026-11-07';
+  const before = applyRecurring(imported, new Date('2026-11-06T15:59:59Z'));
+  assert.equal(before.added.length, 0);
+  assert.equal(before.state.subscriptions[0].expiresOn, '2026-11-07');
+  assert.deepEqual(before.state.subscriptions[0].expiryRenewal, {
+    baseDate: '2026-11-07', baselineOccurrences: [], renewedOccurrences: [],
+  });
+  const due = applyRecurring(before.state, new Date('2026-11-06T16:00:00Z'));
+  assert.equal(due.added.length, 0);
+  assert.equal(due.state.subscriptions[0].expiresOn, '2026-12-07');
+  assert.deepEqual(due.state.subscriptions[0].expiryRenewal.renewedOccurrences, ['music:2026-11']);
+  assert.deepEqual(applyRecurring(due.state, new Date('2026-11-06T16:30:00Z')).state, due.state);
+  assert.equal(Object.hasOwn(imported.subscriptions[0], 'expiryRenewal'), false);
+});
+
+test('manual expiry edits reset the day anchor and retain paid or deleted periods as covered', () => {
+  const state = fixture();
+  state.subscriptions[0].expiresOn = '2024-01-31';
+  const first = applyRecurring(state, '2024-01-31').state;
+  const sub = first.subscriptions[0];
+  sub.expiresOn = '2024-03-15';
+  assert.equal(resetSubscriptionExpiry(sub, first.transactions), sub);
+  assert.deepEqual(sub.expiryRenewal, {
+    baseDate: '2024-03-15', baselineOccurrences: ['music:2024-01'], renewedOccurrences: [],
+  });
+  first.transactions = [];
+  const second = applyRecurring(first, '2024-02-29').state;
+  assert.equal(second.subscriptions[0].expiresOn, '2024-04-15');
+  assert.deepEqual(second.subscriptions[0].expiryRenewal.baselineOccurrences, ['music:2024-01']);
+  assert.deepEqual(second.subscriptions[0].expiryRenewal.renewedOccurrences, ['music:2024-02']);
+  resetSubscriptionExpiry(second.subscriptions[0], second.transactions);
+  assert.deepEqual(second.subscriptions[0].expiryRenewal.baselineOccurrences, ['music:2024-01', 'music:2024-02']);
+
+  second.subscriptions[0].expiresOn = '';
+  resetSubscriptionExpiry(second.subscriptions[0], second.transactions);
+  assert.equal(Object.hasOwn(second.subscriptions[0], 'expiryRenewal'), false);
+  sub.recurring = false;
+  resetSubscriptionExpiry(sub, []);
+  assert.equal(Object.hasOwn(sub, 'expiryRenewal'), false);
+});
+
+test('expiry renewal metadata validates its baseline, period sets and effective calendar date', () => {
+  const state = fixture();
+  state.subscriptions[0].expiresOn = '2024-01-31';
+  const paid = applyRecurring(state, '2024-01-31').state;
+  assert.equal(validateState(paid), true);
+  for (const mutate of [
+    sub => { sub.recurring = false; },
+    sub => { sub.expiryRenewal = null; },
+    sub => { sub.expiryRenewal.baseDate = '2024-02-30'; },
+    sub => { sub.expiryRenewal.baselineOccurrences = null; },
+    sub => { sub.expiryRenewal.renewedOccurrences = ['wrong:2024-01']; },
+    sub => { sub.expiryRenewal.renewedOccurrences = ['music:2024-13']; },
+    sub => { sub.expiryRenewal.renewedOccurrences = ['music:2024-01', 'music:2024-01']; },
+    sub => { sub.expiryRenewal.baselineOccurrences = ['music:2023-12', 'music:2023-12']; },
+    sub => { sub.expiryRenewal.baselineOccurrences = ['music:2024-01']; },
+    sub => { sub.expiresOn = '2024-02-28'; },
+    sub => { sub.expiresOn = ''; },
+  ]) {
+    const invalid = structuredClone(paid);
+    mutate(invalid.subscriptions[0]);
+    assert.throws(() => validateState(invalid));
+  }
+});
+
+test('expiry overflow fails atomically before an automatic payment can be persisted', () => {
+  const state = fixture('2199-12-31', 31);
+  state.subscriptions[0].expiresOn = '2199-12-31';
+  const original = structuredClone(state);
+  assert.throws(() => applyRecurring(state, '2199-12-31'), /超过支持范围/);
+  assert.deepEqual(state, original);
+  assert.equal(state.transactions.length, 0);
 });
 
 test('next due preserves a future first date across years and follows month-end billing after it', () => {

@@ -1,7 +1,7 @@
 import http from 'node:http';
 import os from 'node:os';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
-import { validateState, upgradeSchemaVersion, beijingDateTime, subscriptionDueHour, addMonthsDue, isValidDate } from './engine.mjs';
+import { validateState, upgradeSchemaVersion, beijingDateTime, subscriptionDueHour, addMonthsDue, isValidDate, resetSubscriptionExpiry, reconcileSubscriptionExpiry } from './engine.mjs';
 
 export const SESSION_MS = 10 * 60 * 1000;
 const MAX_WIRE_BYTES = 4 * 1024 * 1024;
@@ -99,15 +99,69 @@ function suspectedDuplicate(state, incoming) {
   });
 }
 
-function withoutProcessed(record) {
+function expiryBaseline(record, other) {
+  if (!record?.expiresOn) return null;
+  const renewal = object(record.expiryRenewal) ? record.expiryRenewal
+    : other?.expiryRenewal?.baseDate === record.expiresOn ? other.expiryRenewal : null;
+  return {
+    baseDate: renewal?.baseDate || record.expiresOn,
+    baselineOccurrences: Array.isArray(renewal?.baselineOccurrences) ? [...renewal.baselineOccurrences].sort() : [],
+  };
+}
+
+function withoutProcessed(record, other) {
   if (!record) return record;
   const value = structuredClone(record);
   delete value.processedOccurrences;
+  const baseline = expiryBaseline(record, other);
+  if (baseline) {
+    // Automatic extensions are derived state. A changed manual baseline remains an edit.
+    value.expiresOn = baseline.baseDate;
+    value.expiryRenewal = baseline;
+  }
   return value;
 }
 
 function sameEntity(left, right, entity) {
-  return entity === 'subscription' ? same(withoutProcessed(left), withoutProcessed(right)) : same(left, right);
+  return entity === 'subscription' ? same(withoutProcessed(left, right), withoutProcessed(right, left)) : same(left, right);
+}
+
+function mergeSubscriptionExpiry(record, current, base, transactions, pendingCharges) {
+  if (!record.recurring || !record.expiresOn) {
+    delete record.expiryRenewal;
+    return;
+  }
+  const previous = current?.expiryRenewal;
+  const manualLegacyExpiry = current && !record.expiryRenewal && base && record.expiresOn !== base.expiresOn;
+  const sameBaseline = !manualLegacyExpiry && same(expiryBaseline(record, current), expiryBaseline(current, record));
+  if (sameBaseline && previous) {
+    const baseline = new Set(previous.baselineOccurrences);
+    record.expiryRenewal = {
+      baseDate: previous.baseDate,
+      baselineOccurrences: [...baseline].sort(),
+      renewedOccurrences: [...new Set([...previous.renewedOccurrences, ...(record.expiryRenewal?.renewedOccurrences || [])])]
+        .filter(key => !baseline.has(key)).sort(),
+    };
+  } else if (current && !sameBaseline) {
+    if (!record.expiryRenewal) {
+      if (previous) record.expiryRenewal = structuredClone(previous);
+      resetSubscriptionExpiry(record, transactions);
+    } else {
+      const renewed = new Set(record.expiryRenewal.renewedOccurrences);
+      record.expiryRenewal.baselineOccurrences = [...new Set([
+        ...record.expiryRenewal.baselineOccurrences,
+        ...(previous?.baselineOccurrences || []), ...(previous?.renewedOccurrences || []),
+        ...transactions.filter(tx => tx.subscriptionId === record.id && tx.occurrenceKey).map(tx => tx.occurrenceKey),
+      ])].filter(key => !renewed.has(key)).sort();
+    }
+  }
+  if (!record.expiryRenewal) return;
+  const covered = new Set([...(previous?.baselineOccurrences || []), ...(previous?.renewedOccurrences || [])]);
+  const paid = new Set(transactions.filter(tx => tx.subscriptionId === record.id && tx.occurrenceKey).map(tx => tx.occurrenceKey));
+  record.expiryRenewal.renewedOccurrences = record.expiryRenewal.renewedOccurrences
+    // The matching transaction may still be rejected later in this batch.
+    .filter(key => covered.has(key) || paid.has(key) || !pendingCharges.has(key));
+  record.expiresOn = addMonthsDue(record.expiryRenewal.baseDate, record.expiryRenewal.renewedOccurrences.length, Number(record.expiryRenewal.baseDate.slice(8)));
 }
 
 function sameScheduledCharge(left, right) {
@@ -141,6 +195,9 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
   const accepted = [], conflicts = [], summary = { added: 0, updated: 0, deleted: 0, duplicates: 0 };
   const batchIds = new Set();
   const clock = beijingDateTime(now);
+  const pendingCharges = new Set(payload.operations
+    .filter(operation => (operation?.entity || 'transaction') === 'transaction' && operation.kind === 'put' && operation.transaction?.subscriptionId)
+    .map(operation => operation.transaction.occurrenceKey));
   for (const operation of payload.operations) {
     const operationId = operation?.id;
     if (!object(operation) || typeof operationId !== 'string' || !ID.test(operationId) || batchIds.has(operationId)) throw fail(400, '同步操作标识缺失或重复。');
@@ -195,13 +252,22 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
       }
       candidate.schemaVersion = Math.max(candidate.schemaVersion, 2);
       try { upgradeSchemaVersion(candidate); validateState(candidate); } catch (error) { reject(error.message); continue; }
-      if (entity === 'subscription' && operation.kind === 'put' && candidate.schemaVersion >= 3) {
+      if (entity === 'subscription' && operation.kind === 'put') {
         const sub = candidate.subscriptions.find(item => item.id === recordId);
         const processed = new Set(current?.processedOccurrences || []);
-        const pending = sub.processedOccurrences.some(key => !processed.has(key)
+        const covered = new Set([...(current?.expiryRenewal?.baselineOccurrences || []), ...(current?.expiryRenewal?.renewedOccurrences || [])]);
+        const pendingProcessed = candidate.schemaVersion >= 3 && sub.processedOccurrences.some(key => !processed.has(key)
           && !candidate.transactions.some(tx => tx.occurrenceKey === key)
           && subscriptionOccurrencePending(sub, key.slice(sub.id.length + 1), clock));
-        if (pending) { reject('订阅的已记账账期尚未到北京时间扣账时间，请核对两端时间后重试。'); continue; }
+        const pendingRenewal = (sub.expiryRenewal?.renewedOccurrences || []).some(key => !covered.has(key)
+          && !candidate.transactions.some(tx => tx.occurrenceKey === key)
+          && subscriptionOccurrencePending(sub, key.slice(sub.id.length + 1), clock));
+        if (pendingProcessed || pendingRenewal) { reject('订阅的已记账账期尚未到北京时间扣账时间，请核对两端时间后重试。'); continue; }
+        try {
+          mergeSubscriptionExpiry(sub, current, operation.base, candidate.transactions, pendingCharges);
+          reconcileSubscriptionExpiry(candidate, now);
+          validateState(candidate);
+        } catch (error) { reject(error.message); continue; }
       }
       candidate._mobileSync.receipts[receiptKey] = digest; next = candidate; accepted.push(operationId);
       summary[operation.kind === 'delete' ? 'deleted' : current ? 'updated' : 'added']++;
@@ -247,7 +313,7 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
       if (!fullLedger && current?.subscriptionId && (tx.subscriptionId !== current.subscriptionId || tx.occurrenceKey !== current.occurrenceKey)) { reject('旧版手机不能修改订阅账单关联，请升级。'); continue; }
       if (!fullLedger && !current && (tx.subscriptionId || tx.occurrenceKey)) { reject('订阅计划请在电脑端创建。'); continue; }
       if (fullLedger && !current && tx.subscriptionId && (!tx.occurrenceKey || tx.id !== `rec_${tx.subscriptionId}_${tx.date?.slice(0, 7).replace('-', '')}`)) { reject('订阅自动账单的标识或账期无效。'); continue; }
-      if (fullLedger && !current && tx.subscriptionId && next.schemaVersion >= 3 && isValidDate(tx.date)) {
+      if (fullLedger && !current && tx.subscriptionId && isValidDate(tx.date)) {
         const sub = next.subscriptions.find(item => item.id === tx.subscriptionId);
         if (sub) {
           if (subscriptionOccurrencePending(sub, tx.date.slice(0, 7), clock)) {
@@ -270,7 +336,13 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
       else candidate.transactions.push(tx);
     }
     if (fullLedger) candidate.schemaVersion = Math.max(candidate.schemaVersion, 2);
-    try { upgradeSchemaVersion(candidate); validateState(candidate); }
+    try {
+      upgradeSchemaVersion(candidate);
+      validateState(candidate);
+      const newOccurrences = operation.kind === 'put' && !current && operation.transaction.occurrenceKey ? [operation.transaction.occurrenceKey] : [];
+      reconcileSubscriptionExpiry(candidate, now, newOccurrences);
+      validateState(candidate);
+    }
     catch (error) { reject(error.message); continue; }
     candidate._mobileSync.receipts[receiptKey] = digest;
     next = candidate;

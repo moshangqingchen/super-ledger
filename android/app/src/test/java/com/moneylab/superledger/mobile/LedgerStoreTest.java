@@ -158,6 +158,27 @@ public final class LedgerStoreTest {
         try{SyncClient.synchronize(oldDesktop,hourlyRequest);throw new AssertionError("hourly request reached an older desktop");}catch(AssertionError error){throw error;}catch(Exception expected){check(expected.getMessage().contains("1.8.10"),"hourly upload to an old desktop is rejected before encryption or network access");}
         pairingQr.put("supportedSchemaVersion",3);
         check(SyncClient.parsePairing(pairingQr.toString()).supportedSchemaVersion==3,"new desktop pairing advertises hourly support");
+        store=fresh(new File(workspace,"renewing-membership"));store.saveAccount(MobileLedgerTest.account("bank","CNY",10000,null));
+        String membershipStart=LedgerStore.today(),nextExpiry=java.time.LocalDate.parse(membershipStart).plusMonths(1).toString();
+        store.saveSubscription(MobileLedgerTest.subscription("renewing","bank",100,membershipStart,true).put("expiresOn",membershipStart));
+        JSONObject renewedBackup=store.snapshot(),renewedMember=renewedBackup.getJSONObject("state").getJSONArray("subscriptions").getJSONObject(0);
+        check(renewedMember.getString("expiresOn").equals(nextExpiry)&&renewedMember.getJSONObject("expiryRenewal").getJSONArray("renewedOccurrences").length()==1,"normal subscription save extends expiry with its successful expense");
+        store.saveSubscription(new JSONObject().put("id","renewing").put("name","改名后的会员"));
+        check(store.snapshot().getJSONObject("state").getJSONArray("subscriptions").getJSONObject(0).getString("expiresOn").equals(nextExpiry),"an unrelated edit preserves automatic expiry and its billing baseline");
+        String manualExpiry=java.time.LocalDate.parse(membershipStart).plusDays(10).toString();
+        store.saveSubscription(new JSONObject().put("id","renewing").put("expiresOn",manualExpiry));store.applyRecurring();
+        JSONObject manualMember=store.snapshot().getJSONObject("state").getJSONArray("subscriptions").getJSONObject(0);
+        check(manualMember.getString("expiresOn").equals(manualExpiry)&&manualMember.getJSONObject("expiryRenewal").getJSONArray("renewedOccurrences").length()==0&&manualMember.getJSONObject("expiryRenewal").getJSONArray("baselineOccurrences").length()==1,"manual expiry edit resets credits and same-period polling preserves the chosen date");
+        store.saveSubscription(new JSONObject().put("id","renewing").put("recurring",false));
+        check(!store.snapshot().getJSONObject("state").getJSONArray("subscriptions").getJSONObject(0).has("expiryRenewal"),"changing to single clears renewal metadata through the normal save entry point");
+        store.saveSubscription(new JSONObject().put("id","renewing").put("recurring",true));
+        check(store.snapshot().getJSONObject("state").getJSONArray("subscriptions").getJSONObject(0).getString("expiresOn").equals(manualExpiry),"changing back to monthly establishes a baseline without reusing an earlier expense");
+        store.saveSubscription(new JSONObject().put("id","renewing").put("expiresOn",""));
+        check(!store.snapshot().getJSONObject("state").getJSONArray("subscriptions").getJSONObject(0).has("expiryRenewal"),"clearing expiry removes metadata through normal save");
+        store.restoreBackup(renewedBackup);
+        JSONObject renewalRequest=store.syncRequest(UUID.randomUUID().toString());JSONObject outboundMember=null;
+        for(int i=0;i<renewalRequest.getJSONArray("operations").length();i++){JSONObject entry=renewalRequest.getJSONArray("operations").getJSONObject(i);if(entry.optString("entity").equals("subscription"))outboundMember=entry.getJSONObject("record");}
+        check(outboundMember!=null&&outboundMember.getString("expiresOn").equals(nextExpiry)&&outboundMember.getJSONObject("expiryRenewal").getJSONArray("renewedOccurrences").length()==1,"backup restoration and outbound synchronization retain exactly-once expiry credits");
         System.out.println("LedgerStore: " + checks + " checks passed (host adapters, not Android runtime)");
     }
 }

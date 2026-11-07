@@ -293,6 +293,33 @@ test('save, import and restart wait for the scheduled Beijing hour and preserve 
   }
 });
 
+test('opening a previously booked subscription repairs expiry once without charging again', async t => {
+  let current = new Date('2026-11-07T02:00:00Z');
+  const fixture = await startFixture(t, { now: () => current });
+  await fixture.close();
+  const state = makeEmptyState();
+  state.schemaVersion = 3;
+  state.accounts = [{ id: 'cash', name: '现金', type: '现金', openingBalance: 100000, color: '#123456' }];
+  state.subscriptions = [{ id: 'member', name: '已扣会员', amount: 1900, accountId: 'cash', category: '会员订阅', startDate: '2026-11-07', startHour: 10, billingDay: 7, billingHour: 10, recurring: true, active: true, color: '#123456', icon: 'music', expiresOn: '2026-11-07', processedOccurrences: ['member:2026-11'] }];
+  state.transactions = [{ id: 'rec_member_202611', type: 'expense', amount: 1900, accountId: 'cash', category: '会员订阅', title: '已扣会员', date: '2026-11-07', note: '订阅到期自动记账', subscriptionId: 'member', occurrenceKey: 'member:2026-11' }];
+  fs.writeFileSync(path.join(fixture.directory, 'ledger.json'), JSON.stringify(state));
+  await fixture.start();
+  const repaired = await readState(fixture);
+  assert.equal(repaired.subscriptions[0].expiresOn, '2026-12-07');
+  assert.deepEqual(repaired.transactions, state.transactions, 'Expiry repair must preserve the already booked expense exactly');
+  assert.deepEqual(await readState(fixture), repaired);
+  await fixture.close();
+  await fixture.start();
+  assert.deepEqual(await readState(fixture), repaired, 'Restart must not extend a paid period twice');
+  current = new Date('2026-12-07T01:59:59Z');
+  assert.deepEqual(await readState(fixture), repaired);
+  current = new Date('2026-12-07T02:00:00Z');
+  const renewed = await readState(fixture);
+  assert.equal(renewed.subscriptions[0].expiresOn, '2027-01-07');
+  assert.equal(renewed.transactions.length, 2);
+  assert.deepEqual(await readState(fixture), renewed);
+});
+
 async function blockedRecurringFixture(t) {
   const fixture = await startFixture(t);
   await fixture.close();
