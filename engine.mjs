@@ -369,6 +369,13 @@ export function setSubscriptionActive(state, subscriptionId, active, today = loc
   return next;
 }
 
+/** Overwrite a saved record in place. It may have been deleted while its form was open. */
+export function replaceRecord(records, id, record) {
+  const index = records.findIndex(item => item.id === id);
+  if (index < 0) fail('这条记录已被删除，修改没有保存。表单内容还在，需要的话请复制后重新添加。');
+  records[index] = record;
+}
+
 export function nextSubscriptionDue(sub, today = localDate()) {
   date(today, '当前日期');
   if (!sub.active) return null;

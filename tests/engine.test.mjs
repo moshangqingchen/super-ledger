@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   makeInitialState, makeEmptyState, validateState, applyRecurring, getBalances,
-  moneyToCents, addMonthsDue, setSubscriptionActive, nextSubscriptionDue,
+  moneyToCents, addMonthsDue, setSubscriptionActive, nextSubscriptionDue, replaceRecord,
 } from '../engine.mjs';
 
 function fixture(startDate = '2024-01-31', billingDay = 31) {
@@ -358,4 +359,23 @@ test('sample state works on ordinary and first-of-month dates and is explicitly 
     assert.equal(state.transactions.every(tx => tx.date <= today), true);
   }
   assert.equal(validateState(makeEmptyState()), true);
+});
+
+test('replacing a record keeps its position, and a deleted record fails instead of losing the edit', () => {
+  const records = [{ id: 'a', title: '旧' }, { id: 'b', title: '留' }];
+  replaceRecord(records, 'a', { id: 'a', title: '新' });
+  assert.deepEqual(records, [{ id: 'a', title: '新' }, { id: 'b', title: '留' }]);
+
+  const before = JSON.stringify(records);
+  assert.throws(() => replaceRecord(records, 'deleted', { id: 'deleted', title: '修改' }), /已被删除/);
+  assert.equal(JSON.stringify(records), before);
+  assert.equal(Object.hasOwn(records, '-1'), false);
+});
+
+test('all four edit forms save through replaceRecord, never through an unchecked index', () => {
+  const source = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /next\.\w+\[next\.\w+\.findIndex/);
+  for (const [collection, record] of [['transactions', 'tx'], ['accounts', 'item'], ['subscriptions', 'sub'], ['goals', 'goal']]) {
+    assert.ok(source.includes(`if(id)replaceRecord(next.${collection},id,${record});else next.${collection}.push(${record});`), collection);
+  }
 });
