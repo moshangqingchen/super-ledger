@@ -6,7 +6,7 @@
 
 ## 安装与打开
 
-Windows 1.8.8 可从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/tag/v1.8.8) 下载 `SuperLedger-Setup-1.8.8.exe`，也可运行本地构建的 `release/超级账本-安装-1.8.8.exe`。安装程序会为当前用户创建桌面与开始菜单入口。同一发布页提供 Android 1.3.5 的 `SuperLedger-Mobile-1.3.5.apk`，Windows 安装包也内附该版本。
+Windows 1.8.9 可从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/tag/v1.8.9) 下载 `SuperLedger-Setup-1.8.9.exe`，也可运行本地构建的 `release/超级账本-安装-1.8.9.exe`。安装程序会为当前用户创建桌面与开始菜单入口。同一发布页提供 Android 1.3.5 的 `SuperLedger-Mobile-1.3.5.apk`，Windows 安装包也内附该版本。
 
 也可直接打开 `release/win-unpacked/超级账本.exe`；免安装版必须保留整个 win-unpacked 文件夹。根目录的 `启动账本.cmd` 仅是兼容启动入口，日常使用桌面或开始菜单图标即可。
 
@@ -19,6 +19,8 @@ Windows 1.8.8 可从 [GitHub Releases](https://github.com/moshangqingchen/super-
 首次打开默认是空账本：账户、收支、订阅、储蓄心愿均为空，预算未设置，所有金额为零。点击「添加账户」后填写自己的余额开始使用。会员服务与 Logo 是可选目录，不会自动创建订阅记录。
 
 ## 功能
+
+- Windows 1.8.9 升级了账户卡片和订阅卡片的外观：柔和四边光、各服务的配色和可爱小元素；同一银行多张卡合并后显示为一叠，可一键全部展开。订阅页新增「详细／简约」切换，并记住你的选择。详见 [1.8.9 更新说明](docs/releases/1.8.9.md)。
 
 - Windows 1.8.8 的更新下载遇到短暂连接故障会自动重试，并在来源支持时接着下载。更新界面显示下载速度和重试进度。详见 [1.8.8 更新说明](docs/releases/1.8.8.md)。
 
