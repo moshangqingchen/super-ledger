@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+const { registeredSources } = createRequire(import.meta.url)('../desktop/update-sources.cjs');
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repository = 'moshangqingchen/super-ledger';
@@ -33,6 +35,7 @@ const payload = {
     sources: [{ id: 'gh-proxy', url: `https://gh-proxy.org/${androidArtifact.url}` }, { id: 'ghfast', url: `https://ghfast.top/${androidArtifact.url}` }, { id: 'github', url: androidArtifact.url }],
     packageName: 'com.moneylab.superledger.mobile', certificateSha256: 'fd5a4af713362682fd1fe4e638decb05077b4ec672966ce3bd75b80558d7e785', minSdk: 26 },
 };
+payload.windows.sources = registeredSources(payload.windows.url).map(({ id, url }) => ({ id, url }));
 const privatePath = path.resolve(process.env.LEDGER_UPDATE_SIGNING_KEY || path.join(root, '.release-signing', 'update-signing-private.pem'));
 if (!fs.existsSync(privatePath)) throw new Error('Restore the original private update-signing key before publishing. Do not generate a replacement key for existing installations.');
 const privateKey = createPrivateKey(fs.readFileSync(privatePath));

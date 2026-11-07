@@ -72,6 +72,12 @@ test('download speed and remaining time come from current measured bytes, not an
   assert.equal(invalid.remaining, '待估算'); assert.equal(invalid.speed, '1.0 KB/s');
 });
 
+test('automatic route selection and the active download route are shown without a fabricated speed', () => {
+  const selecting = updateTransferDetails({ selectingSource: true, sourceLabel: '', bytesPerSecond: 1024 }, 9000);
+  assert.equal(selecting.state, 'selecting'); assert.equal(selecting.speed, '—'); assert.match(selecting.message, /自动选择/);
+  assert.match(updateTransferDetails({ sourceLabel: '加速线路 1', bytesPerSecond: 1024 }).message, /^加速线路 1 · /);
+});
+
 test('retry, stalled transfer and verification suppress outdated speed and estimates', () => {
   const status = { downloadedBytes: 25, totalBytes: 100, bytesPerSecond: 10 };
   const retry = updateTransferDetails({ ...status, retryAttempt: 2 }, 12000);

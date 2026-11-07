@@ -3,6 +3,7 @@ package com.moneylab.superledger.mobile;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.InputStream;
+import java.io.IOException;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
@@ -91,6 +92,25 @@ public final class UpdateSourceClientTest {
     }
     private static File download(UpdatePolicy.Release release, File folder, String mode, UpdateSourceClient.Session session, UpdateTransport.Listener events, UpdateTransport.ConnectionFactory factory, UpdateSourceClient.Timing timing) throws Exception {
         return UpdateSourceClient.download(release, folder, mode, session, events, factory, timing);
+    }
+    private static UpdatePolicy.Release releaseFor(byte[] bytes)throws Exception {
+        JSONObject value=payload(10302,UpdatePolicy.sha256(bytes));value.getJSONObject("android").put("size",bytes.length);
+        return UpdatePolicy.readVerifiedRelease(signed(value),keys.getPublic());
+    }
+    private static Fake paced(byte[] bytes,int chunk,long delayMillis,int initialBytes)throws Exception {
+        Fake result=new Fake(bytes);
+        result.input=new InputStream(){
+            int cursor;
+            public int read(){throw new AssertionError("Bulk reads expected");}
+            public int read(byte[] buffer,int offset,int length)throws IOException {
+                if(cursor==bytes.length)return -1;
+                int requested=cursor==0&&initialBytes>0?initialBytes:chunk;
+                if(cursor>0||initialBytes==0){try{Thread.sleep(delayMillis);}catch(InterruptedException error){Thread.currentThread().interrupt();throw new IOException("Fake transfer interrupted");}}
+                int count=Math.min(length,Math.min(requested,bytes.length-cursor));
+                System.arraycopy(bytes,cursor,buffer,offset,count);cursor+=count;return count;
+            }
+        };
+        return result;
     }
     public static void main(String[] args) throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA"); generator.initialize(2048); keys = generator.generateKeyPair();
@@ -193,6 +213,40 @@ public final class UpdateSourceClientTest {
             check(failure(() -> download(release, directory, "auto", new UpdateSourceClient.Session(), null, address -> { trickleCalls.incrementAndGet(); return trickle; }, new UpdateSourceClient.Timing(300, 180, 110, 5))).getMessage().contains("超时"), "Continuous APK progress cannot extend whole download deadline");
             until(() -> trickle.closed.get() >= 2, "Expired trickle exits its connection");
             check(trickleCalls.get() == 1 && directory.list().length == 0, "Whole deadline does not start a new source budget");
+
+            byte[] pacedApk=new byte[1024];pacedApk[0]=80;pacedApk[1]=75;
+            UpdatePolicy.Release pacedRelease=releaseFor(pacedApk);
+            UpdateSourceClient.Timing speedTiming=new UpdateSourceClient.Timing(2000,3000,400,5,80,8192,256);
+            Fake slowSource=paced(pacedApk,1,10,0);AtomicInteger speedCalls=new AtomicInteger();Events speedEvents=new Events();
+            File accelerated=download(pacedRelease,directory,"auto",new UpdateSourceClient.Session(),speedEvents,address->speedCalls.incrementAndGet()==1?slowSource:new Fake(pacedApk),speedTiming);
+            check(speedCalls.get()==2&&Arrays.equals(Files.readAllBytes(accelerated.toPath()),pacedApk),"continuous low throughput switches to the next source before the total deadline");
+            check(speedEvents.messages.toString().contains("速度较慢")&&speedEvents.messages.toString().contains("自动切换"),"low-throughput fallback explains the source switch");
+            until(()->directory.list().length==1,"slow source temporary bytes are cleaned while the successful file remains");accelerated.delete();
+
+            AtomicInteger manualSpeedCalls=new AtomicInteger();
+            File manualSlow=download(pacedRelease,directory,"gh-proxy",new UpdateSourceClient.Session(),null,address->{manualSpeedCalls.incrementAndGet();return paced(pacedApk,64,15,0);},speedTiming);
+            check(manualSpeedCalls.get()==1&&Arrays.equals(Files.readAllBytes(manualSlow.toPath()),pacedApk),"manually chosen slow sources keep their existing timeout instead of being replaced");manualSlow.delete();
+
+            AtomicInteger lastSpeedCalls=new AtomicInteger();
+            File lastSlow=download(pacedRelease,directory,"auto",new UpdateSourceClient.Session(),null,address->{int attempt=lastSpeedCalls.incrementAndGet();if(attempt<3){Fake unavailableSource=new Fake(pacedApk);unavailableSource.status=503;return unavailableSource;}return paced(pacedApk,64,15,0);},speedTiming);
+            check(lastSpeedCalls.get()==3&&Arrays.equals(Files.readAllBytes(lastSlow.toPath()),pacedApk),"the final automatic source can finish slowly using the remaining shared budget");lastSlow.delete();
+
+            AtomicInteger nearFinishCalls=new AtomicInteger();
+            File nearlyDone=download(pacedRelease,directory,"auto",new UpdateSourceClient.Session(),null,address->{nearFinishCalls.incrementAndGet();return paced(pacedApk,1,3,896);},speedTiming);
+            check(nearFinishCalls.get()==1&&Arrays.equals(Files.readAllBytes(nearlyDone.toPath()),pacedApk),"a nearly completed APK is retained when fewer than the remaining-byte threshold are pending");nearlyDone.delete();
+
+            byte[] fastApk=new byte[65536];fastApk[0]=80;fastApk[1]=75;UpdatePolicy.Release fastRelease=releaseFor(fastApk);AtomicInteger fastCalls=new AtomicInteger();
+            File fastTransfer=download(fastRelease,directory,"auto",new UpdateSourceClient.Session(),null,address->{fastCalls.incrementAndGet();return paced(fastApk,4096,8,0);},speedTiming);
+            check(fastCalls.get()==1&&Arrays.equals(Files.readAllBytes(fastTransfer.toPath()),fastApk),"a sufficiently fast source survives throughput window checks");fastTransfer.delete();
+
+            UpdateSourceClient.Session cancelSlow=new UpdateSourceClient.Session();AtomicInteger cancelledSpeedCalls=new AtomicInteger();
+            UpdateTransport.Listener cancelProgress=new UpdateTransport.Listener(){public void onStage(String value){}public void onProgress(long value){if(value>0)cancelSlow.cancel();}};
+            check(failure(()->download(pacedRelease,directory,"auto",cancelSlow,cancelProgress,address->{cancelledSpeedCalls.incrementAndGet();return paced(pacedApk,1,10,0);},speedTiming)).getMessage().contains("取消"),"cancelling a slow transfer stops the session immediately");
+            until(()->directory.list().length==0,"cancelled low-throughput downloads leave no partial APK");check(cancelledSpeedCalls.get()==1,"cancellation does not race into a fallback source");
+
+            AtomicInteger sharedSpeedCalls=new AtomicInteger();long speedStart=System.nanoTime();
+            check(failure(()->download(pacedRelease,directory,"auto",new UpdateSourceClient.Session(),null,address->{sharedSpeedCalls.incrementAndGet();return paced(pacedApk,1,10,0);},new UpdateSourceClient.Timing(1000,280,150,5,70,8192,256))).getMessage().contains("超时"),"low-throughput fallback never resets the shared operation deadline");
+            until(()->directory.list().length==0,"expired fallback downloads clean all partial files");check(sharedSpeedCalls.get()==3&&System.nanoTime()-speedStart<TimeUnit.SECONDS.toNanos(1),"slow automatic attempts stay within one bounded download budget");
 
             UpdateSourceClient.Session precancelled = new UpdateSourceClient.Session(); precancelled.cancel(); AtomicInteger preOpens = new AtomicInteger();
             check(failure(() -> download(release, directory, "auto", precancelled, null, address -> { preOpens.incrementAndGet(); return new Fake(APK); }, NORMAL)).getMessage().contains("取消"), "Pre-cancelled session never downloads");

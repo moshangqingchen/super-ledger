@@ -10,6 +10,7 @@ import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import { generateKeyPairSync, sign, createHash, constants } from 'node:crypto';
 const { REPOSITORY, MANIFEST_URL, compareVersions, installerUrl, verifySignedManifest, validateTransportUrl, proxyTransfer, createUpdater, PROMPT_COOLDOWN_MS } = createRequire(import.meta.url)('../desktop/updater.cjs');
+const { registeredSources } = createRequire(import.meta.url)('../desktop/update-sources.cjs');
 const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' });
 const installer = Buffer.alloc(65536, 7); installer.write('MZ');
@@ -433,4 +434,95 @@ test('temporary HTTP failure is retryable while forbidden responses are terminal
     await assert.rejects(proxyTransfer(MANIFEST_URL), error => (error.code === 'UPDATE_TRANSFER_INTERRUPTED') === retry);
     t.mock.restoreAll();
   }
+});
+
+test('signed Windows mirror identities are restricted to the same release asset', () => {
+  const sources = registeredSources(installerUrl('1.6.0')).map(({ id, url }) => ({ id, url }));
+  assert.equal(verifySignedManifest(envelope(payload('1.6.0', { sources })), publicKey).sources.length, 3);
+  assert.equal(verifySignedManifest(envelope(), publicKey).sources[0].id, 'github', 'Legacy signed releases retain their single source');
+  for (const invalid of [[], [sources[0], sources[0]], [{ id: 'github', url: sources[0].url }], [{ ...sources[0], url: sources[0].url + '?other=1' }], [{ ...sources[0], url: sources[0].url.replace('/v1.6.0/', '/v1.7.0/') }]]) {
+    assert.throws(() => verifySignedManifest(envelope(payload('1.6.0', { sources: invalid })), publicKey));
+  }
+  for (const source of sources) assert.doesNotThrow(() => validateTransportUrl(source.url));
+  for (const source of sources.slice(0, 2)) {
+    assert.throws(() => validateTransportUrl(source.url + '?extra=1'));
+    assert.throws(() => validateTransportUrl(source.url.replace(REPOSITORY, 'other/repository')));
+    assert.throws(() => validateTransportUrl(source.url, true));
+  }
+});
+
+test('real proxy transport supports bounded prefix probes without relaxing range bounds', async t => {
+  const f = fakeTransport(t, { statusCode: 206, headers: { 'content-range': `bytes 0-99/${installer.length}` }, payload: installer.subarray(0, 100) });
+  const source = registeredSources(installerUrl('1.6.0'))[0];
+  assert.equal((await proxyTransfer(source.url, { maxBytes: installer.length, rangeStart: 0, rangeEnd: 99 })).bytes, 100);
+  assert.equal(f.calls.provider[0].headers.Range, 'bytes=0-99');
+  for (const range of [{ rangeStart: 0 }, { rangeStart: -1, rangeEnd: 99 }, { rangeStart: 0, rangeEnd: installer.length }, { rangeEnd: 99 }, { rangeStart: 99, rangeEnd: 0 }]) {
+    await assert.rejects(proxyTransfer(source.url, { maxBytes: installer.length, ...range }));
+  }
+  assert.equal(f.calls.proxy.length, 1);
+});
+
+test('multi-source downloads resume retained bytes on another signed route after failure or sustained low speed', async t => {
+  const large = Buffer.alloc(8 * 1024 * 1024, 7); large.write('MZ');
+  const sources = registeredSources(installerUrl('1.6.0')).map(({ id, url }) => ({ id, url }));
+  const signed = envelope(payload('1.6.0', { size: large.length, sha256: createHash('sha256').update(large).digest('hex'), sources }));
+  for (const slow of [false, true]) {
+    const transfers = [];
+    let f;
+    f = fixture(t, { request: async (url, options) => {
+      if (url === MANIFEST_URL) return { statusCode: 200, body: Buffer.from(JSON.stringify(signed)), headers: {} };
+      if (options.rangeEnd !== undefined) return stream(options, large.subarray(0, options.rangeEnd + 1), 206, { 'content-length': String(options.rangeEnd + 1), 'content-range': `bytes 0-${options.rangeEnd}/${large.length}` });
+      transfers.push({ url, start: options.rangeStart });
+      if (transfers.length === 1) {
+        if (slow) f.setClock(f.now() + 13000);
+        stream(options, large.subarray(0, 1000), 200, { 'content-length': String(large.length) });
+        if (slow) assert.fail('A sustained slow route must be stopped before accepting more data');
+        throw Object.assign(new Error('reset'), { code: 'ECONNRESET' });
+      }
+      return stream(options, large.subarray(options.rangeStart), 206, { 'content-range': `bytes ${options.rangeStart}-${large.length - 1}/${large.length}` });
+    } });
+    await f.service.check();
+    assert.equal((await f.service.download()).phase, 'ready');
+    assert.equal(transfers.length, 2);
+    assert.notEqual(transfers[0].url, transfers[1].url);
+    assert.equal(transfers[1].start, 1000);
+    assert.deepEqual(fs.readFileSync(path.join(f.directory, 'updates', 'SuperLedger-Setup-1.6.0.exe')), large);
+    assert.match(f.service.status().sourceLabel, /加速|GitHub/);
+    assert.deepEqual(f.launches, []);
+  }
+});
+
+test('a mirror becoming unavailable after probing falls back but corrupt bytes never authorize installation', async t => {
+  const sources = registeredSources(installerUrl('1.6.0')).map(({ id, url }) => ({ id, url }));
+  const signed = envelope(payload('1.6.0', { sources }));
+  for (const corrupt of [false, true]) {
+    let transfers = 0;
+    const f = fixture(t, { request: async (url, options) => {
+      if (url === MANIFEST_URL) return { statusCode: 200, body: Buffer.from(JSON.stringify(signed)), headers: {} };
+      if (options.rangeEnd !== undefined) return stream(options, installer.subarray(0, options.rangeEnd + 1), 206, { 'content-range': `bytes 0-${options.rangeEnd}/${installer.length}` });
+      transfers++;
+      if (!corrupt && transfers === 1) { options.onResponse({ statusCode: 403, headers: {} }); throw new Error('unavailable'); }
+      const bytes = Buffer.from(installer); if (corrupt) bytes[bytes.length - 1] ^= 1;
+      return stream(options, bytes);
+    } });
+    await f.service.check(); const result = await f.service.download();
+    assert.equal(result.ready, !corrupt); assert.equal(transfers, corrupt ? 1 : 2);
+    assert.deepEqual(f.launches, []);
+    if (corrupt) assert.equal(fs.readdirSync(path.join(f.directory, 'updates')).some(name => /\.(exe|partial)$/.test(name)), false);
+  }
+});
+
+test('cancelling automatic route probes aborts all requests before an installer file is created', async t => {
+  const sources = registeredSources(installerUrl('1.6.0')).map(({ id, url }) => ({ id, url }));
+  let started; const began = new Promise(resolve => { started = resolve; });
+  let probes = 0, aborted = 0;
+  const f = fixture(t, { request: async (url, options) => {
+    if (url === MANIFEST_URL) return { statusCode: 200, body: Buffer.from(JSON.stringify(envelope(payload('1.6.0', { sources })))), headers: {} };
+    assert.equal(options.rangeStart, 0); probes++; started();
+    return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => { aborted++; reject(Object.assign(new Error('cancelled'), { code: 'ABORT_ERR' })); }, { once: true }));
+  } });
+  await f.service.check(); const pending = f.service.download(); await began; f.service.cancelDownload();
+  const result = await pending; assert.equal(result.phase, 'available'); assert.equal(result.selectingSource, false);
+  assert.equal(probes, 3); assert.equal(aborted, probes);
+  assert.equal(fs.readdirSync(path.join(f.directory, 'updates')).some(name => /\.(exe|partial)$/.test(name)), false);
 });

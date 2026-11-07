@@ -748,38 +748,41 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         EditText start=dateField(form,"首次扣账日期 · 北京时间",original==null?LedgerStore.today():original.optString("startDate"),true);
         List<String> hours=new ArrayList<>();for(int hour=0;hour<24;hour++)hours.add(String.format(Locale.US,"%02d:00",hour));
         form.addView(label("首次扣账时间 · 北京时间"));Spinner startHour=spinner(hours);startHour.setSelection(original==null?MobileLedger.beijingDateTime(System.currentTimeMillis()).getHour():original.optInt("startHour",0));form.addView(startHour);
-        EditText day=field(form,"每月扣账日 · 1 至 31",original==null?LedgerStore.today().substring(8):String.valueOf(original.optInt("billingDay")),InputType.TYPE_CLASS_NUMBER);
-        form.addView(label("每月扣账时间 · 北京时间"));Spinner billingHour=spinner(hours);billingHour.setSelection(original==null?startHour.getSelectedItemPosition():original.optInt("billingHour",0));form.addView(billingHour);
-        boolean[] followDay={original==null||original.optInt("billingDay")==Integer.parseInt(start.getText().toString().substring(8))};
-        boolean[] followHour={original==null||original.optInt("billingHour",0)==original.optInt("startHour",0)};
-        boolean[] updatingDay={false};int[] expectedHour={billingHour.getSelectedItemPosition()};
-        form.addView(label("每月扣账日和时间默认跟随首次设置，单独调整后会保留你的选择。"));
+        Switch monthlyOverride=new Switch(this);monthlyOverride.setText("单独设置每月扣账日和时间");
+        monthlyOverride.setChecked(original!=null&&(original.optInt("billingDay")!=Integer.parseInt(start.getText().toString().substring(8))||original.optInt("billingHour",0)!=original.optInt("startHour",0)));form.addView(monthlyOverride);
+        LinearLayout monthlySettings=column();
+        EditText day=field(monthlySettings,"每月扣账日 · 1 至 31",original==null?LedgerStore.today().substring(8):String.valueOf(original.optInt("billingDay")),InputType.TYPE_CLASS_NUMBER);
+        monthlySettings.addView(label("每月扣账时间 · 北京时间"));Spinner billingHour=spinner(hours);billingHour.setSelection(original==null?startHour.getSelectedItemPosition():original.optInt("billingHour",0));monthlySettings.addView(billingHour);form.addView(monthlySettings);
+        TextView monthlySummary=label("");form.addView(monthlySummary);
         Switch recurring=new Switch(this);recurring.setText("连续订阅，每月记账");recurring.setChecked(original==null||original.optBoolean("recurring"));form.addView(recurring);Switch active=new Switch(this);active.setText("启用计划扣账");active.setChecked(original==null||original.optBoolean("active"));form.addView(active);
         form.addView(label("短月份使用当月最后一天。余额不足时先等待补款，补足后自动处理；暂停期间不补扣。自动记账只影响账本余额。"));
         EditText expires=dateField(form,"会员到期日期 · 可选",original==null?"":original.optString("expiresOn"),true);expires.setHint("选择会员到期日期");addButton(form,"清除到期日期",false,()->expires.setText(""));
         TextView expiryPreview=label("");form.addView(expiryPreview);form.addView(label("连续订阅每次成功记账后，会员到期日自动顺延一个月；未填写时显示下次续费日期。"));
         Runnable refreshExpiry=()->{try{JSONObject preview=original==null?new JSONObject().put("id","preview").put("processedOccurrences",new JSONArray()):LedgerStore.copy(original);preview.put("startDate",start.getText().toString()).put("billingDay",Integer.parseInt(day.getText().toString())).put("recurring",recurring.isChecked()).put("active",active.isChecked()).put("expiresOn",expires.getText().toString());if(original!=null&&(!original.optString("expiresOn").equals(preview.optString("expiresOn"))||original.optBoolean("recurring")!=preview.optBoolean("recurring")))preview=MobileLedger.resetSubscriptionExpiry(preview,state.getJSONArray("transactions"));SubscriptionDetails.validateSubscription(preview);SubscriptionDetails.Status status=SubscriptionDetails.expiryStatus(preview,LedgerStore.today());expiryPreview.setText(status.label+" · "+status.detail);expiryPreview.setTextColor(expiryColor(status.tone));}catch(Exception invalid){expiryPreview.setText(invalid.getMessage()==null?"请核对扣账日期和到期日期。":invalid.getMessage());expiryPreview.setTextColor(MUTED);}};
-        day.setEnabled(recurring.isChecked());billingHour.setEnabled(recurring.isChecked());
-        watch(expires,refreshExpiry);
-        watch(start,()->{
+        Runnable updateSchedule=()->{
+            boolean enabled=recurring.isChecked(),independent=monthlyOverride.isChecked();
+            monthlyOverride.setVisibility(enabled?View.VISIBLE:View.GONE);monthlySettings.setVisibility(enabled&&independent?View.VISIBLE:View.GONE);monthlySummary.setVisibility(enabled&&!independent?View.VISIBLE:View.GONE);
+            day.setEnabled(enabled);billingHour.setEnabled(enabled);
             String firstDate=start.getText().toString();
-            if(followDay[0]&&MobileLedger.isValidDate(firstDate)){
-                updatingDay[0]=true;
-                try{day.setText(String.valueOf(Integer.parseInt(firstDate.substring(8))));}finally{updatingDay[0]=false;}
+            if(!independent){
+                if(MobileLedger.isValidDate(firstDate))day.setText(String.valueOf(Integer.parseInt(firstDate.substring(8))));
+                billingHour.setSelection(startHour.getSelectedItemPosition());
             }
-            refreshExpiry.run();
-        });
-        watch(day,()->{if(!updatingDay[0]){followDay[0]=false;refreshExpiry.run();}});
-        selected(startHour,hour->{if(followHour[0]){expectedHour[0]=hour;billingHour.setSelection(hour);}refreshExpiry.run();});
-        selected(billingHour,hour->{if(hour!=expectedHour[0])followHour[0]=false;expectedHour[0]=hour;});
-        recurring.setOnCheckedChangeListener((v,checked)->{day.setEnabled(checked);billingHour.setEnabled(checked);refreshExpiry.run();});active.setOnCheckedChangeListener((v,checked)->refreshExpiry.run());refreshExpiry.run();
+            if(MobileLedger.isValidDate(firstDate))monthlySummary.setText("每月同样在 "+Integer.parseInt(firstDate.substring(8))+" 日 "+hours.get(startHour.getSelectedItemPosition())+" 扣账（北京时间）。");
+        };
+        watch(expires,refreshExpiry);
+        watch(start,()->{updateSchedule.run();refreshExpiry.run();});watch(day,refreshExpiry);
+        selected(startHour,hour->{updateSchedule.run();refreshExpiry.run();});selected(billingHour,hour->refreshExpiry.run());
+        monthlyOverride.setOnCheckedChangeListener((v,checked)->{updateSchedule.run();refreshExpiry.run();});
+        recurring.setOnCheckedChangeListener((v,checked)->{updateSchedule.run();refreshExpiry.run();});active.setOnCheckedChangeListener((v,checked)->refreshExpiry.run());updateSchedule.run();refreshExpiry.run();
         SubscriptionLinksEditor identities=new SubscriptionLinksEditor(state,original);form.addView(identities.view);
         EditText note=field(form,"订阅备注 · 可选",original==null?"":original.optString("note"),InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);note.setMaxLines(4);note.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(500)});
         final String[] amountCurrency={original==null?accounts.get(selection).optString("currency","CNY"):original.optString("currency","CNY")};
         selected(account,index->{String code=accounts.get(index).optString("currency","CNY");if(!code.equals(amountCurrency[0])){amount.setText("");amountCurrency[0]=code;toast("扣款币种已变更，请重新填写 "+code+" 金额");}unit.setText("金额单位 "+code+" · "+accountName(accounts.get(index)));amount.setHint(code+" 实际扣账金额");refreshFunding.run();});unit.setText("金额单位 "+accounts.get(selection).optString("currency","CNY"));refreshFunding.run();
-        formDialog(original==null?"添加订阅":"编辑订阅",form,()->{JSONObject chosen=accounts.get(account.getSelectedItemPosition());String code=chosen.optString("currency","CNY");JSONObject sub=original==null?new JSONObject().put("id","sub_"+UUID.randomUUID()).put("processedOccurrences",new JSONArray()):LedgerStore.copy(original);
+        formDialog(original==null?"添加订阅":"编辑订阅",form,()->{updateSchedule.run();JSONObject chosen=accounts.get(account.getSelectedItemPosition());String code=chosen.optString("currency","CNY");JSONObject sub=original==null?new JSONObject().put("id","sub_"+UUID.randomUUID()).put("processedOccurrences",new JSONArray()):LedgerStore.copy(original);
             JSONObject latestAccount=findAccount(store.snapshot().getJSONObject("state"),chosen.getString("id"));if(latestAccount==null||!code.equals(latestAccount.optString("currency","CNY")))throw new Exception("扣款账户已变更，请重新打开编辑后填写金额。");
-            int billingDay;try{billingDay=Integer.parseInt(day.getText().toString().trim());}catch(Exception e){throw new Exception("扣账日请填写 1 至 31 的整数");}if(billingDay<1||billingDay>31)throw new Exception("扣账日请填写 1 至 31 的整数");
+            int billingDay;try{billingDay=Integer.parseInt(day.getText().toString().trim());}catch(Exception e){billingDay=0;}
+            if(billingDay<1||billingDay>31){if(recurring.isChecked())throw new Exception("扣账日请填写 1 至 31 的整数");billingDay=Integer.parseInt(start.getText().toString().substring(8));}
             sub.put("name",requiredText(name,"订阅名称",80)).put("tier",tier.getText().toString().trim()).put("accountId",chosen.getString("id")).put("currency",code).put("amount",positiveMoney(amount,code)).put("category","会员订阅").put("startDate",start.getText().toString()).put("billingDay",billingDay).put("recurring",recurring.isChecked()).put("active",active.isChecked()).put("color",color[0]).put("icon",original==null?"repeat":original.optString("icon","repeat"));
             sub.put("startHour",startHour.getSelectedItemPosition()).put("billingHour",billingHour.getSelectedItemPosition());
             sub.put("linkedAccounts",identities.read()).put("expiresOn",expires.getText().toString()).put("note",note.getText().toString().trim());

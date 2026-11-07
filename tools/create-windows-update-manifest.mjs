@@ -4,6 +4,7 @@ import { createHash, createPrivateKey, createPublicKey, sign, verify } from 'nod
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 const { verifySignedManifest, compareVersions } = createRequire(import.meta.url)('../desktop/updater.cjs');
+const { registeredSources } = createRequire(import.meta.url)('../desktop/update-sources.cjs');
 
 const repository = 'moshangqingchen/super-ledger';
 const maxInstallerBytes = 512 * 1024 * 1024;
@@ -18,10 +19,12 @@ export function windowsUpdatePayload({ baseEnvelope, publicKey, version, install
   if (!Buffer.isBuffer(installerBytes) || installerBytes.length < 64 * 1024 || installerBytes.length > maxInstallerBytes || installerBytes[0] !== 0x4d || installerBytes[1] !== 0x5a) throw new Error('Expected a bounded Windows MZ installer.');
   if (typeof notes !== 'string' || !notes.trim() || notes.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(notes)) throw new Error('Windows release notes are missing or invalid.');
   if (typeof publishedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(publishedAt) || !Number.isFinite(Date.parse(publishedAt))) throw new Error('Invalid release timestamp.');
-  return { ...base, publishedAt, windows: {
+  const result = { ...base, publishedAt, windows: {
     version, url: `https://github.com/${repository}/releases/download/v${version}/SuperLedger-Setup-${version}.exe`,
     sha256: createHash('sha256').update(installerBytes).digest('hex'), size: installerBytes.length, notes: notes.trim(),
   } };
+  result.windows.sources = registeredSources(result.windows.url).map(({ id, url }) => ({ id, url }));
+  return result;
 }
 
 /** Sign with the existing identity, checking both installed platforms' trust keys. */

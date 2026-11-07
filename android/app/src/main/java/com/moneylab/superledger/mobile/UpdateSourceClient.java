@@ -11,13 +11,18 @@ import java.util.concurrent.TimeUnit;
 public final class UpdateSourceClient {
     private UpdateSourceClient() {}
     static final class Timing {
-        final long checkMillis, downloadMillis, idleMillis, pollMillis;
+        final long checkMillis, downloadMillis, idleMillis, pollMillis, slowWindowMillis, minimumBytesPerSecond, minimumRemainingBytes;
         Timing(long checkMillis, long downloadMillis, long idleMillis, long pollMillis) {
+            this(checkMillis,downloadMillis,idleMillis,pollMillis,0,0,0);
+        }
+        Timing(long checkMillis,long downloadMillis,long idleMillis,long pollMillis,long slowWindowMillis,long minimumBytesPerSecond,long minimumRemainingBytes) {
             if (checkMillis < 1 || downloadMillis < 1 || idleMillis < 1 || pollMillis < 1) throw new IllegalArgumentException("Invalid update timing");
+            if(slowWindowMillis<0||minimumBytesPerSecond<0||minimumRemainingBytes<0)throw new IllegalArgumentException("Invalid throughput timing");
             this.checkMillis = checkMillis; this.downloadMillis = downloadMillis; this.idleMillis = idleMillis; this.pollMillis = pollMillis;
+            this.slowWindowMillis=slowWindowMillis;this.minimumBytesPerSecond=minimumBytesPerSecond;this.minimumRemainingBytes=minimumRemainingBytes;
         }
     }
-    private static final Timing TIMING = new Timing(45000, 180000, 12000, 100);
+    private static final Timing TIMING = new Timing(45000, 180000, 12000, 100, 8000, 64*1024, 256*1024);
     public static final class ManifestResult {
         public final byte[] envelope;
         public final UpdatePolicy.Release release;
@@ -44,9 +49,12 @@ public final class UpdateSourceClient {
             if (System.nanoTime() - startedNanos >= totalNanos) throw new IOException("本次更新连接已超时，请稍后重试或手动选择线路");
         }
         private UpdateTransport.Limits limits(Timing timing) throws Exception {
+            return limits(timing,false);
+        }
+        private UpdateTransport.Limits limits(Timing timing,boolean tryFasterSource) throws Exception {
             check(); long left = TimeUnit.NANOSECONDS.toMillis(totalNanos - (System.nanoTime() - startedNanos));
             if (left < 1) throw new IOException("本次更新连接已超时，请稍后重试或手动选择线路");
-            return new UpdateTransport.Limits(Math.min(timing.idleMillis, left), left, Math.min(timing.pollMillis, left));
+            return new UpdateTransport.Limits(Math.min(timing.idleMillis, left),left,Math.min(timing.pollMillis,left),tryFasterSource?timing.slowWindowMillis:0,timing.minimumBytesPerSecond,timing.minimumRemainingBytes);
         }
         private void bind(UpdateTransport.Operation operation, UpdateSources.Endpoint endpoint) throws Exception {
             check(); active = operation; source = endpoint;
@@ -116,14 +124,14 @@ public final class UpdateSourceClient {
                 try {
                     stage(session, target, "正在通过" + source.label + "连接下载…");
                     if (target != null && session.canEmit(attempt)) target.onProgress(0);
-                    UpdateTransport.download(source.url, release.url, release.size, partial, attempt, listener(session, attempt, source, target), connections, session.limits(timing));
+                    UpdateTransport.download(source.url, release.url, release.size, partial, attempt, listener(session, attempt, source, target), connections, session.limits(timing,index+1<sources.size()));
                     session.check(); stage(session, target, source.label + " · 正在核对安装包…");
                     // Once bytes have arrived, hash/identity errors fail closed;
                     // only transport availability failures permit another route.
                     UpdatePolicy.verifyFile(partial, release); session.check(); keep = true; return partial;
                 } catch (UpdateTransport.RetryableFailure error) {
                     session.check();
-                    if (index + 1 < sources.size()) stage(session, target, source.label + "暂不可用，正在自动切换线路…");
+                    if (index + 1 < sources.size()) stage(session, target, source.label + " · " + error.getMessage() + "，正在自动切换线路…");
                 } finally {
                     session.unbind(attempt); if (!keep && partial.isFile()) partial.delete();
                 }

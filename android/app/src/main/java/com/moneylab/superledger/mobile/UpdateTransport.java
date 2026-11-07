@@ -31,10 +31,15 @@ public final class UpdateTransport {
     }
     interface ConnectionFactory { HttpsURLConnection open(String address) throws Exception; }
     static final class Limits {
-        final long idleNanos, totalNanos, pollNanos;
+        final long idleNanos, totalNanos, pollNanos, slowWindowNanos, minimumBytesPerSecond, minimumRemainingBytes;
         Limits(long idleMillis, long totalMillis, long pollMillis) {
+            this(idleMillis,totalMillis,pollMillis,0,0,0);
+        }
+        Limits(long idleMillis,long totalMillis,long pollMillis,long slowWindowMillis,long minimumBytesPerSecond,long minimumRemainingBytes) {
             if (idleMillis < 1 || totalMillis < 1 || pollMillis < 1) throw new IllegalArgumentException("Invalid transport limits");
+            if(slowWindowMillis<0||minimumBytesPerSecond<0||minimumRemainingBytes<0)throw new IllegalArgumentException("Invalid throughput limits");
             idleNanos = TimeUnit.MILLISECONDS.toNanos(idleMillis); totalNanos = TimeUnit.MILLISECONDS.toNanos(totalMillis); pollNanos = TimeUnit.MILLISECONDS.toNanos(pollMillis);
+            slowWindowNanos=TimeUnit.MILLISECONDS.toNanos(slowWindowMillis);this.minimumBytesPerSecond=minimumBytesPerSecond;this.minimumRemainingBytes=minimumRemainingBytes;
         }
     }
     private static final Limits MANIFEST_LIMITS = new Limits(45000, 45000, 100);
@@ -57,6 +62,8 @@ public final class UpdateTransport {
         private volatile boolean cancelled, finished;
         private boolean started;
         private volatile long lastProgressNanos;
+        private volatile long firstProgressNanos, receivedBytes;
+        private long expectedBytes, windowStartedNanos, windowStartedBytes;
         private long startedNanos;
         private volatile HttpsURLConnection active;
         public void cancel() { cancelled = true; }
@@ -71,10 +78,20 @@ public final class UpdateTransport {
             check(); long now = System.nanoTime();
             if (now - startedNanos >= limits.totalNanos) throw new RetryableFailure("下载耗时过长，已停止。可稍后重试或用浏览器下载");
             if (now - lastProgressNanos >= limits.idleNanos) throw new RetryableFailure("连接长时间没有收到数据，已停止。请检查手机网络，或用浏览器下载");
+            if(limits.slowWindowNanos>0&&firstProgressNanos!=0&&expectedBytes-receivedBytes>=limits.minimumRemainingBytes){
+                if(windowStartedNanos==0)windowStartedNanos=firstProgressNanos;
+                long elapsed=now-windowStartedNanos;
+                if(elapsed>=limits.slowWindowNanos){
+                    double speed=(double)(receivedBytes-windowStartedBytes)*1_000_000_000L/elapsed;
+                    if(speed<limits.minimumBytesPerSecond)throw new RetryableFailure("当前线路持续速度较慢");
+                    windowStartedNanos=now;windowStartedBytes=receivedBytes;
+                }
+            }
         }
         private void register(HttpsURLConnection connection) throws Exception { active = connection; check(); }
         private void clear(HttpsURLConnection connection) { if (active == connection) active = null; }
         private void received() throws Exception { check(); lastProgressNanos = System.nanoTime(); }
+        private void received(long total) throws Exception {check();receivedBytes=total;lastProgressNanos=System.nanoTime();if(firstProgressNanos==0)firstProgressNanos=lastProgressNanos;}
         private synchronized void stage(Listener listener, String value) throws Exception { check(); if (listener != null) listener.onStage(value); }
         private synchronized void progress(Listener listener, long value) throws Exception { check(); if (listener != null) listener.onProgress(value); }
         private synchronized void finish() { finished = true; }
@@ -179,6 +196,8 @@ public final class UpdateTransport {
         UpdateSources.validateDownloadUrl(address, canonical, true);
         if (expectedBytes < 1 || expectedBytes > UpdatePolicy.MAX_APK_BYTES) throw new Failure("安装包大小超出范围");
         if (outputFile == null || outputFile.exists()) throw new Failure("下载临时文件已存在，请重新发起下载");
+        if(operation==null)throw new IllegalArgumentException("Operation is required");
+        operation.expectedBytes=expectedBytes;
         boolean success = false;
         try {
             run(operation, limits, () -> { transfer(address, canonical, expectedBytes, outputFile, operation, listener, factory); return null; }); success = true;
@@ -217,7 +236,7 @@ public final class UpdateTransport {
                                 operation.check(); if (count == 0) continue;
                                 total += count;
                                 if (total > expectedBytes || total > UpdatePolicy.MAX_APK_BYTES) throw new Failure("安装包超过签名清单声明的大小");
-                                output.write(bytes, 0, count); operation.received();
+                                output.write(bytes, 0, count); operation.received(total);
                                 if (first) { first = false; operation.stage(listener, "正在下载安装包…"); }
                                 long now = System.nanoTime();
                                 if (lastNotification == 0 || now - lastNotification >= TimeUnit.MILLISECONDS.toNanos(400)) { lastNotification = now; operation.progress(listener, total); }

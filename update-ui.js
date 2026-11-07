@@ -25,6 +25,7 @@ export function updateTransferDetails(status = {}, idleForMs = 0) {
   const downloaded = nonnegative(status.downloadedBytes), total = nonnegative(status.totalBytes);
   const retry = Number.isSafeInteger(status.retryAttempt) && status.retryAttempt > 0 ? status.retryAttempt : 0;
   const pending = { speed: '—', remaining: '待估算' };
+  if (status.selectingSource) return { ...pending, state: 'selecting', label: '选线中', message: '正在比较下载线路，自动选择响应较快的线路。' };
   if (retry) return { ...pending, state: 'retrying', label: '重试中', message: `正在等待第 ${retry} 次自动重试，可以继续后台等待或取消下载。` };
   if (total > 0 && downloaded >= total) return { ...pending, state: 'verifying', label: '校验中', remaining: '下载完成', message: '下载完成，正在校验安装包；校验通过后才能安装。' };
   if (idleForMs >= WAITING_AFTER_MS) return { ...pending, state: 'waiting', label: '等待中', message: downloaded > 0 ? '暂未收到新数据，正在等待下载继续；仍可后台等待或取消。' : '正在等待下载源响应；仍可后台等待或取消。' };
@@ -32,7 +33,7 @@ export function updateTransferDetails(status = {}, idleForMs = 0) {
   if (speed > 0) return {
     state: 'downloading', label: '下载中', speed: `${formatUpdateBytes(speed)}/s`,
     remaining: total > downloaded ? formatUpdateRemaining((total - downloaded) / speed) : '待估算',
-    message: '正在下载，剩余时间会随当前速度调整。'
+    message: `${status.sourceLabel ? `${status.sourceLabel} · ` : ''}正在下载，剩余时间会随当前速度调整。`
   };
   return { ...pending, state: 'connecting', label: '下载中', message: downloaded > 0 ? '正在计算下载速度，收到更多数据后会显示剩余时间。' : '正在连接下载源，收到数据后会显示速度与剩余时间。' };
 }

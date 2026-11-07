@@ -6,7 +6,7 @@
 
 ## 安装与打开
 
-Windows 1.8.13 和 Android 1.3.9 可从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/tag/v1.8.13) 下载 `SuperLedger-Setup-1.8.13.exe` 和 `SuperLedger-Mobile-1.3.9.apk`，也可运行本地构建的 `release/超级账本-安装-1.8.13.exe`。Windows 安装包也内附该 APK。安装程序会为当前用户创建桌面与开始菜单入口。
+Windows 1.8.14 和 Android 1.3.10 可从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/tag/v1.8.14) 下载 `SuperLedger-Setup-1.8.14.exe` 和 `SuperLedger-Mobile-1.3.10.apk`，也可运行本地构建的 `release/超级账本-安装-1.8.14.exe`。Windows 安装包也内附该 APK。安装程序会为当前用户创建桌面与开始菜单入口。
 
 也可直接打开 `release/win-unpacked/超级账本.exe`；免安装版必须保留整个 win-unpacked 文件夹。根目录的 `启动账本.cmd` 仅是兼容启动入口，日常使用桌面或开始菜单图标即可。
 
@@ -19,6 +19,8 @@ Android 1.3.6 支持按北京时间设置首次和每月扣账小时，小时订
 首次打开默认是空账本：账户、收支、订阅、储蓄心愿均为空，预算未设置，所有金额为零。点击「添加账户」后填写自己的余额开始使用。会员服务与 Logo 是可选目录，不会自动创建订阅记录。
 
 ## 功能
+
+- Windows 1.8.14 / Android 1.3.10 默认只填一次首次扣账日期和小时，需要不同时再展开每月设置；已有不同设置会自动展开保留。电脑版新增下载线路择快和低速续传换线，手机版自动下载也会避开持续低速的线路。详见 [1.8.14 更新说明与加速下载](docs/releases/1.8.14.md)。
 
 - Windows 1.8.13 / Android 1.3.9 的每月扣账日、小时默认跟随首次设置，分别手动调整后保留选择。编辑时保留原本不同的每月设置，统一使用北京时间。详见 [1.8.13 更新说明](docs/releases/1.8.13.md)。
 

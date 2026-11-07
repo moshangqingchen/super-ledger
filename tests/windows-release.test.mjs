@@ -7,6 +7,7 @@ import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { windowsUpdatePayload, signedWindowsUpdateManifest, windowsCandidateOutput } from '../tools/create-windows-update-manifest.mjs';
 const { verifySignedManifest } = createRequire(import.meta.url)('../desktop/updater.cjs');
+const { registeredSources } = createRequire(import.meta.url)('../desktop/update-sources.cjs');
 
 // These generated identities are isolated test data; never read release keys.
 const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -33,7 +34,8 @@ test('Windows-only release preserves the entire Android release including mirror
   assert.equal(JSON.stringify(result.android), JSON.stringify(android));
   assert.deepEqual(input.baseEnvelope, original, 'input envelope must not be mutated');
   assert.deepEqual(result.windows, { version: '1.8.6', url: 'https://github.com/moshangqingchen/super-ledger/releases/download/v1.8.6/SuperLedger-Setup-1.8.6.exe',
-    size: installerBytes.length, sha256: createHash('sha256').update(installerBytes).digest('hex'), notes: input.notes.trim() });
+    size: installerBytes.length, sha256: createHash('sha256').update(installerBytes).digest('hex'), notes: input.notes.trim(),
+    sources: registeredSources('https://github.com/moshangqingchen/super-ledger/releases/download/v1.8.6/SuperLedger-Setup-1.8.6.exe').map(({ id, url }) => ({ id, url })) });
 });
 
 test('an Android release without declared sources remains exactly as signed', () => {

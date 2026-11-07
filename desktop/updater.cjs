@@ -7,6 +7,7 @@ const https = require('node:https');
 const tls = require('node:tls');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
+const { validatedSources, isRegisteredMirror, rankSources } = require('./update-sources.cjs');
 
 const REPOSITORY = 'moshangqingchen/super-ledger';
 const MANIFEST_URL = `https://raw.githubusercontent.com/${REPOSITORY}/main/updates/stable.json`;
@@ -60,7 +61,8 @@ function verifySignedManifest(envelope, publicKey) {
   if (update.url !== installerUrl(update.version)) throw new Error('更新安装包地址不属于固定仓库的对应版本。');
   if (typeof update.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(update.sha256) || !Number.isSafeInteger(update.size) || update.size < 64 * 1024 || update.size > MAX_INSTALLER_BYTES) throw new Error('更新安装包的大小或 SHA-256 无效。');
   if (typeof update.notes !== 'string' || update.notes.length > 8000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(update.notes)) throw new Error('更新说明格式无效。');
-  return { version: update.version, url: update.url, sha256: update.sha256, size: update.size, notes: update.notes, publishedAt: value.publishedAt };
+  const sources = validatedSources(update);
+  return { version: update.version, url: update.url, sha256: update.sha256, size: update.size, notes: update.notes, publishedAt: value.publishedAt, sources };
 }
 
 function validateTransportUrl(input, manifestOnly = false) {
@@ -68,18 +70,20 @@ function validateTransportUrl(input, manifestOnly = false) {
   const url = new URL(input);
   if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.port && url.port !== '443') throw new Error('更新请求必须使用已验证的 HTTPS 来源。');
   if (input === MANIFEST_URL) return url;
+  if (!manifestOnly && isRegisteredMirror(input)) return url;
   if (manifestOnly || !DOWNLOAD_HOSTS.has(url.hostname)) throw new Error('更新地址不在固定来源列表中。');
   if (url.hostname === 'github.com' && !new RegExp(`^/${REPOSITORY}/releases/download/v[0-9]+\\.[0-9]+\\.[0-9]+/SuperLedger-Setup-[0-9]+\\.[0-9]+\\.[0-9]+\\.exe$`).test(url.pathname)) throw new Error('更新重定向离开了固定仓库。');
   return url;
 }
 
 /** The only outbound dial is CONNECT to 127.0.0.1:10090; no direct fallback exists. */
-function proxyTransfer(input, { signal, maxBytes = MAX_MANIFEST_BYTES, timeoutMs = 20000, rangeStart, onResponse, onChunk } = {}) {
+function proxyTransfer(input, { signal, maxBytes = MAX_MANIFEST_BYTES, timeoutMs = 20000, rangeStart, rangeEnd, onResponse, onChunk } = {}) {
   let target;
   try { target = validateTransportUrl(input); }
   catch (error) { return Promise.reject(error); }
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_INSTALLER_BYTES || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30 * 60 * 1000) return Promise.reject(new Error('更新请求限制无效。'));
-  if (rangeStart !== undefined && (!Number.isSafeInteger(rangeStart) || rangeStart < 1 || rangeStart >= maxBytes || input === MANIFEST_URL)) return Promise.reject(new Error('更新续传偏移无效。'));
+  if (rangeStart !== undefined && (!Number.isSafeInteger(rangeStart) || rangeStart < 0 || rangeStart >= maxBytes || rangeStart === 0 && rangeEnd === undefined || input === MANIFEST_URL)) return Promise.reject(new Error('更新续传偏移无效。'));
+  if (rangeEnd !== undefined && (rangeStart === undefined || !Number.isSafeInteger(rangeEnd) || rangeEnd < rangeStart || rangeEnd >= maxBytes || input === MANIFEST_URL)) return Promise.reject(new Error('更新探测范围无效。'));
   return new Promise((resolve, reject) => {
     let settled = false, connect, tunnel, secure, request, response, agent;
     const finish = (error, result) => {
@@ -118,7 +122,7 @@ function proxyTransfer(input, { signal, maxBytes = MAX_MANIFEST_BYTES, timeoutMs
           // The agent can only return the existing verified proxy tunnel.
           agent.createConnection = () => secure;
           request = https.request({ hostname: target.hostname, port: 443, path: target.pathname + target.search, method: 'GET', agent,
-            headers: { Accept: 'application/octet-stream, application/json, text/plain', 'Accept-Encoding': 'identity', 'Cache-Control': 'no-cache', 'User-Agent': 'SuperLedger-Signed-Updater/1', ...(rangeStart === undefined ? {} : { Range: `bytes=${rangeStart}-` }) } }, incoming => {
+            headers: { Accept: 'application/octet-stream, application/json, text/plain', 'Accept-Encoding': 'identity', 'Cache-Control': 'no-cache', 'User-Agent': 'SuperLedger-Signed-Updater/1', ...(rangeStart === undefined ? {} : { Range: `bytes=${rangeStart}-${rangeEnd ?? ''}` }) } }, incoming => {
             response = incoming;
             const statusCode = incoming.statusCode, headers = incoming.headers;
             try { onResponse?.({ statusCode, headers }); } catch (failure) { finish(failure); return; }
@@ -183,7 +187,7 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
   // This high-water mark tracks signed releases seen from the update feed.
   // A newer locally installed build must not make an older public release an error.
   let phase = 'idle', error = '', operation = '', downloadedBytes = 0, lastCheckedAt = null, deferredVersion = '', deferredUntil = 0, highestVersion = '';
-  let retryAttempt = 0, bytesPerSecond = 0;
+  let retryAttempt = 0, bytesPerSecond = 0, sourceLabel = '', selectingSource = false;
   function ensureDirectory() {
     fs.mkdirSync(userDataDirectory, { recursive: true });
     if (fs.existsSync(directory) && fs.lstatSync(directory).isSymbolicLink()) throw new Error('更新目录不能是目录链接。');
@@ -197,7 +201,7 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
     if (typeof saved.deferredVersion === 'string' && VERSION.test(saved.deferredVersion) && Number.isSafeInteger(saved.deferredUntil) && saved.deferredUntil <= now() + PROMPT_COOLDOWN_MS) { deferredVersion = saved.deferredVersion; deferredUntil = saved.deferredUntil; }
     if (typeof saved.highestVersion === 'string' && VERSION.test(saved.highestVersion)) highestVersion = saved.highestVersion;
   } catch { /* A missing/broken reminder preference cannot authorize an update. */ }
-  const status = () => ({ enabled: Boolean(enabled) && !closed, currentVersion, phase, error, operation, lastCheckedAt, availableVersion: candidate?.version || null, notes: candidate?.notes || '', downloadedBytes, totalBytes: candidate?.size || 0, ready: Boolean(readyFile), deferredUntil, retryAttempt, maxRetryAttempts: retryDelays.length, bytesPerSecond });
+  const status = () => ({ enabled: Boolean(enabled) && !closed, currentVersion, phase, error, operation, lastCheckedAt, availableVersion: candidate?.version || null, notes: candidate?.notes || '', downloadedBytes, totalBytes: candidate?.size || 0, ready: Boolean(readyFile), deferredUntil, retryAttempt, maxRetryAttempts: retryDelays.length, bytesPerSecond, sourceLabel, selectingSource });
   function emit() { try { onStatus(status()); } catch { /* UI listeners cannot change update state. */ } }
   function persist() {
     ensureDirectory();
@@ -241,7 +245,7 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
     controller = new AbortController();
     downloading = Promise.resolve().then(async () => {
       let temporary, fd;
-      phase = 'downloading'; operation = 'download'; error = ''; downloadedBytes = 0; retryAttempt = 0; bytesPerSecond = 0; emit();
+      phase = 'downloading'; operation = 'download'; error = ''; downloadedBytes = 0; retryAttempt = 0; bytesPerSecond = 0; sourceLabel = ''; selectingSource = false; emit();
       try {
         if (closed || controller.signal.aborted) throw cancelled();
         ensureDirectory();
@@ -253,18 +257,23 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
             readyFile = target; downloadedBytes = update.size; phase = 'ready'; return status();
           } catch(failure) { if(failure.code==='ABORT_ERR')throw failure;if (fs.lstatSync(target).isSymbolicLink()) throw new Error('安装包缓存不能是文件链接。'); }
         }
+        selectingSource = update.sources.length > 1; emit();
+        const sources = await rankSources({ sources: update.sources, size: update.size, request, signal: controller.signal, validateUrl: validateTransportUrl });
+        selectingSource = false;
+        let sourceIndex = 0; sourceLabel = sources[0].label; emit();
         temporary = path.join(directory, `download-${crypto.randomUUID()}.partial`); fd = fs.openSync(temporary, 'wx', 0o600);
         let retries = 0, rangeFallbackUsed = false;
         for (;;) {
           if (closed || controller.signal.aborted) throw cancelled();
           const startOffset = downloadedBytes, startedAt = now();
-          let url = update.url, lastProgress = startedAt, transferBytes = 0;
+          let url = sources[sourceIndex].url, lastProgress = startedAt, transferBytes = 0;
           try {
             for (let redirects = 0; redirects <= 5; redirects++) {
               validateTransportUrl(url);
               let accepted = false, responseBytes = 0, expectedBytes = 0;
               const acceptResponse = ({ statusCode, headers = {} }) => {
                 if (accepted) throw new Error('安装包响应头重复，已停止下载。');
+                if ([403, 404, 410].includes(statusCode) && sources.length > 1) throw Object.assign(new Error('当前下载线路暂不可用。'), { code: 'UPDATE_SOURCE_UNAVAILABLE' });
                 if (statusCode === 416 && startOffset > 0) throw Object.assign(new Error('更新来源不支持此次续传。'), { code: 'UPDATE_RANGE_UNSUPPORTED' });
                 if (statusCode !== 200 && statusCode !== 206) return;
                 if (headers['content-encoding'] && headers['content-encoding'] !== 'identity') throw new Error('更新来源返回了不支持的压缩数据。');
@@ -298,6 +307,7 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
                   const elapsed = now() - startedAt;
                   bytesPerSecond = elapsed > 0 ? Math.round(transferBytes * 1000 / elapsed) : 0;
                   if (now() - lastProgress >= 200) { lastProgress = now(); emit(); }
+                  if (sourceIndex + 1 < sources.length && elapsed >= 12000 && bytesPerSecond < 512 * 1024 && update.size - downloadedBytes >= 4 * 1024 * 1024) throw transferError('当前线路较慢，正在切换线路继续下载。');
                 } });
               if (response.statusCode === 200 || response.statusCode === 206) {
                 if (!accepted) acceptResponse(response);
@@ -319,11 +329,14 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
             if (failure.code === 'UPDATE_RANGE_UNSUPPORTED' && !rangeFallbackUsed) {
               rangeFallbackUsed = true; fs.ftruncateSync(fd, 0); downloadedBytes = 0; emit(); continue;
             }
-            if (!retryable(failure)) throw failure;
+            if (!retryable(failure) && !(failure.code === 'UPDATE_SOURCE_UNAVAILABLE' && sourceIndex + 1 < sources.length)) throw failure;
             // A connection can close after the last byte but before HTTP end.
             // The signed whole-file digest still decides whether it is usable.
             if (downloadedBytes === update.size) break;
             if (retries >= retryDelays.length) throw failure;
+            if (sourceIndex + 1 < sources.length) {
+              sourceIndex++; sourceLabel = sources[sourceIndex].label; retries++; retryAttempt = 0; emit(); continue;
+            }
             retryAttempt = retries + 1; emit();
             await waitForRetry(retryDelays[retries++], controller.signal);
             retryAttempt = 0; emit();
@@ -340,7 +353,7 @@ function createUpdater({ currentVersion, userDataDirectory, publicKey, enabled =
       finally {
         if (fd !== undefined) try { fs.closeSync(fd); } catch {}
         if (temporary) try { fs.unlinkSync(temporary); } catch {}
-        controller = null; downloading = null; retryAttempt = 0; bytesPerSecond = 0; emit();
+        controller = null; downloading = null; retryAttempt = 0; bytesPerSecond = 0; selectingSource = false; emit();
       }
       return status();
     });
