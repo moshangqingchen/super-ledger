@@ -6,7 +6,7 @@
 
 ## 安装与打开
 
-Windows 1.8.14 和 Android 1.3.10 可从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/tag/v1.8.14) 下载 `SuperLedger-Setup-1.8.14.exe` 和 `SuperLedger-Mobile-1.3.10.apk`，也可运行本地构建的 `release/超级账本-安装-1.8.14.exe`。Windows 安装包也内附该 APK。安装程序会为当前用户创建桌面与开始菜单入口。
+Windows 1.8.15 和 Android 1.3.11 可从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/tag/v1.8.15) 下载 `SuperLedger-Setup-1.8.15.exe` 和 `SuperLedger-Mobile-1.3.11.apk`，也可运行本地构建的 `release/超级账本-安装-1.8.15.exe`。Windows 安装包也内附该 APK。安装程序会为当前用户创建桌面与开始菜单入口。
 
 也可直接打开 `release/win-unpacked/超级账本.exe`；免安装版必须保留整个 win-unpacked 文件夹。根目录的 `启动账本.cmd` 仅是兼容启动入口，日常使用桌面或开始菜单图标即可。
 
@@ -19,6 +19,8 @@ Android 1.3.6 支持按北京时间设置首次和每月扣账小时，小时订
 首次打开默认是空账本：账户、收支、订阅、储蓄心愿均为空，预算未设置，所有金额为零。点击「添加账户」后填写自己的余额开始使用。会员服务与 Logo 是可选目录，不会自动创建订阅记录。
 
 ## 功能
+
+- Windows 1.8.15 / Android 1.3.11 新增「订阅星图」：用 7 / 15 / 30 天轨道查看期限远近，集中提示待扣账、已到期和余额不足，并按原币核对共享账户的下一笔费用合计。电脑版在「详细 / 简约 / 图表」间切换，手机版保留列表并加入星图，均记住选择。详见 [1.8.15 更新说明](docs/releases/1.8.15.md)。
 
 - Windows 1.8.14 / Android 1.3.10 默认只填一次首次扣账日期和小时，需要不同时再展开每月设置；已有不同设置会自动展开保留。电脑版新增下载线路择快和低速续传换线，手机版自动下载也会避开持续低速的线路。详见 [1.8.14 更新说明与加速下载](docs/releases/1.8.14.md)。
 

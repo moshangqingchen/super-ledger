@@ -1,5 +1,151 @@
 /* Subscription-only presentation. State colors, money masking, native form
    controls and all data/action hooks remain owned by the existing application. */
+.subscription-chart { display: grid; gap: 20px; min-width: 0; }
+.subscription-chart-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 15px; }
+.chart-stat { --chart-stat-color: #8c70bd; position: relative; display: flex; align-items: center; gap: 12px; min-width: 0; padding: 18px; overflow: hidden; border: 1px solid #e5ddf5; border-radius: 17px; background: linear-gradient(125deg, #fcfaff, #f4efff); box-shadow: inset 0 1px 0 #fff, 0 3px 12px #8976b20a; }
+.chart-stat > span { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; color: var(--chart-stat-color); border-radius: 11px; background: #ffffffb0; }
+.chart-stat > svg { position: absolute; right: 12px; bottom: 9px; color: var(--chart-stat-color); opacity: .13; }
+.chart-stat small { display: block; color: #72758c; font-size: 11px; }
+.chart-stat b { display: block; margin-top: 5px; color: #3e3858; font-size: 26px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.chart-stat em { font-size: 12px; font-style: normal; font-weight: 500; color: #898196; }
+.chart-stat.stat-urgent { --chart-stat-color: #c3829c; background: linear-gradient(125deg, #fffafd, #f9edf5); border-color: #efdeea; }
+.chart-stat.stat-pending { --chart-stat-color: #7e8ac9; background: linear-gradient(125deg, #fbfcff, #eef0fd); border-color: #dfe3f4; }
+.chart-stat.stat-shortfall { --chart-stat-color: #c58d7c; background: linear-gradient(125deg, #fffcfa, #fdf0ec); border-color: #f0e0d8; }
+.subscription-chart-main { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, 1fr); gap: 20px; align-items: start; }
+.subscription-chart-panel { min-width: 0; padding: 22px; border: 1px solid #e3ddf2; border-radius: 21px; background: radial-gradient(ellipse at 55% 0, #eee7fc6b, transparent 70%), linear-gradient(145deg, #fefeff, #fbfaff); box-shadow: inset 0 1px 0 #fff, 0 0 12px #9e8bc510, 0 7px 22px #69608606; }
+.chart-panel-heading { display: flex; align-items: flex-start; gap: 11px; }
+.chart-panel-heading > span { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 36px; border-radius: 11px; color: #9b83bd; background: #f1ecfb; box-shadow: inset 0 1px 0 #fff; }
+.subscription-chart h2 { margin: 0; color: #47415e; font-size: 16px; font-weight: 650; line-height: 1.4; letter-spacing: -.02em; }
+.subscription-chart h2 small { margin-left: 8px; font-size: 11px; font-weight: 500; color: #9690a5; }
+.chart-panel-heading p, .chart-section-note { margin: 5px 0 0; color: #8b859b; font-size: 11px; line-height: 1.7; }
+.subscription-orbit { position: relative; width: 100%; aspect-ratio: 600 / 460; margin: 10px auto 2px; }
+.orbit-rings { display: block; width: 100%; height: 100%; overflow: visible; }
+.orbit-ring { fill: none; stroke: #d8ccee; stroke-width: 1.2; }
+.orbit-ring.ring-7 { fill: #b69de710; stroke: #c5b2e7; }
+.orbit-ring.ring-15 { stroke-dasharray: 3 4; }
+.orbit-guide { fill: none; stroke: #e8e2f2; stroke-width: 1; stroke-dasharray: 2 6; }
+.orbit-core { position: absolute; left: 50%; top: 51.087%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: clamp(42px, 13%, 74px); aspect-ratio: 1; transform: translate(-50%, -50%); border: 1px solid #c3b0e3; border-radius: 50%; background: linear-gradient(145deg, #b79bde, #9680c3); color: #fff; box-shadow: inset 0 1px 0 #ffffff6b, 0 0 24px #a68ac54d, 0 6px 16px #9d83b02b; }
+.orbit-core > svg { width: 18px; height: 18px; }
+.orbit-core b { font-size: clamp(15px, 1.5vw, 22px); line-height: 1; }
+.orbit-core span { font-size: clamp(6px, .65vw, 9px); white-space: nowrap; opacity: .9; }
+.orbit-node { position: absolute; display: flex; align-items: center; gap: 6px; width: min(154px, 26.667%); min-width: 0; min-height: 44px; padding: 8px; transform: translate(-50%, -50%); border: 1px solid #e3d9f5; border-radius: 14px; background: #ffffffef; color: #5e5675; text-align: left; box-shadow: 0 3px 10px #9275b219, inset 0 1px 0 #fff; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.orbit-node:hover, .orbit-node:focus-visible { outline: none; border-color: #b69cd7; box-shadow: 0 0 0 3px #ab8fc01a, 0 4px 13px #9275b223; }
+.orbit-node.is-paused { border-color: #e1dce8; background: #f7f5fa; color: #a399ad; }
+.orbit-node.is-paused :is(.service-logo, .service-icon) { filter: grayscale(.8); opacity: .65; }
+.orbit-node > span:last-child { min-width: 0; }
+.orbit-node b, .orbit-node small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.orbit-node b { font-size: clamp(8px, .9vw, 11px); line-height: 1.5; font-weight: 650; }
+.orbit-node small { margin-top: 2px; color: #92879e; font-size: clamp(7px, .75vw, 10px); line-height: 1.4; }
+.subscription-chart :is(.service-logo, .service-icon) { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 34px; border-radius: 11px; padding: 6px; background: #fff; border: 1px solid #eee9f4; box-shadow: 0 2px 5px #66517b0a; }
+.subscription-chart .service-logo img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.subscription-chart .orbit-node :is(.service-logo, .service-icon) { width: clamp(20px, 2.2vw, 30px); height: clamp(20px, 2.2vw, 30px); flex-basis: clamp(20px, 2.2vw, 30px); border-radius: 9px; padding: 4px; }
+.orbit-legend { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; color: #91839e; font-size: 10px; }
+.orbit-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.orbit-legend i { width: 8px; height: 8px; border: 1px solid #b49acb; border-radius: 50%; }
+.orbit-legend .ring-7 { background: #c7b0e8; }
+.orbit-legend .ring-15 { background: #ece3f7; }
+.orbit-caption { margin: 11px 0 0; color: #9a91a4; font-size: 10px; line-height: 1.8; text-align: center; }
+.orbit-outside { display: flex; justify-content: center; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
+.orbit-outside span { padding: 3px 8px; border-radius: 7px; background: #f1edf7; color: #8f819d; font-size: 10px; }
+.orbit-outside b { margin-left: 4px; font-variant-numeric: tabular-nums; }
+.chart-attention-list { display: grid; gap: 11px; margin-top: 17px; }
+.subscription-attention-item { min-width: 0; padding: 14px; border: 1px solid #ebe2f0; border-radius: 15px; background: linear-gradient(125deg, #fefcff, #f8f3fc); }
+.subscription-attention-item.has-shortfall { border-color: #eddae2; background: linear-gradient(125deg, #fffafc, #fcf0f5); }
+.chart-service-link { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; padding: 0; border: 0; background: transparent; color: #57516a; text-align: left; cursor: pointer; }
+.chart-service-link > span:last-of-type { min-width: 0; }
+.chart-service-link > svg { margin-left: auto; flex-shrink: 0; color: #b1a4bd; }
+.chart-service-link b { display: block; overflow-wrap: anywhere; font-size: 12px; font-weight: 650; line-height: 1.5; }
+.chart-service-link small { display: block; margin-top: 2px; color: #a098aa; font-size: 10px; overflow-wrap: anywhere; line-height: 1.5; }
+.chart-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+.chart-badge { display: inline-block; padding: 3px 7px; border-radius: 7px; color: #7e7393; background: #eee8f8; font-size: 9px; font-weight: 550; line-height: 1.45; }
+.chart-badge.expiry-normal { color: #638c7a; background: #eaf5ee; }
+.chart-badge.expiry-soon { color: #9b885e; background: #faf3e0; }
+.chart-badge.expiry-urgent { color: #b0825c; background: #fbefdf; }
+.chart-badge.expiry-expired, .chart-badge.is-shortfall { color: #b56880; background: #fbeaf0; }
+.chart-badge.is-muted, .chart-badge.expiry-unset { color: #9990a3; background: #f0edf3; }
+.attention-money { margin: 10px 0 0; color: #ae617b; font-size: 12px; }
+.attention-money b { font-size: 15px; }
+.attention-dates { margin: 8px 0 0; color: #a08a9c; font-size: 10px; line-height: 1.8; }
+.chart-attention-empty { display: grid; justify-items: center; gap: 12px; padding: 42px 12px; color: #a28ab6; text-align: center; }
+.chart-attention-empty b { font-size: 12px; color: #80748c; font-weight: 550; }
+.chart-attention-empty p { margin: 0; color: #a296ac; font-size: 11px; line-height: 1.7; }
+.chart-readiness-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(285px, 100%), 1fr)); gap: 13px; margin-top: 18px; }
+.subscription-readiness-card { min-width: 0; padding: 15px; border: 1px solid #dcebe4; border-radius: 15px; background: linear-gradient(130deg, #f9fefb, #edf7f4); }
+.subscription-readiness-card.has-shortfall { border-color: #edd9e1; background: linear-gradient(130deg, #fffafb, #fbeff4); }
+.readiness-account { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.readiness-account > div { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.readiness-account .account-logo { width: 32px; height: 32px; flex: 0 0 32px; border-radius: 10px; }
+.readiness-account .account-logo :is(img, svg) { width: 23px; height: 23px; }
+.readiness-account b { display: block; font-size: 11px; font-weight: 650; overflow-wrap: anywhere; }
+.readiness-account small { display: block; margin-top: 3px; color: #9e909d; font-size: 9px; }
+.readiness-balance { flex-shrink: 0; text-align: right; }
+.readiness-balance .money { margin-top: 5px; font-size: 13px; }
+.readiness-amounts { display: flex; justify-content: space-between; gap: 7px; flex-wrap: wrap; margin-top: 13px; color: #8c7d8e; font-size: 10px; line-height: 1.7; }
+.readiness-amounts .money { font-size: 11px; font-weight: 650; }
+.subscription-readiness-card.has-shortfall .readiness-amounts > span:last-child { color: #b86f89; }
+.chart-coverage-line { display: flex; align-items: center; gap: 9px; margin-top: 10px; color: #9c8b9e; font-size: 10px; }
+.coverage-track { height: 8px; flex: 1; overflow: hidden; border-radius: 8px; background: #dcebe4; box-shadow: inset 0 1px 2px #836c8a06; }
+.coverage-track > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #aad6c5, #88bea9); }
+.has-shortfall .coverage-track { background: #f0dce4; }
+.has-shortfall .coverage-track > span { background: linear-gradient(90deg, #eab6c9, #d891af); }
+.readiness-due, .chart-coverage-private { margin: 9px 0 0; color: #ac9daa; font-size: 9px; line-height: 1.6; }
+.chart-service-columns, .subscription-chart-service { display: grid; grid-template-columns: minmax(130px, 1.2fr) minmax(85px, .75fr) minmax(175px, 1.5fr) minmax(150px, 1.25fr) 34px; align-items: center; gap: 15px; }
+.chart-service-columns { margin-top: 18px; padding: 9px 11px; border-radius: 9px; background: #f1edf9; color: #92849e; font-size: 10px; }
+.chart-service-list { list-style: none; padding: 0; margin: 0; }
+.subscription-chart-service { padding: 15px 11px; border-bottom: 1px solid #eee9f5; }
+.subscription-chart-service:last-child { border-bottom: 0; padding-bottom: 1px; }
+.chart-service-fee { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.chart-service-fee .money { color: #70617e; font-size: 12px; font-weight: 650; }
+.chart-service-fee small { font-size: 9px; color: #b1a4b9; }
+.chart-service-dates { display: grid; gap: 4px; color: #a18fa7; font-size: 9px; line-height: 1.6; }
+.chart-service-dates b { color: #84708d; font-weight: 500; }
+.chart-service-dates small { color: #b4a6ba; font-size: 8px; }
+.chart-service-funding .chart-badges { margin-top: 0; }
+.chart-service-funding p { margin: 7px 0 0; color: #ab91a8; font-size: 9px; line-height: 1.8; }
+.chart-service-funding .money { font-weight: 550; }
+.subscription-chart-empty { display: grid; justify-items: center; gap: 12px; padding: 60px 20px; color: #aa96be; text-align: center; }
+.subscription-chart-empty p { margin: 0 0 10px; color: #a193ad; font-size: 12px; line-height: 1.7; }
+.subscription-chart :is(button, a):focus-visible { outline: 2px solid #aa8cc8; outline-offset: 3px; }
+@media (max-width: 1150px) {
+  .subscription-chart-main { grid-template-columns: minmax(0, 1fr); }
+  .subscription-orbit { max-width: 590px; }
+  .chart-attention-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .chart-service-columns, .subscription-chart-service { grid-template-columns: minmax(120px, 1.15fr) minmax(80px, .7fr) minmax(165px, 1.4fr) minmax(130px, 1.2fr) 34px; gap: 10px; }
+}
+@media (max-width: 850px) {
+  .subscription-chart-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .chart-service-columns { display: none; }
+  .subscription-chart-service { grid-template-columns: minmax(0, 1fr) auto 34px; gap: 12px 14px; align-items: start; }
+  .subscription-chart-service > .chart-service-link { grid-column: 1; grid-row: 1; }
+  .chart-service-fee { grid-column: 2; grid-row: 1; }
+  .subscription-chart-service > .icon-btn { grid-column: 3; grid-row: 1; }
+  .chart-service-dates { grid-column: 1; grid-row: 2; }
+  .chart-service-funding { grid-column: 2 / -1; grid-row: 2; }
+}
+@media (max-width: 480px) {
+  .subscription-chart { gap: 15px; }
+  .subscription-chart-stats { gap: 10px; }
+  .chart-stat { padding: 13px 10px; gap: 8px; border-radius: 14px; }
+  .chart-stat > span { width: 28px; height: 28px; }
+  .chart-stat small { font-size: 9px; }
+  .chart-stat b { font-size: 22px; }
+  .chart-stat > svg { width: 32px; height: 32px; right: 7px; }
+  .subscription-chart-panel { padding: 16px; border-radius: 18px; }
+  .subscription-chart h2 { font-size: 14px; }
+  .chart-panel-heading p { font-size: 10px; }
+  .chart-attention-list { grid-template-columns: minmax(0, 1fr); }
+  .orbit-node { padding: 5px; gap: 4px; border-radius: 10px; }
+  .orbit-core { gap: 1px; }
+  .orbit-core > svg { width: 12px; height: 12px; }
+  .orbit-legend { gap: 10px; font-size: 9px; }
+  .orbit-caption { font-size: 9px; }
+  .subscription-chart-service { grid-template-columns: minmax(0, 1fr) 34px; padding: 15px 0; gap: 10px; }
+  .subscription-chart-service > .icon-btn { grid-column: 2; }
+  .chart-service-fee { grid-column: 1 / -1; grid-row: 2; margin-left: 43px; }
+  .chart-service-dates { grid-column: 1 / -1; grid-row: 3; }
+  .chart-service-funding { grid-column: 1 / -1; grid-row: 4; }
+  .readiness-account { flex-wrap: wrap; }
+}
 .subscription-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 22px;

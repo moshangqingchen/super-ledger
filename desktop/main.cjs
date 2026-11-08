@@ -28,7 +28,7 @@ let mainWindow, tray, server, origin = '', quitting = false, alreadyClosing = fa
 let updater, updateController, updateLifecycle;
 const sessionToken = randomBytes(32).toString('hex');
 const preferencesFile = path.join(app.getPath('userData'), 'desktop-settings.json');
-const SUBSCRIPTION_VIEWS = ['detailed', 'compact'];
+const SUBSCRIPTION_VIEWS = ['detailed', 'compact', 'chart'];
 let preferences = { keepInTray: true, subscriptionView: 'detailed' };
 try { const p=JSON.parse(fs.readFileSync(preferencesFile,'utf8'));if(typeof p.keepInTray==='boolean')preferences.keepInTray=p.keepInTray;if(SUBSCRIPTION_VIEWS.includes(p.subscriptionView))preferences.subscriptionView=p.subscriptionView; } catch {}
 

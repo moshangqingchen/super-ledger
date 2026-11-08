@@ -67,6 +67,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     private LinearLayout root, body;
     private int page, visibleTransactions = 100;
     private boolean receiverRegistered, destroyed;
+    private boolean subscriptionChart;
     private SyncClient.Pairing pairing;
     private String syncMessage = "", lastError = "";
     private boolean recoveryAfterExport;
@@ -84,6 +85,7 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
     private interface Action { void run() throws Exception; }
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        subscriptionChart=getPreferences(MODE_PRIVATE).getBoolean("subscriptionChart",false);
         if (saved != null) { page = saved.getInt("page", 0); selectedMonth = saved.getString("month", selectedMonth); selectedAccount = saved.getString("account", ""); selectedCategory = saved.getString("category", ""); selectedType = saved.getString("type", ""); searchQuery = saved.getString("query", ""); moreSection = saved.getString("section", ""); temporaryActivity = saved.getBoolean("temporaryActivity", false); }
         try { store = LedgerStore.get(this); } catch (Exception e) { showFatal(e); return; }
         updater = AppUpdater.get(this);
@@ -689,11 +691,19 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
         },original==null?null:()->store.deleteAccount(original.getString("id")),"只有没有关联账单和订阅的账户才可删除。删除会在下次扫码时同步。");
     }
     private void renderSubscriptions(JSONObject data)throws Exception {
-        JSONObject state=data.getJSONObject("state"),accountBalances=MobileLedger.balances(state,LedgerStore.today());JSONArray subscriptions=items(state,"subscriptions");heading("会员与订阅","到期自动记入账本，只记账，不会实际扣款或取消平台会员。");
+        JSONObject state=data.getJSONObject("state");JSONArray subscriptions=items(state,"subscriptions");heading("会员与订阅","到期自动记入账本，只记账，不会实际扣款或取消平台会员。");
         LinearLayout intro=card();long monthly=0;for(int i=0;i<subscriptions.length();i++){JSONObject sub=subscriptions.getJSONObject(i),account=findAccount(state,sub.optString("accountId"));if(sub.optBoolean("active")&&sub.optBoolean("recurring")&&account!=null)monthly+=MobileLedger.toCnyCents(sub.optLong("amount"),sub.optString("currency","CNY"),account.optString("currency","CNY").equals("CNY")?"1":account.optString("cnyRate"));}
         intro.setBackground(MobileStyle.heroSurface(this));intro.addView(label("每月启用的计划扣账 · 折合人民币"));intro.addView(amountText(money(monthly,"CNY"),31,INK));addButton(intro,"＋ 添加订阅",true,()->editSubscription(null));
         intro.addView(label("到期标注：已过期红色，7 天内橙色，8–30 天黄色，30 天以上绿色，未设置灰色。"));
         if(subscriptions.length()==0)intro.addView(label("选择服务品牌，填写你实际支付的金额和扣款账户。"));
+        LinearLayout switcher=row();
+        Button chartButton=button("订阅星图",subscriptionChart,()->selectSubscriptionView(true)),listButton=button("列表",!subscriptionChart,()->selectSubscriptionView(false));
+        chartButton.setSelected(subscriptionChart);listButton.setSelected(!subscriptionChart);
+        chartButton.setContentDescription("订阅星图"+(subscriptionChart?"，已选择":""));listButton.setContentDescription("订阅列表"+(!subscriptionChart?"，已选择":""));
+        LinearLayout.LayoutParams chartParams=new LinearLayout.LayoutParams(0,-2,1),listParams=new LinearLayout.LayoutParams(0,-2,1);chartParams.rightMargin=dp(5);listParams.leftMargin=dp(5);
+        switcher.addView(chartButton,chartParams);switcher.addView(listButton,listParams);gap(intro,10);intro.addView(switcher);
+        if(subscriptionChart){renderSubscriptionChart(state);return;}
+        JSONObject accountBalances=MobileLedger.balances(state,LedgerStore.today());
         for(int i=0;i<subscriptions.length();i++){final JSONObject sub=subscriptions.getJSONObject(i);LinearLayout c=card(),r=row();c.setBackground(MobileStyle.material(this,safeColor(sub.optString("color","#8C7BC1")),22));addLogo(r,BrandIcons.forSubscription(sub),sub.optString("name"),sub.optString("color","#8476D9"),44);LinearLayout labels=column();labels.addView(text(sub.optString("name"),17,INK,true));labels.addView(text(sub.optString("tier").isEmpty()?"自定义档位":sub.optString("tier"),12,MUTED,false));r.addView(labels,new LinearLayout.LayoutParams(0,-2,1));c.addView(r);gap(c,16);c.addView(amountText(money(sub.optLong("amount"),sub.optString("currency","CNY")),29,INK));String due=MobileLedger.nextSubscriptionDue(sub,LedgerStore.today());java.time.ZonedDateTime now=MobileLedger.beijingDateTime(System.currentTimeMillis());String today=now.toLocalDate().toString();boolean waiting=due!=null&&(due.compareTo(today)<0||due.equals(today)&&MobileLedger.subscriptionDueHour(sub,due)<=now.getHour());c.addView(label((sub.optBoolean("active")?(sub.optBoolean("recurring")?"每月 "+sub.optInt("billingDay")+" 日 "+String.format(Locale.US,"%02d:00",sub.optInt("billingHour",0)):"单次记账"):"已暂停")+(due==null?"":(waiting?" · 待扣账 ":" · 下次 ")+due+" "+String.format(Locale.US,"%02d:00",MobileLedger.subscriptionDueHour(sub,due))+" 北京时间")));
             SubscriptionDetails.Status expiry=SubscriptionDetails.expiryStatus(sub,LedgerStore.today());int tone=expiryColor(expiry.tone);TextView badge=text(expiry.label,13,tone,true);badge.setPadding(dp(11),dp(9),dp(11),dp(9));badge.setBackground(MobileStyle.outlined(this,MobileStyle.blend(Color.WHITE,tone,.06f),MobileStyle.blend(Color.WHITE,tone,.22f),11));c.addView(badge);gap(c,5);c.addView(text(expiry.detail,12,MUTED,false));
             gap(c,12);c.addView(subscriptionFunding(findAccount(state,sub.optString("accountId")),accountBalances.optLong(sub.optString("accountId")),sub.optLong("amount"),waiting));
@@ -701,6 +711,84 @@ public final class MainActivity extends Activity implements AppUpdater.Listener 
             if(!sub.optString("note").isEmpty())c.addView(label(sub.optString("note")));
             actionPair(c,"编辑计划",()->editSubscription(sub),sub.optBoolean("active")?"暂停记账":"恢复记账",()->{JSONObject changed=LedgerStore.copy(sub).put("active",!sub.optBoolean("active"));store.saveSubscription(changed);render();});
         }
+    }
+    private void selectSubscriptionView(boolean chart){subscriptionChart=chart;getPreferences(MODE_PRIVATE).edit().putBoolean("subscriptionChart",chart).apply();render();}
+    private LinearLayout subscriptionStat(String title,int count,int tint){
+        LinearLayout item=column();item.setPadding(dp(13),dp(12),dp(13),dp(13));item.setBackground(MobileStyle.material(this,tint,15));
+        item.addView(text(title,12,MUTED,false));item.addView(text(count+" 项",25,tint,true));return item;
+    }
+    private void renderSubscriptionChart(JSONObject state)throws Exception {
+        JSONObject overview=SubscriptionOverview.build(state,System.currentTimeMillis()),stats=overview.getJSONObject("stats");
+        JSONArray rows=overview.getJSONArray("rows"),accounts=overview.getJSONArray("accounts");
+        LinearLayout summary=card();
+        String[] titles={"30 天内","7 天内","待扣账","余额不足"},keys={"upcoming","urgent","pending","shortfall"};
+        int[] colors={PURPLE,0xFFC67950,0xFF637FB4,RED};
+        for(int line=0;line<2;line++){
+            LinearLayout pair=row();
+            for(int column=0;column<2;column++){
+                int index=line*2+column;LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(0,-2,1);if(column==0)params.rightMargin=dp(5);else params.leftMargin=dp(5);
+                pair.addView(subscriptionStat(titles[index],stats.getInt(keys[index]),colors[index]),params);
+            }
+            if(line>0)gap(summary,10);summary.addView(pair);
+        }
+        summary.addView(label("提醒可同时出现；余额不足按每项下一笔费用单独比较。"));
+        LinearLayout radarCard=card();radarCard.setBackground(MobileStyle.heroSurface(this));sectionTitle(radarCard,"订阅星图","spark");
+        radarCard.addView(label("越接近中心，会员期限或续费日期越临近。"));
+        SubscriptionRadarView radar=new SubscriptionRadarView(this,overview);radarCard.addView(radar,new LinearLayout.LayoutParams(-1,-2));
+        radarCard.addView(text(radar.plottedSummary(),11,MUTED,false));radarCard.addView(label(radar.outsideSummary()));
+
+        LinearLayout alerts=card();sectionTitle(alerts,"需要留意","bell");int alertCount=0;
+        for(int i=0;i<rows.length();i++){
+            JSONObject row=rows.getJSONObject(i),expiry=row.getJSONObject("expiry");
+            boolean near=!expiry.isNull("days")&&expiry.getLong("days")<=7;
+            if(row.getBoolean("pending")||row.getLong("shortfall")>0||near){subscriptionOverviewRow(alerts,row,true);alertCount++;}
+        }
+        if(alertCount==0)alerts.addView(label("当前没有待扣账、临近日期或单笔余额不足的提醒。"));
+
+        LinearLayout preparation=card();sectionTitle(preparation,"续费准备","wallet");
+        preparation.addView(label("每项启用计划仅计下一笔，包含逾期待扣。按账户原币准备资金，非 30 天费用预测。"));
+        if(accounts.length()==0)preparation.addView(label("暂无需要准备的下一笔费用。"));
+        for(int i=0;i<accounts.length();i++){
+            JSONObject group=accounts.getJSONObject(i),account=group.getJSONObject("account");String currency=group.getString("currency");
+            long required=group.getLong("amount"),balance=group.getLong("balance"),gap=group.getLong("shortfall");
+            LinearLayout funding=column();funding.setPadding(dp(14),dp(13),dp(14),dp(13));funding.setBackground(MobileStyle.material(this,gap>0?RED:GREEN,16));
+            LinearLayout identity=row();addLogo(identity,BrandIcons.forAccount(account),account.optString("name"),account.optString("color","#8476D9"),32);
+            identity.addView(text(accountName(account),14,INK,true),new LinearLayout.LayoutParams(0,-2,1));funding.addView(identity);
+            funding.addView(label("当前余额  "+fundingDifference(balance,currency)));funding.addView(text("下一笔合计  "+fundingDifference(required,currency),15,INK,true));
+            progress(funding,Math.max(0,balance),required,gap>0?RED:GREEN);
+            funding.addView(text("覆盖 "+Math.round(group.getDouble("coverage")*100)+"% · "+group.getJSONArray("subscriptions").length()+" 项计划",12,MUTED,false));
+            funding.addView(text(gap>0?"还需准备  "+fundingDifference(gap,currency):"下一笔合计费用已覆盖",13,gap>0?RED:GREEN,true));
+            funding.addView(text("最早扣账 "+group.getString("due")+" "+String.format(Locale.US,"%02d:00",group.getInt("dueHour"))+" · 北京时间",11,MUTED,false));
+            LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(-1,-2);params.topMargin=dp(10);preparation.addView(funding,params);
+        }
+        LinearLayout services=card();sectionTitle(services,"服务清单 · "+rows.length()+" 项","repeat");services.addView(label("点按任一服务查看或编辑，期限与扣账计划分别展示。"));
+        for(int i=0;i<rows.length();i++)subscriptionOverviewRow(services,rows.getJSONObject(i),false);
+        if(rows.length()==0)addButton(services,"＋ 添加第一项订阅",true,()->editSubscription(null));
+    }
+    private void subscriptionOverviewRow(LinearLayout parent,JSONObject row,boolean alert)throws Exception {
+        JSONObject sub=row.getJSONObject("sub"),expiry=row.getJSONObject("expiry");List<String> flags=new ArrayList<>();
+        if(!sub.getBoolean("active"))flags.add("已暂停");
+        if(row.getBoolean("pending"))flags.add("待扣账");
+        if(!expiry.isNull("days")){
+            long days=expiry.getLong("days");String source=expiry.getString("source");
+            if(days<0)flags.add(source.equals("expiry")?"会员已到期":"扣账已逾期");
+            else if(days<=7)flags.add(source.equals("expiry")?"7天内到期":"7天内续费");
+        }
+        if(row.getLong("shortfall")>0)flags.add("余额不足");
+        if(flags.isEmpty())flags.add(row.getBoolean("canBook")?"已安排":sub.getBoolean("active")?"当前计划已完成":"已暂停");
+        boolean urgent=row.getBoolean("pending")||row.getLong("shortfall")>0||!expiry.isNull("days")&&expiry.getLong("days")<0;
+        LinearLayout item=column();item.setPadding(dp(13),dp(12),dp(13),dp(12));item.setBackground(MobileStyle.cardRipple(this,alert&&urgent?RED:PURPLE,15));item.setMinimumHeight(dp(64));
+        LinearLayout identity=row();addLogo(identity,BrandIcons.forSubscription(sub),sub.getString("name"),sub.optString("color","#8476D9"),32);
+        identity.addView(text(sub.getString("name"),15,INK,true),new LinearLayout.LayoutParams(0,-2,1));identity.addView(text("编辑 ›",11,PURPLE,true));item.addView(identity);
+        String status=String.join(" · ",flags);item.addView(text(status,12,urgent?RED:PURPLE,true));
+        String fee=fundingDifference(sub.getLong("amount"),row.getString("currency"))+(sub.getBoolean("recurring")?" / 月":" / 次");item.addView(text(fee,14,INK,true));
+        String deadline=expiry.isNull("date")?"会员期限未设置":(expiry.getString("source").equals("expiry")?"会员期限 ":"续费提醒 ")+expiry.getString("date");item.addView(text(deadline,11,MUTED,false));
+        String due;
+        if(row.getBoolean("canBook"))due=(row.getBoolean("pending")?"待扣账期 ":"下一次扣账 ")+row.getString("due")+" "+String.format(Locale.US,"%02d:00",row.getInt("dueHour"))+" · 北京时间";
+        else due=sub.getBoolean("active")?"当前计划已处理完毕":"自动记账已暂停";
+        item.addView(text(due,11,MUTED,false));
+        item.setContentDescription(sub.getString("name")+"，"+status+"，"+fee+"，"+deadline+"，"+due+"，点按编辑");item.setFocusable(true);item.setOnClickListener(view->act(()->editSubscription(sub)));
+        LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(-1,-2);params.topMargin=dp(9);parent.addView(item,params);
     }
     /** Read-only comparison, in integer units of the selected account; no booking or currency conversion. */
     private LinearLayout subscriptionFunding(JSONObject account,long balance,Long fee){

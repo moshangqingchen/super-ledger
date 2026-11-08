@@ -64,10 +64,11 @@ test('compact funding states the shortfall and masks it in privacy mode', () => 
 });
 
 test('the view switch only accepts known views and the desktop preference is validated', () => {
-  assert.ok(appSource.includes(`case'subscription-view':{if(!['detailed','compact'].includes(target.dataset.view))break;`));
+  assert.ok(appSource.includes(`case'subscription-view':{if(!['detailed','compact','chart'].includes(target.dataset.view))break;`));
   assert.ok(appSource.includes(`if(subscriptionView==='compact')return subscriptionCompact(s,status,currentBalances);`));
   assert.ok(appSource.includes(`aria-label="订阅展示方式"`));
   const main = readFileSync(new URL('../desktop/main.cjs', import.meta.url), 'utf8');
+  assert.ok(main.includes("const SUBSCRIPTION_VIEWS = ['detailed', 'compact', 'chart'];"));
   assert.match(main, /ledger:subscription-view',\(event,view\)=>\{\s*trusted\(event\);if\(!SUBSCRIPTION_VIEWS\.includes\(view\)\)throw/);
   assert.ok(main.includes('if(SUBSCRIPTION_VIEWS.includes(p.subscriptionView))preferences.subscriptionView=p.subscriptionView;'));
   const preload = readFileSync(new URL('../desktop/preload.cjs', import.meta.url), 'utf8');

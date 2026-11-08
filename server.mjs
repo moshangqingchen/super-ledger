@@ -372,7 +372,7 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
       let relative;
       try { relative = decodeURIComponent(route === '/' ? '/index.html' : route).slice(1); }
       catch { throw fail(400, '无效的文件地址。'); }
-      const topAllowed = new Set(['index.html', 'app.js', 'icon-select.js', 'icon-select.css', 'styles.css', 'dashboard.css', 'currency-ui.css', 'fresh-ui.css', 'update-ui.js', 'update-ui.css', 'mobile-sync-ui.js', 'mobile-sync.css', 'currencies.mjs', 'engine.mjs', 'subscription-catalog.mjs', 'account-presets.mjs', 'bank-catalog.mjs', 'account-groups.mjs', 'account-cards.js', 'account-cards.css', 'ledger-ui.css', 'subscription-polish.css', 'favicon.svg']);
+      const topAllowed = new Set(['index.html', 'app.js', 'icon-select.js', 'icon-select.css', 'styles.css', 'dashboard.css', 'currency-ui.css', 'fresh-ui.css', 'update-ui.js', 'update-ui.css', 'mobile-sync-ui.js', 'mobile-sync.css', 'currencies.mjs', 'engine.mjs', 'subscription-catalog.mjs', 'subscription-overview.mjs', 'subscription-chart.js', 'account-presets.mjs', 'bank-catalog.mjs', 'account-groups.mjs', 'account-cards.js', 'account-cards.css', 'ledger-ui.css', 'subscription-polish.css', 'favicon.svg']);
       if (!topAllowed.has(relative) && !relative.startsWith('assets/')) throw fail(404, '没有找到此文件。');
       if (relative.includes('\\') || relative.includes('\0') || relative.split('/').includes('..') || relative.split('/').some(part => part.startsWith('.'))) throw fail(404, '没有找到此文件。');
       const filename = path.resolve(ROOT, relative);

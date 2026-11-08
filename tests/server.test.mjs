@@ -448,5 +448,10 @@ test('desktop token protects every API while static assets remain available', as
   assert.equal((await fetch(`${fixture.base}/api/state`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body })).status, 403);
   assert.equal((await fetch(`${fixture.base}/api/state`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Ledger-Token': token, Origin: fixture.base }, body })).status, 200);
   assert.equal((await fetch(`${fixture.base}/engine.mjs`)).status, 200);
+  for (const module of ['subscription-overview.mjs', 'subscription-chart.js']) {
+    const response = await fetch(`${fixture.base}/${module}`);
+    assert.equal(response.status, 200, `Chart module ${module} remains available to the app`);
+    assert.match(response.headers.get('content-type'), /javascript/);
+  }
   assert.equal((await fetch(`${fixture.base}/api/state`, { headers: { 'X-Ledger-Token': token, Origin: 'https://example.com' } })).status, 403);
 });
