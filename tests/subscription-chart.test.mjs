@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { makeEmptyState, validateState } from '../engine.mjs';
 import { renderSubscriptionChart } from '../subscription-chart.js';
 
@@ -27,6 +28,15 @@ function render(state, visibleIds = state.subscriptions.map(row => row.id), hidd
   });
 }
 const count = (html, className) => [...html.matchAll(new RegExp(`class="${className}(?:[ "]|$)`, 'g'))].length;
+
+test('TT voice keeps its dark brand background in every chart logo without changing logo sizing', () => {
+  const css = readFileSync(new URL('../subscription-polish.css', import.meta.url), 'utf8');
+  const rule = /\.subscription-chart\s+\.service-logo\[data-service="ttvoice"\]\s*\{([^}]+)\}/.exec(css);
+  assert.ok(rule, 'The service-specific chart selector outranks the generic chart logo background');
+  assert.match(rule[1], /background\s*:\s*#626ad4\s*;/);
+  assert.match(rule[1], /border-color\s*:\s*#626ad4\s*;/);
+  assert.doesNotMatch(rule[1], /(?:padding|width|height|flex-basis)\s*:/);
+});
 
 test('chart filtering applies to service statistics while a shared account reserves all active next fees', () => {
   const state = fixture([sub('visible'), sub('filtered-out')]);

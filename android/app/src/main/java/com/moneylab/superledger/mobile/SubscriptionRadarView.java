@@ -27,10 +27,10 @@ public final class SubscriptionRadarView extends View {
     private static final class Star {
         final String name;
         final long days;
-        final int color;
+        final int color,background;
         final boolean active;
         final Drawable logo;
-        Star(String name,long days,int color,boolean active,Drawable logo){this.name=name;this.days=days;this.color=color;this.active=active;this.logo=logo;}
+        Star(String name,long days,int color,int background,boolean active,Drawable logo){this.name=name;this.days=days;this.color=color;this.background=background;this.active=active;this.logo=logo;}
     }
     public SubscriptionRadarView(Context context,JSONObject overview)throws Exception {
         super(context);density=context.getResources().getDisplayMetrics().density;
@@ -40,8 +40,9 @@ public final class SubscriptionRadarView extends View {
             if(days==null){unset++;continue;}if(days<0){past++;continue;}if(days>30){future++;continue;}
             JSONObject sub=row.getJSONObject("sub");int color=MobileStyle.ACCENT;
             try{color=Color.parseColor(sub.optString("color"));}catch(IllegalArgumentException ignored){}
-            int resource=BrandIcons.resource(BrandIcons.forSubscription(sub));Drawable logo=resource==0?null:context.getDrawable(resource);
-            stars.add(new Star(sub.getString("name"),days,color,sub.getBoolean("active"),logo));
+            String brandId=BrandIcons.forSubscription(sub);boolean active=sub.getBoolean("active");
+            int resource=BrandIcons.resource(brandId);Drawable logo=resource==0?null:context.getDrawable(resource);
+            stars.add(new Star(sub.getString("name"),days,color,BrandIcons.logoBackground(brandId,Color.WHITE,active),active,logo));
         }
         Collections.sort(stars,(left,right)->Long.compare(left.days,right.days));inRange=stars.size();
         if(stars.size()>MAX_STARS)stars.subList(MAX_STARS,stars.size()).clear();
@@ -69,9 +70,9 @@ public final class SubscriptionRadarView extends View {
             Star star=stars.get(i);double angle=Math.toRadians(-65+i*137.507764);
             float radius=inner+(outer-inner)*star.days/30f,x=centerX+(float)Math.cos(angle)*radius,y=centerY+(float)Math.sin(angle)*radius;
             paint.setColor(MobileStyle.blend(Color.WHITE,star.active?star.color:MobileStyle.MUTED,.14f));canvas.drawCircle(x,y,dp(19),paint);
-            paint.setColor(Color.WHITE);canvas.drawCircle(x,y,dp(15),paint);
+            paint.setColor(star.background);canvas.drawCircle(x,y,dp(15),paint);
             if(star.logo!=null){
-                int half=Math.round(dp(11));star.logo.setAlpha(star.active?255:150);star.logo.setBounds(Math.round(x)-half,Math.round(y)-half,Math.round(x)+half,Math.round(y)+half);star.logo.draw(canvas);
+                int half=Math.round(dp(11));star.logo.setAlpha(star.active||star.background!=Color.WHITE?255:150);star.logo.setBounds(Math.round(x)-half,Math.round(y)-half,Math.round(x)+half,Math.round(y)+half);star.logo.draw(canvas);
             }else{
                 paint.setColor(star.active?star.color:MobileStyle.MUTED);paint.setTextSize(dp(13));String initial=new String(Character.toChars(star.name.codePointAt(0)));canvas.drawText(initial,x,y+dp(4),paint);
             }

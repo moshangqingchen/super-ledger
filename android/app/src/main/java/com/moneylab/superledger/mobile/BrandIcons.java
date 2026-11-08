@@ -70,9 +70,13 @@ public final class BrandIcons {
             default: return 0;
         }
     }
+    /** White TT artwork needs a dark brand surface, including its paused gray state. */
+    public static int logoBackground(String brandId,int fallback,boolean active) {
+        return "ttvoice".equals(brandId)?(active?0xFF5E69F5:MobileStyle.MUTED):fallback;
+    }
     public static View view(Context context, String brandId, String fallback, int color, int size) {
         float density = context.getResources().getDisplayMetrics().density; int resource = resource(brandId);
-        GradientDrawable background = new GradientDrawable(); background.setColor(brandId.equals("ttvoice") ? 0xFF5E69F5 : resource == 0 ? color : Color.WHITE); background.setCornerRadius(13 * density);
+        GradientDrawable background = new GradientDrawable(); background.setColor(logoBackground(brandId,resource == 0 ? color : Color.WHITE,true)); background.setCornerRadius(13 * density);
         if (resource != 0) { background.setStroke(Math.max(1, (int) density), 0xFFECECF2); ImageView image = new ImageView(context); image.setImageResource(resource); image.setScaleType(ImageView.ScaleType.FIT_CENTER); int pad = (int) (size * .16f * density); image.setPadding(pad, pad, pad, pad); image.setBackground(background); image.setContentDescription(fallback); return image; }
         TextView label = new TextView(context); label.setText(fallback == null || fallback.isEmpty() ? "账" : fallback.substring(0, 1)); label.setTextSize(size * .38f); label.setTextColor(Color.WHITE); label.setTypeface(Typeface.DEFAULT_BOLD); label.setGravity(Gravity.CENTER); label.setBackground(background); return label;
     }
