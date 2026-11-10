@@ -3,6 +3,8 @@ import { createUpdateUI } from './update-ui.js';
 import { createIconSelects } from './icon-select.js';
 import { renderAccountLibrary } from './account-cards.js';
 import { renderSubscriptionChart } from './subscription-chart.js';
+import { sortedLedgerRows, monthlySeries, monthComparison, groupTransactionsByDay, categorySummary, dailySeries, dailyBudget } from './assets/ledger-insights.mjs';
+import { adjustedGoalSaved, captureDeletion, restoreDeletion } from './assets/ledger-actions.mjs';
 import { getBalances, getCnyBalances, getNetWorth, transactionCnyAmount, moneyToCents, localDate, beijingDateTime, subscriptionDueHour, nextSubscriptionDue, setSubscriptionActive, replaceRecord, addMonthsDue, resetSubscriptionExpiry, upgradeSchemaVersion, validateState, subscriptionAccountTypes, subscriptionExpiryStatus } from './engine.mjs';
 import { subscriptionCatalog } from './subscription-catalog.mjs';
 import { accountPresets, accountPreset, accountLabel, appleBalanceRegions, appleBalanceRegion, isAppleBalance } from './account-presets.mjs';
@@ -49,6 +51,7 @@ const incomeCategories = ['工资薪资','副业收入','投资收益','红包�
 const categoryIcons = {'餐饮美食':'food','购物消费':'bag','交通出行':'car','居住生活':'home','会员订阅':'repeat','娱乐休闲':'play','学习成长':'book','医疗健康':'heart','人情往来':'heart','工资薪资':'work','副业收入':'spark','投资收益':'chart','红包礼金':'heart','账户转账':'repeat'};
 const navItems = [['overview','grid','财务总览'],['transactions','ledger','收支账单'],['accounts','wallet','我的资产'],['subscriptions','repeat','订阅管理'],['insights','chart','收支洞察'],['goals','goal','心愿储蓄']];
 let state, page = 'overview', month = beijingDateTime().date.slice(0,7), filter = 'all', query = '', accountFilter = '', hidden = false, menuOpen = false, busy = false, toastTimer, modalFocus;
+let categoryFilter = '', dateFilter = '', searchScope = 'all';
 let rateStatus = null, ratesError = '', ratesStatusPromise = null, ratesRefreshPromise = null, ratesRefreshing = false, ratesPollTimer, ratesDeferredRender = false;
 let automaticBookingError = '', ledgerHealthUnavailable = false, ledgerHealthRequest = 0;
 const manualRateDrafts = new WeakMap();
@@ -74,8 +77,28 @@ const recurringTotal = () => state.subscriptions.filter(s=>s.active&&s.recurring
 const periodLabel = () => month===today().slice(0,7)?'本月':`${Number(month.slice(5))} 月`;
 const monthLabel = () => `${month.slice(0,4)} 年 ${Number(month.slice(5))} 月`;
 const dateLabel = d => d ? `${Number(d.slice(5,7))} 月 ${Number(d.slice(8))} 日` : '已完成';
-const sortedRows = rows => [...rows].sort((a,b)=>b.date.localeCompare(a.date)||state.transactions.indexOf(b)-state.transactions.indexOf(a));
-function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('toast-visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('toast-visible'),3500)}
+const sortedRows = rows => sortedLedgerRows(rows, state.transactions);
+function toast(message, action) {
+  const el = $('#toast');
+  el.textContent = message;
+  if (action) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'text-btn toast-action';
+    button.textContent = action.label;
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try { await action.run(); } catch (error) { toast(`撤销失败：${error.message}`); }
+    }, { once: true });
+    el.append(button);
+  }
+  el.classList.add('toast-visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.classList.remove('toast-visible');
+    el.querySelector('button')?.remove();
+  }, action ? 6000 : 3500);
+}
 async function api(path,options={}){const res=await fetch(path,{...options,headers:{'Content-Type':'application/json',...options.headers}});const value=await res.json();if(!res.ok){const e=new Error(value.error||'操作失败');e.status=res.status;throw e}return value}
 function ledgerHealthNotice(){
  if(!automaticBookingError&&!ledgerHealthUnavailable)return '';
@@ -165,7 +188,7 @@ async function ensureAccountRate(form){
  if(!form.isConnected||form.elements.currency.value!==code||form.elements.rateMode.value!=='auto')return;
  if(!cachedRate(code)&&rateStatus?.enabled!==false&&!rateIsRefreshing())await refreshRates();
 }
-async function commit(next,message='已保存到本机',importing=false){upgradeSchemaVersion(next);if(busy)return false;busy=true;const buttons=[...document.querySelectorAll('.modal button[type="submit"]')];buttons.forEach(b=>b.disabled=true);try{state=await api(importing?'/api/import':'/api/state',{method:importing?'POST':'PUT',body:JSON.stringify({state:next,expectedRevision:state.revision})});if(importing){query='';filter='all';accountFilter=''}busy=false;closeModal();render();toast(message);return true}catch(e){if(e.status===409){state=await api('/api/state');busy=false;if($('.modal')){ratesDeferredRender=true;formError('汇率或账本已更新，填写已保留，请检查后再次保存');void loadRateStatus()}else{render();toast('账本已更新，请检查后再次保存')}}else formError(e.message);return false}finally{busy=false;buttons.forEach(b=>b.disabled=false);updateAccountCurrency();void loadLedgerHealth()}}
+async function commit(next,message='已保存到本机',importing=false){upgradeSchemaVersion(next);commit.lastError='';if(busy){commit.lastError='正在保存其他修改';return false;}busy=true;const buttons=[...document.querySelectorAll('.modal button[type="submit"]')];buttons.forEach(b=>b.disabled=true);try{state=await api(importing?'/api/import':'/api/state',{method:importing?'POST':'PUT',body:JSON.stringify({state:next,expectedRevision:state.revision})});if(importing){clearTransactionFilters()}busy=false;closeModal();render();toast(message);return true}catch(e){commit.lastError=e.status===409?'账本已更新，请检查后重试':e.message;if(e.status===409){state=await api('/api/state');busy=false;if($('.modal')){ratesDeferredRender=true;formError('汇率或账本已更新，填写已保留，请检查后再次保存');void loadRateStatus()}else{render();toast('账本已更新，请检查后再次保存')}}else formError(e.message);return false}finally{busy=false;buttons.forEach(b=>b.disabled=false);updateAccountCurrency();void loadLedgerHealth()}}
 function formError(message){const el=$('.form-error');if(el)el.textContent=message;else toast(message)}
 function monthControl(){return `<div class="month-picker"><button data-action="month-prev" aria-label="上个月">${icon('left',13)}</button><span>${monthLabel()}</span><button data-action="month-next" aria-label="下个月">${icon('right',13)}</button></div>`}
 function shell(content){
@@ -187,14 +210,107 @@ function heading(title,subtitle,kicker='',actions=''){
 
 function demoBanner(){return state.demo?`<div class="demo-banner"><span>${icon('info',12)} 你正在探索示例账本，所有金额均为演示数据。</span><button data-action="start-empty">开始我的账本 ${icon('right',11)}</button></div>`:(!state.accounts.length?`<div class="demo-banner"><span>${icon('wallet',12)} 账本已准备好，从添加你的第一个账户开始。</span><button data-action="add-account">添加账户 ${icon('plus',11)}</button></div>`:'')}
 function addButton(){return `<button class="btn btn-primary" data-action="add-transaction">${icon('plus',16)} 记一笔</button>`}
-function statCards(){const m=monthly();return `<div class="summary-grid"><div class="summary-card"><span class="stat-icon">${icon('down',19)}</span><div><small>${periodLabel()}收入</small><b class="money">${yuan(m.income)}</b></div><span class="stat-note">MONEY IN</span></div><div class="summary-card"><span class="stat-icon orange">${icon('up',19)}</span><div><small>${periodLabel()}支出</small><b class="money">${yuan(m.expense)}</b></div><span class="stat-note">MONEY OUT</span></div><div class="summary-card"><span class="stat-icon purple">${icon('wallet',19)}</span><div><small>${periodLabel()}结余</small><b class="money">${yuan(m.income-m.expense)}</b></div><span class="stat-note">LEFT TO LIVE</span></div></div>`}
-function goalCard(g){
- const pct=g?Math.min(100,Math.round(g.saved/g.target*100)):0;
- return `<div class="goal-card"><div class="wish-art" aria-hidden="true"><span>${icon('spark',48)}</span><i>${icon('goal',30)}</i><em>MAKE IT HAPPEN</em></div><div class="goal-body"><div class="goal-title-row"><h3>${g?esc(g.name):'下一件想实现的小事'}</h3><button data-action="${g?'edit-goal':'add-goal'}" ${g?'data-id="'+esc(g.id)+'"':''} aria-label="${g?'编辑储蓄心愿':'创建储蓄目标'}">${icon(g?'arrow':'plus',17)}</button></div>${g?`<div class="goal-numbers"><span><b class="money">${yuan(g.saved)}</b> / <span class="money">${yuan(g.target)}</span></span><span class="money">${pct}%</span></div><div class="progress" role="progressbar" aria-label="储蓄进度" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>`:'<p class="small muted">旅行、新设备，或任何让你开心的事。</p>'}</div></div>`;
+function statComparison(current, previous, isExpense = false) {
+ const comparison = monthComparison(current, previous);
+ if (comparison.percent === null) return '<span class="stat-comparison">上月无记录</span>';
+ const improved = isExpense ? comparison.direction === 'down' : comparison.direction === 'up';
+ const tone = comparison.direction === 'flat' || hidden ? '' : improved ? 'is-improved' : 'is-increased';
+ const label = comparison.direction === 'flat' ? '与上月持平' : `较上月 ${comparison.percent > 0 ? '+' : ''}${comparison.percent.toFixed(1)}%`;
+ return `<span class="stat-comparison ${tone}"><span class="money">${hidden ? '••••' : esc(label)}</span></span>`;
+}
+function statCards() {
+ const [previous, current] = monthlySeries(state, month, 2);
+ const cards = [
+  ['income', '收入', 'down', '', 'MONEY IN'],
+  ['expense', '支出', 'up', 'orange', 'MONEY OUT'],
+  ['balance', '结余', 'wallet', 'purple', 'LEFT TO LIVE'],
+ ];
+ return `<div class="summary-grid">${cards.map(([key, label, glyph, tone, note]) => `
+  <div class="summary-card"><span class="stat-icon ${tone}">${icon(glyph, 19)}</span>
+   <div><small>${periodLabel()}${label}</small><b class="money">${yuan(current[key])}</b>
+    ${statComparison(current[key], previous[key], key === 'expense')}</div>
+   <span class="stat-note">${note}</span>
+  </div>`).join('')}</div>`;
+}
+function goalCard(g) {
+  const pct = g ? Math.min(100,Math.round(g.saved/g.target*100)) : 0;
+  const achieved = g && g.saved >= g.target;
+  return `<div class="goal-card"><div class="wish-art" aria-hidden="true"><span>${icon('spark',48)}</span><i>${icon('goal',30)}</i><em>MAKE IT HAPPEN</em></div><div class="goal-body"><div class="goal-title-row"><h3>${g?esc(g.name):'下一件想实现的小事'}</h3><button data-action="${g?'edit-goal':'add-goal'}" ${g?'data-id="'+esc(g.id)+'"':''} aria-label="${g?'编辑储蓄心愿':'创建储蓄目标'}">${icon(g?'arrow':'plus',17)}</button></div>${g?`
+    <div class="goal-numbers"><span><b class="money">${yuan(g.saved)}</b> / <span class="money">${yuan(g.target)}</span></span><span class="money">${pct}%</span></div>
+    <div class="progress" role="progressbar" aria-label="储蓄进度" ${hidden?'':`aria-valuenow="${pct}"`} aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>
+    <div class="goal-progress-actions"><span class="${achieved?'goal-achieved':'muted'}">${achieved?'已达成':`还差 <b class="money">${yuan(Math.max(0,g.target-g.saved))}</b>`}</span><button class="btn btn-soft btn-sm" data-action="goal-deposit" data-id="${esc(g.id)}">${icon('plus',13)} 存入一笔</button></div>`:'<p class="small muted">旅行、新设备，或任何让你开心的事。</p>'}</div></div>`;
 }
 
-function chart(rows=monthRows()){const [y,m]=month.split('-').map(Number);const days=new Date(y,m,0).getDate();const daily=Array.from({length:days},(_,i)=>totals(rows.filter(t=>Number(t.date.slice(8))===i+1)));const max=Math.max(10000,...daily.flatMap(d=>[d.income,d.expense]));const w=520,h=150,left=43,right=8,top=8,bottom=25;const x=i=>left+i*(w-left-right)/(days-1),py=v=>h-bottom-v/max*(h-top-bottom);const path=type=>daily.map((d,i)=>`${i?'L':'M'} ${x(i).toFixed(1)} ${py(d[type]).toFixed(1)}`).join(' ');const curve=path('income');return `<svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="${monthLabel()}每天收入和支出折线图，金额单位元"><defs><linearGradient id="income-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#b0a4f4" stop-opacity=".35"/><stop offset="100%" stop-color="#b0a4f4" stop-opacity=".01"/></linearGradient></defs>${[0,.5,1].map(v=>`<line x1="${left}" y1="${py(max*v)}" x2="${w-right}" y2="${py(max*v)}" stroke="#edf0e7" stroke-dasharray="3 4"/><text x="0" y="${py(max*v)+4}">${v===0?'0':amount(max*v,0)}</text>`).join('')}<path d="${curve} L ${x(days-1)} ${h-bottom} L ${left} ${h-bottom} Z" fill="url(#income-fill)"/><path d="${curve}" fill="none" stroke="#9584df" stroke-width="2" vector-effect="non-scaling-stroke"/><path d="${path('expense')}" fill="none" stroke="#e8aa91" stroke-width="2" vector-effect="non-scaling-stroke"/>${[1,Math.round(days*.25),Math.round(days*.5),Math.round(days*.75),days].map(d=>`<text x="${x(d-1)}" y="${h-3}" text-anchor="middle">${String(d).padStart(2,'0')}日</text>`).join('')}</svg>`}
-function trendPanel(){const m=monthly();return `<section class="panel"><div class="panel-head"><div><h2>${icon('chart',17)} 收支趋势</h2><p>每天的收支变化，一目了然</p></div><div class="chart-legend"><span><i class="legend-dot"></i>收入</span><span><i class="legend-dot expense"></i>支出</span></div></div><div class="chart-summary"><div><small>${periodLabel()}累计收入</small><b class="money">${yuan(m.income)}</b></div><span class="divider"></span><div><small>${periodLabel()}累计支出</small><b class="money">${yuan(m.expense)}</b></div></div>${chart()}</section>`}
+function insightMoney(value) {
+ return hidden ? '••••' : esc(yuan(value));
+}
+function chart(rows = monthRows()) {
+ const daily = dailySeries({ ...state, transactions: rows }, month, today());
+ const averageBudget = dailyBudget(state.settings.monthlyBudget, month);
+ const max = Math.max(100, ...daily.filter(day => !day.future).map(day => day.expense));
+ const width = 620, height = 220, left = 82, right = 8, top = 24, bottom = 28;
+ const plotWidth = width - left - right, plotHeight = height - top - bottom;
+ const step = plotWidth / daily.length;
+ const x = index => left + (index + .5) * step;
+ const y = value => height - bottom - value / max * plotHeight;
+ const ticks = [0, Math.round(max / 2), max];
+ const bars = daily.map((day, index) => day.future ? '' : `
+  <rect class="daily-expense-bar" x="${x(index) - step * .3}" y="${y(day.expense)}" width="${step * .6}" height="${day.expense / max * plotHeight}" rx="2"/>
+  ${day.income ? `<circle class="daily-income-dot" cx="${x(index)}" cy="${y(day.expense) - 5}" r="2.5"/>` : ''}`).join('');
+ const budgetInRange = averageBudget <= max;
+ const budgetLine = state.settings.monthlyBudget ? `
+  <line class="daily-budget-line" x1="${left}" y1="${budgetInRange ? y(averageBudget) : top - 10}" x2="${width - right}" y2="${budgetInRange ? y(averageBudget) : top - 10}"/>
+  ${budgetInRange ? '' : `<text x="${left + 4}" y="${top - 14}" class="budget-range-note">日均预算高于当前刻度 ↑</text>`}` : '';
+ return `<div class="insight-chart daily-expense-chart">
+  <svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
+   ${ticks.map(value => `<line class="insight-grid-line" x1="${left}" y1="${y(value)}" x2="${width - right}" y2="${y(value)}"/><text class="money" x="${left - 8}" y="${y(value) + 4}" text-anchor="end">${insightMoney(value)}</text>`).join('')}
+   ${bars}${budgetLine}
+   ${[1, Math.round(daily.length / 4), Math.round(daily.length / 2), Math.round(daily.length * .75), daily.length].map(day => `<text x="${x(day - 1)}" y="${height - 4}" text-anchor="middle">${day}日</text>`).join('')}
+  </svg>
+  <div class="chart-day-buttons" style="--chart-days:${daily.length}" role="group" aria-label="${esc(monthLabel())}每日支出，选择日期查看账单">
+   ${daily.map((day, index) => day.future ? '<span aria-hidden="true"></span>' : `
+    <button type="button" class="chart-day" tabindex="0" data-action="insight-day" data-date="${esc(day.date)}" aria-label="${esc(day.date)}，${day.count} 笔账单，查看当日账单" aria-describedby="daily-tip-${index}" style="--tooltip-left:${(index + .5) / daily.length * 100}%">
+     <span class="chart-tooltip" id="daily-tip-${index}" role="tooltip"><b>${esc(day.date.replaceAll('-', ' / '))}</b>
+      <span>支出 <strong class="money">${insightMoney(day.expense)}</strong></span>
+      <span>收入 <strong class="money">${insightMoney(day.income)}</strong></span>
+      <span>${day.count} 笔账单 · 折合 CNY</span></span>
+    </button>`).join('')}
+  </div>
+ </div>`;
+}
+function trendPanel() {
+ const averageBudget = dailyBudget(state.settings.monthlyBudget, month);
+ return `<section class="panel daily-trend-panel"><div class="panel-head"><div>
+  <h2>${icon('chart', 17)} 每日支出</h2><p>点击柱位查看当天账单 · 折合 CNY</p></div>
+  <div class="chart-legend"><span><i class="legend-dot expense"></i>支出</span><span><i class="legend-dot income-marker"></i>当日有收入</span></div></div>
+  ${chart()}
+  ${state.settings.monthlyBudget ? `<p class="daily-budget-caption"><i></i>日均预算 <span class="money">${insightMoney(averageBudget)}</span><span>（月度预算 ÷ 当月天数）</span></p>` : ''}
+ </section>`;
+}
+function monthlyTrendPanel() {
+ const series = monthlySeries(state, month);
+ const max = Math.max(100, ...series.flatMap(item => [item.income, item.expense]));
+ const width = 620, height = 220, left = 82, right = 8, top = 20, bottom = 32;
+ const plotWidth = width - left - right, plotHeight = height - top - bottom;
+ const step = plotWidth / series.length;
+ const y = value => height - bottom - value / max * plotHeight;
+ return `<section class="panel monthly-trend-panel"><div class="panel-head"><div><h2>${icon('chart', 17)} 近 6 个月</h2><p>点击月份切换 · 收入与支出均折合 CNY</p></div>
+  <div class="chart-legend"><span><i class="legend-dot"></i>收入</span><span><i class="legend-dot expense"></i>支出</span></div></div>
+  <div class="insight-chart monthly-chart"><svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
+   ${[0, Math.round(max / 2), max].map(value => `<line class="insight-grid-line" x1="${left}" y1="${y(value)}" x2="${width - right}" y2="${y(value)}"/><text class="money" x="${left - 8}" y="${y(value) + 4}" text-anchor="end">${insightMoney(value)}</text>`).join('')}
+   ${series.map((item, index) => {
+    const center = left + (index + .5) * step;
+    return `<rect class="month-selection ${item.month === month ? 'selected' : ''}" x="${left + index * step + 3}" y="${top - 6}" width="${step - 6}" height="${plotHeight + bottom}" rx="6"/>
+     <rect class="monthly-income-bar" x="${center - step * .28}" y="${y(item.income)}" width="${step * .23}" height="${item.income / max * plotHeight}" rx="3"/>
+     <rect class="daily-expense-bar" x="${center + step * .05}" y="${y(item.expense)}" width="${step * .23}" height="${item.expense / max * plotHeight}" rx="3"/>
+     <text class="month-axis-label ${item.month === month ? 'selected' : ''}" x="${center}" y="${height - 8}" text-anchor="middle">${esc(item.month.replace('-', '/'))}</text>`;
+   }).join('')}
+  </svg><div class="chart-month-buttons" role="group" aria-label="选择月份">${series.map((item, index) => `
+   <button type="button" class="chart-month" data-action="insight-month" data-month="${esc(item.month)}" aria-label="查看 ${esc(item.month)} 收支" aria-pressed="${item.month === month}" aria-describedby="monthly-tip-${index}" style="--tooltip-left:${(index + .5) / series.length * 100}%">
+    <span class="chart-tooltip" id="monthly-tip-${index}" role="tooltip"><b>${esc(item.month)}</b><span>收入 <strong class="money">${insightMoney(item.income)}</strong></span><span>支出 <strong class="money">${insightMoney(item.expense)}</strong></span><span>${item.count} 笔账单 · 折合 CNY</span></span>
+   </button>`).join('')}</div></div>
+ </section>`;
+}
 function subscriptionTime(sub,due){return String(subscriptionDueHour(sub,due)).padStart(2,'0')+':00'}
 function subscriptionStatus(sub){
  const now=new Date(),status=subscriptionExpiryStatus(sub,now),due=nextSubscriptionDue(sub,now),clock=beijingDateTime(now);
@@ -209,7 +325,25 @@ function subscriptionStatus(sub){
 function upcoming(){const now=new Date();return state.subscriptions.filter(s=>s.active&&nextSubscriptionDue(s,now)).sort((a,b)=>{const ad=nextSubscriptionDue(a,now),bd=nextSubscriptionDue(b,now);return (ad+' '+subscriptionTime(a,ad)).localeCompare(bd+' '+subscriptionTime(b,bd))})}
 function subPreview(){const subs=upcoming().slice(0,3);return `<section class="panel"><div class="panel-head"><div><h2>${icon('repeat',17)} 会员订阅</h2><p>下一次续费，提前心中有数</p></div><button class="text-btn" data-page="subscriptions">管理 ${icon('arrow',12)}</button></div><div class="sub-preview">${subs.length?subs.map(s=>`<button class="subscription-item" data-action="edit-subscription" data-id="${s.id}" style="text-align:left;padding:0">${subIcon(s)}<span class="service-info"><b>${esc(s.name)}${s.tier?`<span class="inline-tier">${esc(s.tier)}</span>`:''}</b><small>${dateLabel(nextSubscriptionDue(s,new Date()))} ${subscriptionTime(s,nextSubscriptionDue(s,new Date()))} 北京时间${subscriptionStatus(s).pending?'待扣账':'扣账'} · ${esc(accountName(s.accountId))}</small></span><span class="service-price money">${esc(subscriptionMoney(s))}<small>${s.recurring?'每月':'单次'}</small></span></button>`).join(''):empty('还没有订阅','加上你的第一项会员，让账本替你记住。','add-subscription','添加订阅')}</div><div class="subscription-footer"><span>连续订阅 / 月${hasForeign()?' · 折合 CNY':''}</span><b class="money">${yuan(recurringTotal())}</b></div></section>`}
 function empty(title,copy,action,label){return `<div class="empty">${icon('leaf',25)}<strong>${title}</strong><p>${copy}</p>${action?`<button class="btn btn-primary btn-sm" data-action="${action}">${icon('plus',13)} ${label}</button>`:''}</div>`}
-function transactionTable(rows){return rows.length?`<div class="table-wrap"><table><thead><tr><th>收支事项</th><th>分类</th><th>账户</th><th>日期</th><th style="text-align:right">金额</th><th></th></tr></thead><tbody>${rows.map(t=>`<tr><td><div class="transaction-title"><span class="category-icon" ${t.type==='income'?'style="background:#eef4e6;color:#7d985e"':''}>${icon(categoryIcons[t.category]||'wallet',15)}</span><div><b>${esc(t.title)}</b><small>${t.subscriptionId?'订阅自动记账':t.mobileCapture?'手机通知记账':t.type==='transfer'?'账户间流转':t.note?esc(t.note.slice(0,25)):t.type==='income'?'生活的奖励':'生活的小日常'}</small></div></div></td><td><span class="category-tag">${esc(t.category)}</span></td><td class="muted">${esc(accountName(t.accountId))}${t.type==='transfer'?` → ${esc(accountName(t.toAccountId))}`:''}</td><td class="muted">${t.date.slice(5).replace('-',' / ')}</td><td class="amount-cell ${t.type==='income'?'positive':t.type==='expense'?'':'muted'}">${t.type==='income'?'+':t.type==='expense'?'−':''}${esc(formatMoney(t.amount,t.currency||accountCurrency(accountById(t.accountId))))}${t.type==='transfer'&&accountCurrency(accountById(t.accountId))!==accountCurrency(accountById(t.toAccountId))?`<small class="transaction-fx-note money">→ ${esc(formatMoney(t.toAmount,t.toCurrency||accountCurrency(accountById(t.toAccountId))))}</small>`:t.type!=='transfer'&&(t.currency||accountCurrency(accountById(t.accountId)))!=='CNY'?`<small class="transaction-fx-note money">≈ ${yuan(transactionCnyAmount(t,state))}</small>`:''}</td><td class="table-actions"><button class="icon-btn" data-action="edit-transaction" data-id="${t.id}" aria-label="编辑${esc(t.title)}">${icon('more',15)}</button></td></tr>`).join('')}</tbody></table></div>`:empty('这里还没有账单','从一杯咖啡开始，记录属于你的生活。','add-transaction','记下第一笔')}
+function transactionTable(rows, grouped = false) {
+  if (!rows.length) return empty('这里还没有账单','从一杯咖啡开始，记录属于你的生活。','add-transaction','记下第一笔');
+  const fullDate = grouped && isCrossMonthSearch();
+  const rowHtml = t => {
+    const subtitle = t.subscriptionId ? '订阅自动记账' : t.mobileCapture ? '手机通知记账' :
+      t.type === 'transfer' ? '账户间流转' : t.note ? t.note.slice(0,25) : '';
+    return `<tr><td><div class="transaction-title"><span class="category-icon" ${t.type==='income'?'style="background:#eef4e6;color:#7d985e"':''}>${icon(categoryIcons[t.category]||'wallet',15)}</span><div><b>${esc(t.title)}</b>${subtitle?`<small>${esc(subtitle)}</small>`:''}</div></div></td>
+      <td><span class="category-tag">${esc(t.category)}</span></td>
+      <td class="muted">${esc(accountName(t.accountId))}${t.type==='transfer'?` → ${esc(accountName(t.toAccountId))}`:''}</td>
+      <td class="muted">${esc((fullDate?t.date:t.date.slice(5)).replaceAll('-',' / '))}</td>
+      <td class="amount-cell money ${t.type==='income'?'positive':t.type==='expense'?'':'muted'}">${t.type==='income'?'+':t.type==='expense'?'−':''}${esc(formatMoney(t.amount,t.currency||accountCurrency(accountById(t.accountId))))}${t.type==='transfer'&&accountCurrency(accountById(t.accountId))!==accountCurrency(accountById(t.toAccountId))?`<small class="transaction-fx-note money">→ ${esc(formatMoney(t.toAmount,t.toCurrency||accountCurrency(accountById(t.toAccountId))))}</small>`:t.type!=='transfer'&&(t.currency||accountCurrency(accountById(t.accountId)))!=='CNY'?`<small class="transaction-fx-note money">≈ ${yuan(transactionCnyAmount(t,state))}</small>`:''}</td>
+      <td class="table-actions"><button class="icon-btn" data-action="edit-transaction" data-id="${esc(t.id)}" aria-label="编辑${esc(t.title)}">${icon('more',15)}</button></td></tr>`;
+  };
+  const body = grouped ? groupTransactionsByDay(rows,state).map(group => {
+    const weekday = ['日','一','二','三','四','五','六'][new Date(`${group.date}T12:00:00`).getDay()];
+    return `<tr class="transaction-day-row"><td colspan="6"><div class="transaction-day-heading"><b>${fullDate?esc(group.date.slice(0,4))+' 年 ':''}${esc(dateLabel(group.date))} · 周${weekday}</b><span>支出 <b class="money">${yuan(group.expense)}</b> · 收入 <b class="money">${yuan(group.income)}</b>${hasForeign()?' · 折合 CNY':''}</span></div></td></tr>${group.rows.map(rowHtml).join('')}`;
+  }).join('') : rows.map(rowHtml).join('');
+  return `<div class="table-wrap"><table><thead><tr><th>收支事项</th><th>分类</th><th>账户</th><th>日期</th><th style="text-align:right">金额</th><th></th></tr></thead><tbody>${body}</tbody></table></div>`;
+}
 function overview(){
  const m=monthly(),d=totals(state.transactions.filter(t=>t.date===today())),budget=state.settings.monthlyBudget;
  const pct=budget?Math.round(m.expense/budget*100):0,hasAccounts=Boolean(state.accounts.length),rows=sortedRows(monthRows()).slice(0,4),subs=upcoming().slice(0,3);
@@ -234,8 +368,48 @@ function overview(){
  <div class="overview-extras"><section class="budget-strip"><div class="extra-symbol">${icon('chart',23)}</div><div class="extra-copy"><h2>${monthPrefix}预算<span class="${budget?'money':''}">${budget?(pct>100?'已超预算':'已用 '+pct+'%'):'还未设置'}</span></h2>${budget?`<p>${pct>100?'超出':'剩余'} <b class="money">${yuan(Math.abs(budget-m.expense))}</b><span class="muted"> / 预算 <span class="money">${yuan(budget)}</span></span></p><div class="progress"><span style="width:${Math.min(pct,100)}%"></span></div>`:'<p>为日常花销，留一点计划。</p>'}</div><button class="icon-btn" data-action="budget" aria-label="设置预算">${icon('arrow',17)}</button></section><section class="wish-strip"><div class="extra-symbol">${icon('goal',24)}</div><div class="extra-copy"><h2>${g?esc(g.name):'给喜欢的事，存一点。'}${g?`<span class="money">${goalPct}%</span>`:''}</h2><p>${g?`已存 <b class="money">${yuan(g.saved)}</b>`:'把下一个小心愿，慢慢变成现实。'}</p></div><button class="icon-btn" ${g?'data-page="goals"':'data-action="add-goal"'} aria-label="${g?'查看储蓄心愿':'创建储蓄目标'}">${icon(g?'arrow':'plus',17)}</button></section></div>`;
 }
 
-function filteredTransactions(){return sortedRows(monthRows()).filter(t=>(filter==='all'||t.type===filter)&&(!accountFilter||t.accountId===accountFilter||t.toAccountId===accountFilter)&&(!query||[t.title,t.note,t.category,accountName(t.accountId),t.toAccountId?accountName(t.toAccountId):''].join(' ').toLowerCase().includes(query.toLowerCase())))}
-function transactions(){const rows=filteredTransactions();return heading('收支账单','收入从哪里来，支出去向哪里，全部清清楚楚。','THE STORY BEHIND EVERY NUMBER.',monthControl()+addButton())+demoBanner()+statCards()+`<div class="page-tools"><div class="segmented">${[['all','全部账单'],['expense','支出'],['income','收入'],['transfer','转账']].map(([v,l])=>`<button data-filter="${v}" class="${filter===v?'selected':''}">${l}</button>`).join('')}</div><div class="filter-row"><input class="table-search" id="transaction-search" aria-label="筛选账单" placeholder="搜索事项、银行、尾号" value="${esc(query)}"><select class="filter-select" id="account-filter" aria-label="按账户筛选"><option value="">全部账户</option>${state.accounts.map(a=>`<option value="${a.id}" ${accountFilter===a.id?'selected':''}>${esc(accountLabel(a))}</option>`).join('')}</select><button class="icon-btn" data-action="export-csv" title="导出当前账单CSV" aria-label="导出当前账单CSV">${icon('download',16)}</button></div></div><section class="panel transaction-panel" style="margin-top:0">${transactionTable(rows)}<div class="footer-count">共 ${rows.length} 笔 · ${monthLabel()}${query?' · 搜索结果':''}</div></section>`}
+function isCrossMonthSearch() { return Boolean(query.trim()) && searchScope === 'all'; }
+function clearTransactionFilters() {
+  query = '';
+  filter = 'all';
+  accountFilter = '';
+  categoryFilter = '';
+  dateFilter = '';
+  searchScope = 'all';
+}
+function transactionCategories() {
+  return [...new Set([...expenseCategories,...incomeCategories,...state.transactions.map(t=>t.category)])];
+}
+function filteredTransactions() {
+  const needle = query.trim().toLowerCase();
+  const rows = isCrossMonthSearch() ? state.transactions : monthRows();
+  return sortedRows(rows.filter(t => (filter==='all'||t.type===filter) &&
+    (!accountFilter||t.accountId===accountFilter||t.toAccountId===accountFilter) &&
+    (!categoryFilter||t.category===categoryFilter) && (!dateFilter||t.date===dateFilter) &&
+    (!needle||[t.title,t.note,t.category,accountName(t.accountId),t.toAccountId?accountName(t.toAccountId):''].join(' ').toLowerCase().includes(needle))));
+}
+function transactionFilterTags() {
+  const tags = [];
+  if (query.trim()) tags.push(['query',`搜索：${query}`]);
+  if (query.trim() && searchScope==='month') tags.push(['scope','范围：本月']);
+  if (filter!=='all') tags.push(['type',`类型：${{expense:'支出',income:'收入',transfer:'转账'}[filter]}`]);
+  if (accountFilter) tags.push(['account',`账户：${accountName(accountFilter)}`]);
+  if (categoryFilter) tags.push(['category',`分类：${categoryFilter}`]);
+  if (dateFilter) tags.push(['date',`日期：${dateFilter}`]);
+  return tags.length ? `<div class="transaction-filter-tags" aria-label="已生效的筛选">${tags.map(([key,label])=>`<button class="category-tag" data-action="remove-transaction-filter" data-filter-key="${key}" aria-label="移除${esc(label)}">${esc(label)} ${icon('close',12)}</button>`).join('')}<button class="text-btn" data-action="clear-transaction-filters">清除筛选</button></div>` : '';
+}
+function transactions() {
+  const rows = filteredTransactions();
+  const scope = isCrossMonthSearch() ? '全部月份 · 搜索结果' : `${monthLabel()}${query.trim()?' · 搜索结果':''}`;
+  return heading('收支账单','收入从哪里来，支出去向哪里，全部清清楚楚。','THE STORY BEHIND EVERY NUMBER.',monthControl()+addButton())+demoBanner()+statCards()+`
+    <div class="page-tools"><div class="segmented">${[['all','全部账单'],['expense','支出'],['income','收入'],['transfer','转账']].map(([v,l])=>`<button data-filter="${v}" class="${filter===v?'selected':''}">${l}</button>`).join('')}</div>
+      <div class="filter-row"><input class="table-search" id="transaction-search" aria-label="筛选账单" placeholder="搜索事项、银行、尾号" value="${esc(query)}">
+      <select class="filter-select" id="account-filter" aria-label="按账户筛选"><option value="">全部账户</option>${state.accounts.map(a=>`<option value="${esc(a.id)}" ${accountFilter===a.id?'selected':''}>${esc(accountLabel(a))}</option>`).join('')}</select>
+      <select class="filter-select" id="category-filter" aria-label="按分类筛选"><option value="">全部分类</option>${transactionCategories().map(c=>`<option value="${esc(c)}" ${categoryFilter===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
+      <button class="icon-btn" data-action="export-csv" title="导出当前账单CSV" aria-label="导出当前账单CSV">${icon('download',16)}</button></div>
+    </div>${query.trim()?`<div class="segmented transaction-search-scope" aria-label="搜索范围">${[['month','本月'],['all','全部月份']].map(([v,label])=>`<button data-action="transaction-search-scope" data-scope="${v}" class="${searchScope===v?'selected':''}" aria-pressed="${searchScope===v}">${label}</button>`).join('')}</div>`:''}
+    ${transactionFilterTags()}<section class="panel transaction-panel" style="margin-top:0">${transactionTable(rows,true)}<div class="footer-count">共 ${rows.length} 笔 · ${scope}</div></section>`;
+}
 function accounts(){const b=balances(),cny=getCnyBalances(state,today());return heading('我的资产','统一管理银行卡、钱包、现金和负债，资产变化一眼看懂。','A HOME FOR EVERY YUAN.',`<button class="btn btn-outline" data-action="add-transfer">${icon('repeat',16)} 转移资产</button><button class="btn btn-primary" data-action="add-account">${icon('plus',16)} 添加账户</button>`)+demoBanner()+`<div class="summary-grid"><div class="summary-card"><span class="stat-icon">${icon('wallet')}</span><div><small>净资产</small><b class="money">${yuan(netWorth())}</b></div></div><div class="summary-card"><span class="stat-icon">${icon('up')}</span><div><small>正向资产</small><b class="money">${yuan(Object.values(cny).filter(v=>v>0).reduce((a,v)=>a+v,0))}</b></div></div><div class="summary-card"><span class="stat-icon orange">${icon('down')}</span><div><small>待偿还负债</small><b class="money">${yuan(-Object.values(cny).filter(v=>v<0).reduce((a,v)=>a+v,0))}</b></div></div></div>`+renderAccountLibrary({state,balances:b,cnyBalances:cny,view:accountView,expandedBanks,dealBankId:dealBank,icon,accountLogo})}
 function subscriptionAccountLabel(account){return subscriptionAccountTypes.find(type=>type.id===account.type)?.label||'其他'}
 function expiryBanner(status){return '<div class="expiry-banner expiry-'+status.tone+'">'+icon(status.tone==='expired'?'info':'calendar',17)+'<span><b>'+esc(status.label)+'</b><small>'+esc(status.detail)+'</small></span></div>'}
@@ -292,20 +466,22 @@ function subscriptions(){
 function insights(){
  const m=monthly(), rows=monthRows(), budget=state.settings.monthlyBudget;
  const pct=budget?Math.round(m.expense/budget*100):0;
- const categories=new Map();
- for(const tx of rows){
-  if(tx.type!=='expense')continue;
-  categories.set(tx.category,(categories.get(tx.category)||0)+transactionCnyAmount(tx,state));
- }
- const breakdown=[...categories].sort((a,b)=>b[1]-a[1]);
+ const breakdown = categorySummary(rows, state);
  const colors=['#8d7bcf','#df9c7d','#70a99e','#809ec9','#c19b55'];
- const categoryRows=breakdown.map(([name,value],index)=>{
+ const categoryRows=breakdown.map(({category:name,amount:value,count},index)=>{
   const share=m.expense?value/m.expense*100:0;
   const categoryIcon=Object.hasOwn(categoryIcons,name)?categoryIcons[name]:'wallet';
-  return `<div><div class="category-row-head"><span>${icon(categoryIcon,14)} ${esc(name)}</span><span><b class="money">${yuan(value)}</b> <span class="muted">· ${Math.round(share)}%</span></span></div><div class="category-bar"><span style="width:${share}%;background:${colors[index%colors.length]}"></span></div></div>`;
+  return `<button type="button" class="category-breakdown-button" data-action="insight-category" data-category="${esc(name)}">
+   <span class="category-row-head"><span>${icon(categoryIcon,14)} ${esc(name)} <small class="muted">${count} 笔</small></span><span><b class="money">${insightMoney(value)}</b> <span class="muted money">· ${hidden?'••••':Math.round(share)+'%'}</span></span></span>
+   <span class="category-bar"><span style="width:${share}%;background:${colors[index%colors.length]}"></span></span>
+  </button>`;
  }).join('');
  const current=month===today().slice(0,7);
  const days=current?Number(today().slice(8)):new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate();
+ const expenses = rows.filter(tx => tx.type === 'expense');
+ const largest = expenses.reduce((best, tx) => !best || transactionCnyAmount(tx, state) > transactionCnyAmount(best, state) ? tx : best, null);
+ const subscriptionExpense = totals(expenses.filter(tx => tx.subscriptionId)).expense;
+ const dailyAverage = Number((BigInt(m.expense) + BigInt(Math.floor(days / 2))) / BigInt(days));
  return heading('收支洞察','收入怎么来，花销怎么走，都有迹可循。','',monthControl())+statCards()+`<div class="insights-grid">
   ${trendPanel()}
   <section class="panel budget-panel ${budget&&m.expense>budget?'over-budget':''}">
@@ -314,11 +490,14 @@ function insights(){
    <div class="budget-info"><div>月度预算<b class="money">${yuan(budget)}</b></div><div>${!budget?periodLabel()+'支出':m.expense>budget?'已超预算':'剩余预算'}<b class="money">${yuan(Math.abs(budget-m.expense))}</b></div></div>
    <button class="btn btn-soft budget-edit" data-action="budget">调整预算 ${icon('arrow',14)}</button>
   </section>
+  ${monthlyTrendPanel()}
   <section class="panel"><div class="panel-head"><div><h2>${icon('chart',17)} 支出分类</h2><p>${periodLabel()}支出占比</p></div></div><div class="category-breakdown">${categoryRows||empty(periodLabel()+'还没有支出','记下支出后，就能看到各分类的占比。')}</div></section>
-  <section class="panel"><div class="panel-head"><div><h2>${icon('ledger',17)} ${periodLabel()}小结</h2><p>按所选月份的账单计算</p></div></div>
+  <section class="panel insight-month-summary"><div class="panel-head"><div><h2>${icon('ledger',17)} ${periodLabel()}小结</h2><p>按所选月份的账单计算 · 折合 CNY</p></div></div>
    <div class="setting-row"><div><b>账单数量</b><p>包含收入、支出与账户转账</p></div><b>${rows.length} 笔</b></div>
-   <div class="setting-row"><div><b>平均每日支出</b><p>按${current?'本月已过天数':'整月天数'}计算</p></div><b class="money">${yuan(Math.round(m.expense/days))}</b></div>
-   <div class="setting-row"><div><b>结余占收入</b><p>收入扣除支出后的比例</p></div><b>${m.income?Math.round((m.income-m.expense)/m.income*100)+'%':'暂无收入'}</b></div>
+   <div class="setting-row"><div><b>平均每日支出</b><p>按${current?'本月已过天数':'整月天数'}计算</p></div><b class="money">${insightMoney(dailyAverage)}</b></div>
+   <div class="setting-row"><div><b>结余占收入</b><p>收入扣除支出后的比例</p></div><b class="money">${hidden?'••••':m.income?Math.round((m.income-m.expense)/m.income*100)+'%':'暂无收入'}</b></div>
+   ${largest ? `<button type="button" class="setting-row insight-largest" data-action="edit-transaction" data-id="${esc(largest.id)}"><span><b>最大单笔支出</b><span class="insight-summary-note">${esc(largest.title)}</span></span><span><b class="money">${insightMoney(transactionCnyAmount(largest,state))}</b> ${icon('right',14)}</span></button>` : '<div class="setting-row"><div><b>最大单笔支出</b></div><span class="muted">暂无支出</span></div>'}
+   <div class="setting-row"><div><b>订阅自动记账占比</b><p>订阅关联支出占总支出</p></div><b class="money">${hidden?'••••':m.expense?(subscriptionExpense/m.expense*100).toFixed(1)+'%':'暂无支出'}</b></div>
   </section>
  </div>`;
 }
@@ -588,26 +767,116 @@ function updateTransferPreview(preferredTarget){
  preview.innerHTML=block(from,'转出账户')+`<span class="transfer-arrow">${icon('right',20)}</span>`+block(to,'转入账户');
 }
 
-function transactionModal(id,type){
- if(!ensureAccount())return;
- const tx=state.transactions.find(t=>t.id===id);type=type||tx?.type||'expense';
- if(type==='transfer'&&state.accounts.length<2){modal('先添加一个转入账户','转移资产需要至少两个账户。',`<div class="transfer-empty">${icon('repeat',32)}<p>再添加一张银行卡、微信、支付宝或虚拟卡，就能在自己的账户之间转移资金。</p></div><div class="modal-footer"><button class="btn btn-outline" data-action="close-modal">稍后再说</button><button class="btn btn-primary" data-action="add-account">${icon('plus',15)} 添加另一个账户</button></div>`);return;}
- const cats=type==='income'?[...incomeCategories]:type==='transfer'?['账户转账']:[...expenseCategories];
- if(tx?.category&&!cats.includes(tx.category)&&type===tx.type)cats.push(tx.category);
- const from=tx?.accountId||state.accounts[0].id,to=tx?.toAccountId||state.accounts.find(a=>a.id!==from)?.id,b=balances(),fromAccount=accountById(from),code=accountCurrency(fromAccount),toCode=accountCurrency(accountById(to));
- const transferOptions=state.accounts.map(a=>[a.id,accountLabel(a)+' · '+formatMoney(b[a.id],accountCurrency(a))]);
- modal(tx?'编辑这笔记录':type==='transfer'?'转移资产':'记下这一刻',type==='transfer'?'跨币种时，分别记录转出和实际到账金额。':'金额使用所选账户的币种。',
- `<form id="transaction-form" data-id="${id||''}" data-type="${type}" data-account-id="${esc(from)}" data-currency="${code}" data-to-currency="${toCode}"><div class="segmented">${[['expense','支出'],['income','收入'],['transfer','转移资产']].map(([v,l])=>`<button type="button" data-action="transaction-type" data-type="${v}" data-id="${id||''}" class="${type===v?'selected':''}">${l}</button>`).join('')}</div>
- <div class="form-grid">${type==='transfer'?selectField('转出账户','accountId',transferOptions,from)+selectField('转入账户','toAccountId',transferOptions.filter(o=>o[0]!==from),to)+'<div class="transfer-route field full" id="transfer-preview"></div>':selectField('记账账户','accountId',accountOptions(),from,true)}
- <div class="field full"><label for="field-amount">${type==='transfer'?'转出':'本次'}金额（${code}）</label><input class="amount-input" id="field-amount" name="amount" inputmode="decimal" value="${tx?amountInput(tx.amount,tx.currency||code):''}" required autofocus></div>
- ${type==='transfer'?`<div class="field full transfer-receive-field" id="transfer-receive-field"><label for="field-toAmount">实际到账金额（${toCode}）</label><input id="field-toAmount" name="toAmount" inputmode="decimal" value="${tx?.toAmount?amountInput(tx.toAmount,tx.toCurrency||toCode):''}"><p class="hint">按转入账户币种填写，包含兑换或手续费后实际到账的金额。</p></div>`:''}
- <div class="field full" id="transaction-rate-field"><label for="field-cnyRate">本笔折算汇率</label><input id="field-cnyRate" name="cnyRate" inputmode="decimal" maxlength="30" value="${esc(tx?.cnyRate||currencyRate(fromAccount))}"><p class="hint">随这笔记录保存，今后调整账户汇率不会改写历史收支。</p></div>
- ${field(type==='transfer'?'转移说明':'这笔钱的故事','title',tx?.title||(type==='transfer'?'账户间转移':''),'text','required maxlength="120" placeholder="给这笔记录起个名字"',true)}
- ${type==='transfer'?'':selectField('收支分类','category',cats,tx?.type===type?tx.category:cats[0],true)}
- ${field('发生日期','date',tx?.date||today(),'date','required max="'+today()+'" min="1900-01-01"',true)}
- <div class="field full"><label for="field-note">备注 · 可不填</label><textarea id="field-note" name="note" maxlength="2000" placeholder="记住这一笔背后的事">${esc(tx?.note||'')}</textarea></div></div>${footer(tx?'保存修改':type==='transfer'?'确认转移':'记好了',tx?{action:'delete-transaction',id:tx.id}:null)}<p class="kbd-note">${icon('shield',11)} ${type==='transfer'?'仅调整账本余额，不计入收入支出，也不发起真实转账。':'原币记账，收支汇总按本笔汇率折合人民币。'}</p></form>`);
- updateTransferPreview();
+function transactionDefaults(type) {
+  if (!['income', 'expense'].includes(type)) return {};
+  try {
+    const value = JSON.parse(localStorage.getItem(`moneylab-transaction-defaults-${type}`) || '{}');
+    if (!value || typeof value !== 'object') return {};
+    return {
+      accountId: typeof value.accountId === 'string' ? value.accountId : '',
+      category: typeof value.category === 'string' && value.category.trim() && value.category.length <= 50 ? value.category : '',
+    };
+  } catch { return {}; }
 }
+
+function rememberTransactionDefaults(tx) {
+  if (!['income', 'expense'].includes(tx.type)) return;
+  try {
+    localStorage.setItem(`moneylab-transaction-defaults-${tx.type}`, JSON.stringify({
+      accountId: tx.accountId, category: tx.category,
+    }));
+  } catch { /* A blocked preference store must not prevent saving a bill. */ }
+}
+
+function recentTransactionTitles(type) {
+  const recent = sortedRows(state.transactions.filter(tx => tx.type === type)).slice(0, 200);
+  const titles = new Map();
+  for (const tx of recent) {
+    if (tx.title && !titles.has(tx.title)) titles.set(tx.title, tx);
+    if (titles.size === 30) break;
+  }
+  return [...titles.values()];
+}
+
+function transactionModal(id, type, preset = {}) {
+  if (!ensureAccount()) return;
+  const tx = state.transactions.find(item => item.id === id);
+  type = type || tx?.type || 'expense';
+  if (type === 'transfer' && state.accounts.length < 2) {
+    modal('先添加一个转入账户', '转移资产需要至少两个账户。', `<div class="transfer-empty">${icon('repeat',32)}<p>再添加一张银行卡、微信、支付宝或虚拟卡，就能在自己的账户之间转移资金。</p></div><div class="modal-footer"><button class="btn btn-outline" data-action="close-modal">稍后再说</button><button class="btn btn-primary" data-action="add-account">${icon('plus',15)} 添加另一个账户</button></div>`);
+    return;
+  }
+  const defaults = tx ? {} : { ...transactionDefaults(type), ...preset };
+  const cats = type === 'income' ? [...incomeCategories] : type === 'transfer' ? ['账户转账'] : [...expenseCategories];
+  for (const category of [...state.transactions.filter(item => item.type === type).map(item => item.category), defaults.category]) {
+    if (category && !cats.includes(category)) cats.push(category);
+  }
+  const category = tx?.type === type ? tx.category : defaults.category || cats[0];
+  const from = tx?.accountId || (accountById(defaults.accountId) ? defaults.accountId : state.accounts[0].id);
+  const requestedTo = tx?.toAccountId || defaults.toAccountId;
+  const to = requestedTo !== from && accountById(requestedTo) ? requestedTo : state.accounts.find(account => account.id !== from)?.id;
+  const b = balances(), fromAccount = accountById(from), code = accountCurrency(fromAccount), toCode = accountCurrency(accountById(to));
+  const transferOptions = state.accounts.map(account => [account.id, accountLabel(account) + ' · ' + formatMoney(b[account.id], accountCurrency(account))]);
+  const suggestions = recentTransactionTitles(type);
+  const formFooter = tx ? footer('保存修改', { action: 'delete-transaction', id: tx.id }) : `
+    <div class="form-error" role="alert"></div>
+    <div class="modal-footer transaction-footer">
+      <button type="button" class="btn btn-outline" data-action="close-modal">取消</button>
+      <button class="btn btn-primary" type="submit">${icon('check',15)} ${type === 'transfer' ? '确认转移' : '记好了'}</button>
+      <button class="btn btn-outline" type="submit" name="saveMode" value="again">保存并再记一笔</button>
+    </div>`;
+  modal(tx ? '编辑这笔记录' : type === 'transfer' ? '转移资产' : '记下这一刻', type === 'transfer' ? '跨币种时，分别记录转出和实际到账金额。' : '金额使用所选账户的币种。', `
+    <form id="transaction-form" data-id="${esc(id || '')}" data-type="${esc(type)}" data-account-id="${esc(from)}" data-currency="${code}" data-to-currency="${toCode}" data-default-category="${esc(category)}">
+      <div class="segmented">${[['expense','支出'],['income','收入'],['transfer','转移资产']].map(([value,label]) => `<button type="button" data-action="transaction-type" data-type="${value}" data-id="${esc(id || '')}" class="${type === value ? 'selected' : ''}">${label}</button>`).join('')}</div>
+      <div class="form-grid">
+        ${type === 'transfer' ? selectField('转出账户','accountId',transferOptions,from) + selectField('转入账户','toAccountId',transferOptions.filter(option => option[0] !== from),to) + '<div class="transfer-route field full" id="transfer-preview"></div>' : selectField('记账账户','accountId',accountOptions(),from,true)}
+        <div class="field full"><label for="field-amount">${type === 'transfer' ? '转出' : '本次'}金额（${code}）</label><input class="amount-input" id="field-amount" name="amount" inputmode="decimal" value="${tx ? amountInput(tx.amount,tx.currency || code) : ''}" required autofocus></div>
+        ${type === 'transfer' ? `<div class="field full transfer-receive-field" id="transfer-receive-field"><label for="field-toAmount">实际到账金额（${toCode}）</label><input id="field-toAmount" name="toAmount" inputmode="decimal" value="${tx?.toAmount ? amountInput(tx.toAmount,tx.toCurrency || toCode) : ''}"><p class="hint">按转入账户币种填写，包含兑换或手续费后实际到账的金额。</p></div>` : ''}
+        <div class="field full" id="transaction-rate-field"><label for="field-cnyRate">本笔折算汇率</label><input id="field-cnyRate" name="cnyRate" inputmode="decimal" maxlength="30" value="${esc(tx?.cnyRate || currencyRate(fromAccount))}"><p class="hint">随这笔记录保存，今后调整账户汇率不会改写历史收支。</p></div>
+        ${field(type === 'transfer' ? '转移说明 · 可不填' : '这笔钱的故事 · 可不填','title',tx?.title || '', 'text', `maxlength="120" list="transaction-titles" placeholder="${type === 'transfer' ? '不填则用账户间转移' : '不填则用分类名'}"`,true)}
+        <datalist id="transaction-titles">${suggestions.map(item => `<option value="${esc(item.title)}"></option>`).join('')}</datalist>
+        ${type === 'transfer' ? '' : selectField('收支分类','category',cats,category,true)}
+        <div class="field full">
+          <label for="field-date">发生日期</label>
+          <div class="transaction-date-actions"><input id="field-date" name="date" type="date" value="${esc(tx?.date || defaults.date || today())}" required max="${today()}" min="1900-01-01"><button type="button" class="text-btn" data-transaction-date="today">今天</button><button type="button" class="text-btn" data-transaction-date="yesterday">昨天</button></div>
+        </div>
+        <div class="field full"><label for="field-note">备注 · 可不填</label><textarea id="field-note" name="note" maxlength="2000" placeholder="记住这一笔背后的事">${esc(tx?.note || '')}</textarea></div>
+      </div>
+      ${formFooter}
+      ${tx ? '' : '<p class="kbd-note">金额或标题输入框中按 Ctrl + Enter，保存并再记一笔。</p>'}
+      <p class="kbd-note">${icon('shield',11)} ${type === 'transfer' ? '仅调整账本余额，不计入收入支出，也不发起真实转账。' : '原币记账，收支汇总按本笔汇率折合人民币。'}</p>
+    </form>`);
+  updateTransferPreview();
+  refreshFormVisuals();
+}
+
+for (const event of ['input', 'change']) document.addEventListener(event, eventObject => {
+  const input = eventObject.target, form = input.closest('#transaction-form');
+  if (!form || form.dataset.id || input.name !== 'title' || !form.elements.category || eventObject.isComposing) return;
+  if (form.elements.category.value !== form.dataset.defaultCategory) return;
+  const match = sortedRows(state.transactions.filter(tx => tx.type === form.dataset.type && tx.title === input.value))[0];
+  if (match) {
+    form.elements.category.value = match.category;
+    queueMicrotask(refreshFormVisuals);
+  }
+});
+
+document.addEventListener('click', event => {
+  const button = event.target.closest('[data-transaction-date]');
+  const form = button?.closest('#transaction-form');
+  if (!form) return;
+  const date = new Date(`${today()}T12:00:00Z`);
+  if (button.dataset.transactionDate === 'yesterday') date.setUTCDate(date.getUTCDate() - 1);
+  form.elements.date.value = date.toISOString().slice(0,10);
+  form.elements.date.dispatchEvent(new Event('change', { bubbles: true }));
+});
+
+document.addEventListener('keydown', event => {
+  const form = event.target.closest('#transaction-form');
+  if (!form || form.dataset.id || !event.ctrlKey || event.key !== 'Enter' || !['amount', 'title'].includes(event.target.name)) return;
+  event.preventDefault();
+  if (!busy && !event.isComposing) form.requestSubmit(form.querySelector('[name="saveMode"][value="again"]'));
+});
 
 function providerFor(sub){return subscriptionCatalog.find(p=>p.id===sub?.serviceId)||subscriptionCatalog.find(p=>[p.name,...(p.aliases||[])].some(n=>n.toLowerCase()===(sub?.name||'').toLowerCase()));}
 function subIcon(s){const p=providerFor(s);return p?`<span class="service-logo" data-service="${esc(p.id)}"><img src="${esc(p.logo)}" alt="${esc(p.name)} Logo" width="28" height="28"></span>`:`<span class="service-icon" style="background:${esc(s.color)}">${icons[s.icon]?icon(s.icon,19):esc(s.icon.slice(0,2))}</span>`;}
@@ -687,6 +956,18 @@ function chooseSubscriptionService(id){
  form.querySelectorAll('.membership-choice').forEach(b=>b.classList.toggle('selected',b.dataset.id===p?.id));
 }
 
+function goalDepositModal(id, mode = 'deposit', value = '') {
+  const goal = state.goals.find(g=>g.id===id);
+  if (!goal) { toast('这个心愿已不存在'); return; }
+  const withdrawing = mode === 'withdraw';
+  modal(withdrawing?'从心愿中取出':'向心愿存入一笔',esc(goal.name),`
+    <div class="goal-deposit-summary"><span>当前已存 <b class="money">${insightMoney(goal.saved)}</b></span><span>目标 <b class="money">${insightMoney(goal.target)}</b></span><span>还差 <b class="money">${insightMoney(Math.max(0,goal.target-goal.saved))}</b></span></div>
+    <form id="goal-deposit-form" data-id="${esc(id)}" data-mode="${mode}">
+      <div class="segmented" aria-label="心愿资金调整">${[['deposit','存入'],['withdraw','取出']].map(([v,label])=>`<button type="button" data-action="goal-deposit-mode" data-mode="${v}" data-id="${esc(id)}" class="${mode===v?'selected':''}" aria-pressed="${mode===v}">${label}</button>`).join('')}</div>
+      ${field(withdrawing?'取出金额（元）':'存入金额（元）','amount',value,'text','required inputmode="decimal" autofocus placeholder="0.00"')}
+      <p class="hint">心愿金额仅记录储蓄进度，不影响总资产，也不会生成收支。</p>${footer(withdrawing?'确认取出':'确认存入')}
+    </form>`);
+}
 function goalModal(id){const g=state.goals.find(x=>x.id===id);modal(g?'离心愿，又近了一点':'给未来一个小期待','把想做的事，变成看得见的进度。',`<form id="goal-form" data-id="${id||''}"><div class="form-grid">${field('心愿名称','name',g?.name||'','text','required maxlength="80" placeholder="例如：下一站，去看世界"',true)}${field('目标金额（元）','target',g?String(g.target/100):'','text','required inputmode="decimal" placeholder="15000"')}${field('已经存下（元）','saved',g?String(g.saved/100):'0','text','required inputmode="decimal"')}<div class="field full"><p class="hint">这是储蓄进度的记录，不会重复增加总资产。新增资金的实际流动请另行记账。</p></div></div>${footer(g?'更新心愿':'创建心愿',g?{action:'delete-goal',id:g.id}:null)}</form>`)}
 function budgetModal(){modal('给这个月，一点规划','预算是参考线，好的生活由你定义。',`<form id="budget-form"><div class="form-grid">${field('月度预算（元）','budget',String(state.settings.monthlyBudget/100),'text','required inputmode="decimal"',true)}</div>${footer('保存预算')}</form>`)}
 function confirmModal(title,copy,action){modal(title,'每一步，都由你决定。',`<p class="confirm-copy">${copy}</p><div class="form-error" role="alert"></div><div class="modal-footer"><button class="btn btn-outline" data-action="close-modal">再想想</button><button class="btn btn-dark" id="confirm-action">确认继续 ${icon('right',14)}</button></div>`);$('#confirm-action').onclick=async()=>{const b=$('#confirm-action');b.disabled=true;try{await action();if(b.isConnected)b.disabled=false}catch(e){formError(e.message);b.disabled=false}}}
@@ -719,27 +1000,125 @@ async function exportCsv(){
  const rows=[['日期','类型','事项','分类','账户','转入账户','原币种','原币金额','到账币种','到账金额','本笔人民币汇率','折合人民币（元）','备注'],...filteredTransactions().map(t=>{
  const code=t.currency||accountCurrency(accountById(t.accountId)),target=t.type==='transfer'?(t.toCurrency||accountCurrency(accountById(t.toAccountId))):'';
  return [t.date,{income:'收入',expense:'支出',transfer:'转账'}[t.type],t.title,t.category,accountName(t.accountId),t.toAccountId?accountName(t.toAccountId):'',code,amountInput(t.amount,code),target,target?amountInput(t.toAmount??t.amount,target):'',t.cnyRate||'1',amountInput(transactionCnyAmount(t,state),'CNY'),t.note];})];
- if(await download('MoneyLab-'+month+'.csv','\ufeff'+rows.map(r=>r.map(safe).join(',')).join('\r\n'),'text/csv;charset=utf-8'))toast('当前筛选账单已导出');
+ if(await download(isCrossMonthSearch()?`MoneyLab-search-${today()}.csv`:'MoneyLab-'+month+'.csv','\ufeff'+rows.map(r=>r.map(safe).join(',')).join('\r\n'),'text/csv;charset=utf-8'))toast('当前筛选账单已导出');
 }
 function importModal(){modal('把你的账本，带回来','导入前会自动保存一份带时间戳的本地备份。',`<form id="import-form"><div class="field"><label for="import-file">选择 Money Lab JSON 备份（最大 2 MB）</label><input type="file" id="import-file" name="backup" accept=".json,application/json" required></div><div class="callout">${icon('info',15)}<span>导入会替换当前账本的账户、收支、订阅和储蓄目标。启用的订阅会补记至今天；建议先导出当前账本。</span></div>${footer('验证并导入')}</form>`)}
-async function resetEmpty(){confirmModal(state.demo?'准备好，记录你的生活了吗？':'开启一个空白账本？',state.demo?'示例收支、账户、订阅和心愿将被清空。系统会先保留一份本地备份，账户、收支、订阅、心愿和预算都从零开始。':'当前账本将替换为空账本，原数据会保存到 data 目录的带时间戳备份文件。建议同时导出一份备份。',async()=>{state=await api('/api/reset',{method:'POST',body:JSON.stringify({mode:'empty',expectedRevision:state.revision})});void loadLedgerHealth();query='';filter='all';accountFilter='';closeModal();navigate('overview');toast('你的账本准备好了，从第一笔开始吧')})}
-async function deleteItem(kind,id){const labels={transaction:'这笔账单',account:'这个账户',subscription:'这项订阅',goal:'这个心愿'};if(kind==='account'&&(state.transactions.some(t=>t.accountId===id||t.toAccountId===id)||state.subscriptions.some(s=>s.accountId===id))){formError('该账户有关联账单或订阅，请先调整关联记录，再删除账户。');return}confirmModal(`删除${labels[kind]}？`,kind==='subscription'?'历史订阅支出会保留，之后不再自动记录这项订阅。':kind==='transaction'?'这笔记录将移除，相关账户余额会随之更新。删除自动订阅账单后，该账期不会再次补记。':'删除后将从当前账本移除。',async()=>{const next=structuredClone(state);const key={transaction:'transactions',account:'accounts',subscription:'subscriptions',goal:'goals'}[kind];next[key]=next[key].filter(x=>x.id!==id);if(kind==='subscription')next.transactions.forEach(t=>{if(t.subscriptionId===id){delete t.subscriptionId;delete t.occurrenceKey}});await commit(next,'已删除')})}
+async function resetEmpty(){confirmModal(state.demo?'准备好，记录你的生活了吗？':'开启一个空白账本？',state.demo?'示例收支、账户、订阅和心愿将被清空。系统会先保留一份本地备份，账户、收支、订阅、心愿和预算都从零开始。':'当前账本将替换为空账本，原数据会保存到 data 目录的带时间戳备份文件。建议同时导出一份备份。',async()=>{state=await api('/api/reset',{method:'POST',body:JSON.stringify({mode:'empty',expectedRevision:state.revision})});void loadLedgerHealth();clearTransactionFilters();closeModal();navigate('overview');toast('你的账本准备好了，从第一笔开始吧')})}
+async function undoDeletion(deletion, deadline) {
+  try {
+    if (Date.now() > deadline) throw new Error('已超过 6 秒撤销期限');
+    if (busy) throw new Error('正在保存其他修改，请稍后重试');
+    const latest = await api('/api/state');
+    if (busy) throw new Error('正在保存其他修改，请稍后重试');
+    if (latest.revision > state.revision) state = latest;
+    const next = restoreDeletion(state, deletion);
+    if (!await commit(next,'已撤销删除')) toast(`撤销失败：${commit.lastError||'账本已更新，请检查后重试'}`);
+  } catch (error) { toast(`撤销失败：${error.message}`); }
+}
+async function deleteItem(kind,id) {
+  const labels = {transaction:'这笔账单',account:'这个账户',subscription:'这项订阅',goal:'这个心愿'};
+  if (kind==='account'&&(state.transactions.some(t=>t.accountId===id||t.toAccountId===id)||state.subscriptions.some(s=>s.accountId===id))) {
+    formError('该账户有关联账单或订阅，请先调整关联记录，再删除账户。');
+    return;
+  }
+  confirmModal(`删除${labels[kind]}？`,kind==='subscription'?'历史订阅支出会保留，之后不再自动记录这项订阅。':kind==='transaction'?'这笔记录将移除，相关账户余额会随之更新。删除自动订阅账单后，该账期不会再次补记。':'删除后将从当前账本移除。',async()=>{
+    const deletion = kind==='account' ? null : captureDeletion(state,kind,id);
+    const next = structuredClone(state);
+    const key = {transaction:'transactions',account:'accounts',subscription:'subscriptions',goal:'goals'}[kind];
+    next[key] = next[key].filter(x=>x.id!==id);
+    if (kind==='subscription') next.transactions.forEach(t=>{if(t.subscriptionId===id){delete t.subscriptionId;delete t.occurrenceKey}});
+    if (await commit(next,'已删除') && deletion) {
+      const deadline = Date.now()+6000;
+      toast('已删除',{label:'撤销',run:()=>undoDeletion(deletion,deadline)});
+    }
+  });
+}
 
-document.addEventListener('click',async e=>{const target=e.target.closest('button,[data-page]');if(!target)return;if(target.dataset.page){navigate(target.dataset.page);return}if(target.dataset.filter){filter=target.dataset.filter;render();return}const a=target.dataset.action,id=target.dataset.id;if(!a)return;try{switch(a){case'check-updates':await updateUI?.check();break;case'download-update':await updateUI?.download();break;case'cancel-update':await updateUI?.cancel();break;case'install-update':await updateUI?.install();break;case'mobile-sync':await mobileSync.open();break;case'retry':location.reload();break;case'refresh-rates':await refreshRates({announce:true});break;case'menu':menuOpen=!menuOpen;render();break;case'close-modal':closeModal();break;case'add-transaction':transactionModal();break;case'add-expense':transactionModal(undefined,'expense');break;case'add-income':transactionModal(undefined,'income');break;case'add-transfer':transactionModal(undefined,'transfer');break;case'view-all-transactions':filter='all';query='';accountFilter='';navigate('transactions');break;case'view-income':filter='income';query='';accountFilter='';navigate('transactions');break;case'view-expense':filter='expense';query='';accountFilter='';navigate('transactions');break;case'edit-transaction':transactionModal(id);break;case'transaction-type':{
- const previousForm=$('#transaction-form'),draft=new FormData(previousForm),transferTarget=String(draft.get('toAccountId')||previousForm.dataset.transferTarget||''),toAmount=String(draft.get('toAmount')||previousForm.dataset.transferAmount||''),toCode=previousForm.dataset.toCurrency||'',code=previousForm.dataset.currency,rate=previousForm.elements.cnyRate.value;
+document.addEventListener('click',async e=>{const target=e.target.closest('button,[data-page]');if(!target)return;if(target.dataset.page){navigate(target.dataset.page);return}if(target.dataset.filter){filter=target.dataset.filter;render();return}const a=target.dataset.action,id=target.dataset.id;if(!a)return;try{switch(a){case'check-updates':await updateUI?.check();break;case'download-update':await updateUI?.download();break;case'cancel-update':await updateUI?.cancel();break;case'install-update':await updateUI?.install();break;case'mobile-sync':await mobileSync.open();break;case'retry':location.reload();break;case'refresh-rates':await refreshRates({announce:true});break;case'menu':menuOpen=!menuOpen;render();break;case'close-modal':closeModal();break;case'add-transaction':transactionModal();break;case'add-expense':transactionModal(undefined,'expense');break;case'add-income':transactionModal(undefined,'income');break;case'add-transfer':transactionModal(undefined,'transfer');break;case'view-all-transactions':clearTransactionFilters();navigate('transactions');break;case'view-income':clearTransactionFilters();filter='income';navigate('transactions');break;case'view-expense':clearTransactionFilters();filter='expense';navigate('transactions');break;case'edit-transaction':transactionModal(id);break;case'transaction-type':{
+ const previousForm=$('#transaction-form');
+ if(previousForm.dataset.type===target.dataset.type)break;
+ const draft=new FormData(previousForm),transferTarget=String(draft.get('toAccountId')||previousForm.dataset.transferTarget||''),toAmount=String(draft.get('toAmount')||previousForm.dataset.transferAmount||''),toCode=previousForm.dataset.toCurrency||'',code=previousForm.dataset.currency,rate=previousForm.elements.cnyRate.value;
  transactionModal(id,target.dataset.type);const nextForm=$('#transaction-form');if(!nextForm)break;
- nextForm.elements.accountId.value=draft.get('accountId');nextForm.dataset.accountId=draft.get('accountId');nextForm.dataset.currency=code;nextForm.dataset.toCurrency=toCode;
- for(const key of ['amount','title','date','note']){if(nextForm.elements[key]&&draft.has(key))nextForm.elements[key].value=draft.get(key);}
- nextForm.elements.cnyRate.value=rate;nextForm.dataset.transferTarget=transferTarget;nextForm.dataset.transferAmount=toAmount;
- updateTransferPreview(transferTarget);if(nextForm.elements.toAmount&&nextForm.dataset.toCurrency===toCode)nextForm.elements.toAmount.value=toAmount;
+ if(id){nextForm.elements.accountId.value=draft.get('accountId');nextForm.dataset.accountId=draft.get('accountId');nextForm.dataset.currency=code;nextForm.elements.cnyRate.value=rate;}nextForm.dataset.toCurrency=toCode;
+ const sameCurrency=nextForm.dataset.currency===code;
+ for(const key of ['amount','title','date','note']){if(nextForm.elements[key]&&draft.has(key))nextForm.elements[key].value=key==='amount'&&!sameCurrency?'':draft.get(key);}
+ nextForm.dataset.transferTarget=transferTarget;nextForm.dataset.transferAmount=sameCurrency?toAmount:'';
+ updateTransferPreview(transferTarget);if(nextForm.elements.toAmount&&sameCurrency&&nextForm.dataset.toCurrency===toCode)nextForm.elements.toAmount.value=toAmount;
  break;}case'add-account':accountModal();break;
  case'add-bank-account':if(bankById(target.dataset.bankId))accountModal(undefined,target.dataset.bankId);break;
  case'toggle-bank':{const bankId=target.dataset.bankId;if(!bankById(bankId))break;if(expandedBanks.has(bankId))expandedBanks.delete(bankId);else{expandedBanks.add(bankId);dealBank=bankId;}render();dealBank='';document.querySelector('[data-action="toggle-bank"][data-bank-id="'+bankId+'"]').focus({preventScroll:true});break;}
  case'toggle-all-banks':{const bankIds=[...document.querySelectorAll('.bank-group[data-bank-id]')].map(group=>group.dataset.bankId);if(bankIds.every(bankId=>expandedBanks.has(bankId)))expandedBanks.clear();else bankIds.forEach(bankId=>expandedBanks.add(bankId));render();document.querySelector('[data-action="toggle-all-banks"]').focus({preventScroll:true});break;}
  case'accounts-view':{if(!['banks','cards'].includes(target.dataset.view))break;accountView=target.dataset.view;render();document.querySelector('[data-action="accounts-view"][data-view="'+accountView+'"]').focus({preventScroll:true});break;}
  case'subscription-view':{if(!['detailed','compact','chart'].includes(target.dataset.view))break;subscriptionView=target.dataset.view;render();document.querySelector('[data-action="subscription-view"][data-view="'+subscriptionView+'"]').focus({preventScroll:true});void desktop?.setSubscriptionView(subscriptionView).catch(()=>{});break;}
- case'choose-account':chooseAccountPreset(id);break;case'choose-bank':chooseBank(id);break;case'edit-account':accountModal(id);break;case'add-subscription':subscriptionModal();break;case'choose-service':chooseSubscriptionService(id);break;case'edit-subscription':subscriptionModal(id);break;case'toggle-subscription':{const s=state.subscriptions.find(x=>x.id===id);await commit(setSubscriptionActive(state,id,!s.active,new Date()),s.active?'已暂停订阅自动记账':'已恢复订阅自动记账');break}case'add-goal':goalModal();break;case'edit-goal':goalModal(id);break;case'budget':budgetModal();break;case'privacy':hidden=!hidden;sessionStorage.setItem('moneylab-hidden',String(hidden));render();break;case'month-prev':case'month-next':{const d=new Date(`${month}-15T12:00:00`);d.setMonth(d.getMonth()+(a==='month-prev'?-1:1));month=localDate(d).slice(0,7);render();if($('.calendar'))calendarModal();break}case'filter-subscriptions':subscriptionFilter=target.dataset.value;render();break;case'choose-apple-region':chooseAppleRegion(target.dataset.region);break;case'add-linked-account':addLinkedAccount();break;case'remove-linked-account':target.closest('.linked-account-row')?.remove();updateLinkedAccountEditor();break;case'calendar':month=beijingDateTime().date.slice(0,7);calendarModal();break;case'account-transactions':accountFilter=id;filter='all';query='';navigate('transactions');break;case'export':{const data=await api('/api/state');if(await download(`MoneyLab-backup-${today()}.json`,JSON.stringify(data,null,2),'application/json'))toast('完整账本已导出');break}case'export-csv':await exportCsv();break;case'open-data':await desktop?.openDataDirectory();break;case'toggle-tray':desktopInfo=await desktop.setPreferences({keepInTray:!desktopInfo.keepInTray});render();break;case'exit-app':desktop?.quit();break;case'import':importModal();break;case'start-empty':resetEmpty();break;case'delete-transaction':case'delete-account':case'delete-subscription':case'delete-goal':deleteItem(a.replace('delete-',''),id);break}}catch(error){formError(error.message)}});
-document.addEventListener('submit',async e=>{const form=e.target;e.preventDefault();const data=new FormData(form),get=name=>String(data.get(name)||'').trim();if(form.id==='global-search'){query=get('query');navigate('transactions');return}if(ratesRefreshPromise){formError('正在更新汇率，请稍后保存');return}const next=structuredClone(state),id=form.dataset.id;try{switch(form.id){case'transaction-form':{const type=form.dataset.type,old=state.transactions.find(x=>x.id===id);const tx={id:id||uid('tx'),type,currency:accountCurrency(accountById(get('accountId'))),amount:parseMoney(get('amount'),accountCurrency(accountById(get('accountId')))),accountId:get('accountId'),category:type==='transfer'?'账户转账':get('category'),title:get('title'),date:get('date'),note:get('note')};if(tx.amount<=0)throw new Error('金额需要大于 0');if(tx.date>today())throw new Error('普通账单请使用今天或过去的日期，未来费用可添加为订阅');if(tx.currency!=='CNY')tx.cnyRate=normalizeRate(get('cnyRate'));if(type==='transfer'){tx.toAccountId=get('toAccountId');tx.toCurrency=accountCurrency(accountById(tx.toAccountId));if(tx.currency!==tx.toCurrency)tx.toAmount=parseMoney(get('toAmount'),tx.toCurrency);}if(old?.mobileCapture)tx.mobileCapture=structuredClone(old.mobileCapture);if(old?.subscriptionId&&type==='expense'&&tx.date.slice(0,7)===old.date.slice(0,7)){tx.subscriptionId=old.subscriptionId;tx.occurrenceKey=old.occurrenceKey}if(id)replaceRecord(next.transactions,id,tx);else next.transactions.push(tx);break}case'account-form':{const item={id:id||uid('acc'),name:get('name'),type:get('type'),color:get('color'),currency:form.elements.currency.value,openingBalance:parseMoney(get('openingBalance'),form.elements.currency.value)};if(item.currency!=='CNY'){item.rateMode=get('rateMode')==='manual'?'manual':'auto';item.cnyRate=normalizeRate(item.rateMode==='auto'?form.elements.cnyRate.value:get('cnyRate'));const quote=cachedRate(item.currency);if(item.rateMode==='auto'&&quote&&quote.cnyRate===item.cnyRate){if(quote.asOf)item.rateAsOf=quote.asOf;if(quote.source)item.rateSource=quote.source;}}if(get('providerId'))item.providerId=get('providerId');if(item.providerId==='apple-balance'){item.appleRegion=get('appleRegion');if(get('appleAccount'))item.appleAccount=get('appleAccount');}if(isCardType(item.providerId,item.type)){if(get('bankId'))item.bankId=get('bankId');if(get('lastFour')){if(!/^[0-9]{4}$/.test(get('lastFour')))throw new Error('卡片尾号需要填写 4 位数字');item.lastFour=get('lastFour');}}if(id)replaceRecord(next.accounts,id,item);else next.accounts.push(item);break}case'subscription-form':{syncSubscriptionSchedule(form.elements.startDate);const old=state.subscriptions.find(x=>x.id===id);const sub={id:id||uid('sub'),name:get('name'),currency:accountCurrency(accountById(get('accountId'))),amount:parseMoney(get('amount'),accountCurrency(accountById(get('accountId')))),accountId:get('accountId'),category:'会员订阅',startDate:get('startDate'),startHour:Number(form.elements.startHour.value),billingDay:Number(form.elements.billingDay.value),billingHour:Number(form.elements.billingHour.value),recurring:data.has('recurring'),active:old?.active??true,color:get('color'),icon:get('icon'),processedOccurrences:old?.processedOccurrences||[],tier:get('tier'),linkedAccounts:readLinkedAccounts(),expiresOn:get('expiresOn'),note:get('note')};if(get('serviceId'))sub.serviceId=get('serviceId');if(old&&get('expiresOn')===form.elements.expiresOn.defaultValue)sub.expiresOn=old.expiresOn||'';if(old?.expiryRenewal)sub.expiryRenewal=structuredClone(old.expiryRenewal);if(!old||sub.expiresOn!==old.expiresOn||sub.recurring!==old.recurring)resetSubscriptionExpiry(sub,next.transactions);if(id)replaceRecord(next.subscriptions,id,sub);else next.subscriptions.push(sub);break}case'goal-form':{const goal={id:id||uid('goal'),name:get('name'),target:moneyToCents(get('target')),saved:moneyToCents(get('saved')),color:'#c7dfa2',cover:'assets/alpine-goal.png'};if(id)replaceRecord(next.goals,id,goal);else next.goals.push(goal);break}case'budget-form':next.settings.monthlyBudget=moneyToCents(get('budget'));break;case'import-form':{const file=data.get('backup');if(!file?.size)throw new Error('请选择有效的 JSON 文件');if(file.size>2*1024*1024)throw new Error('备份不能超过 2 MB');let imported;try{imported=JSON.parse((await file.text()).replace(/^\uFEFF/,''))}catch{throw new Error('文件不是有效的 JSON 备份')}validateState(imported);await commit(imported,'完整账本已恢复',true);return}default:return}upgradeSchemaVersion(next);validateState(next);const saved=await commit(next);if(saved&&form.id==='account-form'&&!id&&bankById(get('bankId'))){expandedBanks.add(get('bankId'));render()}}catch(error){formError(error.message)}});
+ case'choose-account':chooseAccountPreset(id);break;case'choose-bank':chooseBank(id);break;case'edit-account':accountModal(id);break;case'add-subscription':subscriptionModal();break;case'choose-service':chooseSubscriptionService(id);break;case'edit-subscription':subscriptionModal(id);break;case'toggle-subscription':{const s=state.subscriptions.find(x=>x.id===id);await commit(setSubscriptionActive(state,id,!s.active,new Date()),s.active?'已暂停订阅自动记账':'已恢复订阅自动记账');break}case'goal-deposit':goalDepositModal(id);break;
+ case'goal-deposit-mode':{
+  const value=$('#goal-deposit-form')?.elements.amount.value||'';
+  goalDepositModal(id,target.dataset.mode,value);
+  break;
+ }
+ case'insight-day':clearTransactionFilters();dateFilter=target.dataset.date;month=dateFilter.slice(0,7);navigate('transactions');break;
+ case'insight-month':month=target.dataset.month;render();break;
+ case'insight-category':clearTransactionFilters();filter='expense';categoryFilter=target.dataset.category;navigate('transactions');break;
+ case'transaction-search-scope':if(['all','month'].includes(target.dataset.scope))searchScope=target.dataset.scope;render();break;
+ case'clear-transaction-filters':clearTransactionFilters();render();break;
+ case'remove-transaction-filter':{
+  switch(target.dataset.filterKey){
+   case'query':query='';searchScope='all';break;
+   case'scope':searchScope='all';break;
+   case'type':filter='all';break;
+   case'account':accountFilter='';break;
+   case'category':categoryFilter='';break;
+   case'date':dateFilter='';break;
+  }
+  render();break;
+ }
+ case'add-goal':goalModal();break;case'edit-goal':goalModal(id);break;case'budget':budgetModal();break;case'privacy':hidden=!hidden;sessionStorage.setItem('moneylab-hidden',String(hidden));render();break;case'month-prev':case'month-next':{const d=new Date(`${month}-15T12:00:00`);d.setMonth(d.getMonth()+(a==='month-prev'?-1:1));month=localDate(d).slice(0,7);render();if($('.calendar'))calendarModal();break}case'filter-subscriptions':subscriptionFilter=target.dataset.value;render();break;case'choose-apple-region':chooseAppleRegion(target.dataset.region);break;case'add-linked-account':addLinkedAccount();break;case'remove-linked-account':target.closest('.linked-account-row')?.remove();updateLinkedAccountEditor();break;case'calendar':month=beijingDateTime().date.slice(0,7);calendarModal();break;case'account-transactions':clearTransactionFilters();accountFilter=id;navigate('transactions');break;case'export':{const data=await api('/api/state');if(await download(`MoneyLab-backup-${today()}.json`,JSON.stringify(data,null,2),'application/json'))toast('完整账本已导出');break}case'export-csv':await exportCsv();break;case'open-data':await desktop?.openDataDirectory();break;case'toggle-tray':desktopInfo=await desktop.setPreferences({keepInTray:!desktopInfo.keepInTray});render();break;case'exit-app':desktop?.quit();break;case'import':importModal();break;case'start-empty':resetEmpty();break;case'delete-transaction':case'delete-account':case'delete-subscription':case'delete-goal':deleteItem(a.replace('delete-',''),id);break}}catch(error){formError(error.message)}});
+document.addEventListener('submit',async e=>{const form=e.target;e.preventDefault();const data=new FormData(form),get=name=>String(data.get(name)||'').trim();if(ratesRefreshPromise){formError('正在更新汇率，请稍后保存');return}const next=structuredClone(state),id=form.dataset.id;try{switch(form.id){case'transaction-form': {
+  const type = form.dataset.type, old = state.transactions.find(item => item.id === id);
+  const category = type === 'transfer' ? '账户转账' : get('category');
+  const tx = {
+    id: id || uid('tx'), type,
+    currency: accountCurrency(accountById(get('accountId'))),
+    amount: parseMoney(get('amount'), accountCurrency(accountById(get('accountId')))),
+    accountId: get('accountId'), category,
+    title: get('title') || (type === 'transfer' ? '账户间转移' : category),
+    date: get('date'), note: get('note'),
+  };
+  if (tx.amount <= 0) throw new Error('金额需要大于 0');
+  if (tx.date > today()) throw new Error('普通账单请使用今天或过去的日期，未来费用可添加为订阅');
+  if (tx.currency !== 'CNY') tx.cnyRate = normalizeRate(get('cnyRate'));
+  if (type === 'transfer') {
+    tx.toAccountId = get('toAccountId');
+    tx.toCurrency = accountCurrency(accountById(tx.toAccountId));
+    if (tx.currency !== tx.toCurrency) tx.toAmount = parseMoney(get('toAmount'), tx.toCurrency);
+  }
+  if (old?.mobileCapture) tx.mobileCapture = structuredClone(old.mobileCapture);
+  if (old?.subscriptionId && type === 'expense' && tx.date.slice(0,7) === old.date.slice(0,7)) {
+    tx.subscriptionId = old.subscriptionId;
+    tx.occurrenceKey = old.occurrenceKey;
+  }
+  if(id)replaceRecord(next.transactions,id,tx);else next.transactions.push(tx);
+  upgradeSchemaVersion(next);
+  validateState(next);
+  const again = !id && e.submitter?.value === 'again';
+  const saved = await commit(next);
+  if (saved) {
+    rememberTransactionDefaults(tx);
+    if (again) {
+      transactionModal(undefined, type, {
+        accountId: tx.accountId, toAccountId: tx.toAccountId,
+        category: tx.category, date: tx.date,
+      });
+      $('#transaction-form [name="amount"]')?.focus();
+    }
+  }
+  return;
+}case'account-form':{const item={id:id||uid('acc'),name:get('name'),type:get('type'),color:get('color'),currency:form.elements.currency.value,openingBalance:parseMoney(get('openingBalance'),form.elements.currency.value)};if(item.currency!=='CNY'){item.rateMode=get('rateMode')==='manual'?'manual':'auto';item.cnyRate=normalizeRate(item.rateMode==='auto'?form.elements.cnyRate.value:get('cnyRate'));const quote=cachedRate(item.currency);if(item.rateMode==='auto'&&quote&&quote.cnyRate===item.cnyRate){if(quote.asOf)item.rateAsOf=quote.asOf;if(quote.source)item.rateSource=quote.source;}}if(get('providerId'))item.providerId=get('providerId');if(item.providerId==='apple-balance'){item.appleRegion=get('appleRegion');if(get('appleAccount'))item.appleAccount=get('appleAccount');}if(isCardType(item.providerId,item.type)){if(get('bankId'))item.bankId=get('bankId');if(get('lastFour')){if(!/^[0-9]{4}$/.test(get('lastFour')))throw new Error('卡片尾号需要填写 4 位数字');item.lastFour=get('lastFour');}}if(id)replaceRecord(next.accounts,id,item);else next.accounts.push(item);break}case'subscription-form':{syncSubscriptionSchedule(form.elements.startDate);const old=state.subscriptions.find(x=>x.id===id);const sub={id:id||uid('sub'),name:get('name'),currency:accountCurrency(accountById(get('accountId'))),amount:parseMoney(get('amount'),accountCurrency(accountById(get('accountId')))),accountId:get('accountId'),category:'会员订阅',startDate:get('startDate'),startHour:Number(form.elements.startHour.value),billingDay:Number(form.elements.billingDay.value),billingHour:Number(form.elements.billingHour.value),recurring:data.has('recurring'),active:old?.active??true,color:get('color'),icon:get('icon'),processedOccurrences:old?.processedOccurrences||[],tier:get('tier'),linkedAccounts:readLinkedAccounts(),expiresOn:get('expiresOn'),note:get('note')};if(get('serviceId'))sub.serviceId=get('serviceId');if(old&&get('expiresOn')===form.elements.expiresOn.defaultValue)sub.expiresOn=old.expiresOn||'';if(old?.expiryRenewal)sub.expiryRenewal=structuredClone(old.expiryRenewal);if(!old||sub.expiresOn!==old.expiresOn||sub.recurring!==old.recurring)resetSubscriptionExpiry(sub,next.transactions);if(id)replaceRecord(next.subscriptions,id,sub);else next.subscriptions.push(sub);break}case'goal-form':{const goal={id:id||uid('goal'),name:get('name'),target:moneyToCents(get('target')),saved:moneyToCents(get('saved')),color:'#c7dfa2',cover:'assets/alpine-goal.png'};if(id)replaceRecord(next.goals,id,goal);else next.goals.push(goal);break}case'goal-deposit-form':{
+  const goal=next.goals.find(g=>g.id===id);
+  if(!goal)throw new Error('这个心愿已不存在');
+  goal.saved=adjustedGoalSaved(goal.saved,get('amount'),form.dataset.mode);
+  break;
+}case'budget-form':next.settings.monthlyBudget=moneyToCents(get('budget'));break;case'import-form':{const file=data.get('backup');if(!file?.size)throw new Error('请选择有效的 JSON 文件');if(file.size>2*1024*1024)throw new Error('备份不能超过 2 MB');let imported;try{imported=JSON.parse((await file.text()).replace(/^\uFEFF/,''))}catch{throw new Error('文件不是有效的 JSON 备份')}validateState(imported);await commit(imported,'完整账本已恢复',true);return}default:return}upgradeSchemaVersion(next);validateState(next);const saved=await commit(next);if(saved&&form.id==='account-form'&&!id&&bankById(get('bankId'))){expandedBanks.add(get('bankId'));render()}}catch(error){formError(error.message)}});
 document.addEventListener('compositionend',e=>{
  if(['subscription-search','transaction-search'].includes(e.target.id))e.target.dispatchEvent(new Event('input',{bubbles:true}));
 });
@@ -750,7 +1129,7 @@ document.addEventListener('input',e=>{
  if(['subscription-search','transaction-search'].includes(id)){
   if(e.isComposing)return;
   if(id==='subscription-search')subscriptionQuery=value;
-  else query=value;
+  else {if(!query.trim())searchScope='all';query=value;}
   render();
   const search=document.getElementById(id);
   search?.focus({preventScroll:true});
@@ -758,7 +1137,7 @@ document.addEventListener('input',e=>{
  }
  if(['expiresOn','startDate'].includes(name)&&e.target.closest('#subscription-form'))updateSubscriptionExpiryPreview();
 });
-document.addEventListener('change',e=>{if(e.target.name==='appleRegion'&&e.target.closest('#account-form'))updateAppleBalanceFields({request:true});if(e.target.id==='saved-linked-account'&&e.target.value!==''){const account=savedSubscriptionAccounts()[Number(e.target.value)];if(account)addLinkedAccount(account);e.target.value=''}if(e.target.dataset.linkedField==='type'){const input=e.target.closest('.linked-account-row').querySelector('[data-linked-field="value"]');input.type=e.target.value==='email'?'email':'text';}if(['expiresOn','startDate','startHour','billingDay','billingHour','recurring'].includes(e.target.name)&&e.target.closest('#subscription-form'))updateSubscriptionExpiryPreview();if(['currency','rateMode'].includes(e.target.name)&&e.target.closest('#account-form'))updateAppleBalanceFields({request:true});if(e.target.name==='accountId'&&e.target.closest('#subscription-form'))updateSubscriptionCurrency();if(e.target.name==='bankId'&&e.target.closest('#account-form'))chooseBank(e.target.value);if(e.target.name==='type'&&e.target.closest('#account-form'))updateBankFields();if(e.target.name==='providerId'&&e.target.closest('#account-form'))chooseAccountPreset(e.target.value);if(['accountId','toAccountId'].includes(e.target.name)&&e.target.closest('#transaction-form'))updateTransferPreview();if(e.target.name==='serviceId'){chooseSubscriptionService(e.target.value)}if(e.target.name==='tierPreset'){const tier=$('#field-tier');tier.value=e.target.value;if(!e.target.value)tier.focus();}if(e.target.id==='account-filter'){accountFilter=e.target.value;render()}});
+document.addEventListener('change',e=>{if(e.target.name==='appleRegion'&&e.target.closest('#account-form'))updateAppleBalanceFields({request:true});if(e.target.id==='saved-linked-account'&&e.target.value!==''){const account=savedSubscriptionAccounts()[Number(e.target.value)];if(account)addLinkedAccount(account);e.target.value=''}if(e.target.dataset.linkedField==='type'){const input=e.target.closest('.linked-account-row').querySelector('[data-linked-field="value"]');input.type=e.target.value==='email'?'email':'text';}if(['expiresOn','startDate','startHour','billingDay','billingHour','recurring'].includes(e.target.name)&&e.target.closest('#subscription-form'))updateSubscriptionExpiryPreview();if(['currency','rateMode'].includes(e.target.name)&&e.target.closest('#account-form'))updateAppleBalanceFields({request:true});if(e.target.name==='accountId'&&e.target.closest('#subscription-form'))updateSubscriptionCurrency();if(e.target.name==='bankId'&&e.target.closest('#account-form'))chooseBank(e.target.value);if(e.target.name==='type'&&e.target.closest('#account-form'))updateBankFields();if(e.target.name==='providerId'&&e.target.closest('#account-form'))chooseAccountPreset(e.target.value);if(['accountId','toAccountId'].includes(e.target.name)&&e.target.closest('#transaction-form'))updateTransferPreview();if(e.target.name==='serviceId'){chooseSubscriptionService(e.target.value)}if(e.target.name==='tierPreset'){const tier=$('#field-tier');tier.value=e.target.value;if(!e.target.value)tier.focus();}if(e.target.id==='account-filter'){accountFilter=e.target.value;render()}if(e.target.id==='category-filter'){categoryFilter=e.target.value;render()}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();if(menuOpen){menuOpen=false;render()}}if($('.modal')){if(e.key==='Tab'){const nodes=[...$('.modal').querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]')].filter(node=>node.tabIndex>=0&&node.getClientRects().length&&!node.closest('[hidden]'));const first=nodes[0],last=nodes.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}return}if(e.key.toLowerCase()==='n'&&!e.ctrlKey&&!e.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)){e.preventDefault();transactionModal()}});
 window.addEventListener('hashchange',()=>{const next=location.hash.slice(1);if([...navItems.map(x=>x[0]),'settings'].includes(next)&&page!==next){page=next;render()}});
 async function refresh(){try{const next=await api('/api/state');if(!busy&&(!state||next.revision>state.revision||renderedDay!==today()||renderedHour!==beijingDateTime().hour)){state=next;if($('.modal'))ratesDeferredRender=true;else render()}}catch(e){if(!state)$('#app').innerHTML=`<div class="boot"><span class="brand-mark"><img src="/assets/app-icon.png" alt="超级账本" width="54" height="54"></span><h2>暂时无法打开本地账本</h2><p class="muted">${esc(e.message)}</p><p class="small muted">请先尝试重新连接；仍无法打开时，退出应用，再从桌面或开始菜单打开「超级账本」。</p><button class="btn btn-primary" data-action="retry">重新连接</button></div>`}finally{await loadLedgerHealth()}}

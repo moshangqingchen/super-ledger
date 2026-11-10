@@ -189,3 +189,138 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px soli
   .studio-navigation { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .summary-card { gap: 6px; }
 }
+
+/* Desktop insights and the compact interactions shared with the ledger. */
+.stat-comparison {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.summary-card .stat-comparison .money {
+  display: inline;
+  color: inherit;
+  font-size: inherit;
+  font-weight: 500;
+  letter-spacing: normal;
+}
+.stat-comparison.is-improved { color: var(--green); }
+.stat-comparison.is-increased { color: #bd6f54; }
+.daily-trend-panel .panel-head,
+.monthly-trend-panel .panel-head { align-items: flex-start; flex-wrap: wrap; }
+.daily-trend-panel .chart-legend,
+.monthly-trend-panel .chart-legend { flex-wrap: wrap; gap: 8px 12px; }
+.chart-legend .income-marker { background: var(--accent); }
+.monthly-trend-panel { grid-column: 1 / -1; }
+.insight-chart { position: relative; min-width: 0; }
+/* The SVG stretches horizontally; cap it so axis labels keep their shape in the full-width panel. */
+.monthly-chart { max-width: 820px; margin-inline: auto; }
+.insight-chart .chart { height: 220px; }
+.insight-chart .chart text { font-size: 11px; }
+.insight-chart .chart .budget-range-note { font-size: 10px; fill: var(--accent); }
+.insight-grid-line { stroke: var(--line); stroke-dasharray: 3 4; }
+.daily-expense-bar { fill: #df9c7d; }
+.monthly-income-bar { fill: #9584df; }
+.daily-income-dot { fill: var(--accent); }
+.daily-budget-line { stroke: var(--accent); stroke-dasharray: 5 4; stroke-width: 1.3; }
+.month-selection { fill: transparent; }
+.month-selection.selected { fill: var(--accent-soft); fill-opacity: .55; }
+.insight-chart .month-axis-label.selected { fill: var(--accent); font-weight: 700; }
+.chart-day-buttons,
+.chart-month-buttons {
+  position: absolute;
+  display: grid;
+  left: 13.2258%;
+  right: 1.2903%;
+  top: 10.9091%;
+  bottom: 12.7273%;
+}
+.chart-day-buttons { grid-template-columns: repeat(var(--chart-days), minmax(0, 1fr)); }
+.chart-month-buttons { grid-template-columns: repeat(6, minmax(0, 1fr)); top: 6.3636%; bottom: 0; }
+.chart-day,
+.chart-month {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+.chart-day:hover,
+.chart-month:hover { background: #7865bc0c; }
+.chart-day:focus-visible,
+.chart-month:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.chart-tooltip {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  left: clamp(0px, calc(var(--tooltip-left) - 100px), max(0px, calc(100% - 200px)));
+  width: min(200px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  visibility: hidden;
+  pointer-events: none;
+}
+.chart-tooltip > span { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px; }
+.chart-tooltip > span:last-child { font-size: 11px; color: var(--muted); }
+.chart-day:is(:hover, :focus) .chart-tooltip,
+.chart-month:is(:hover, :focus) .chart-tooltip { visibility: visible; }
+.daily-budget-caption { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px; margin-top: 9px; color: var(--muted); font-size: 11px; }
+.daily-budget-caption i { width: 20px; border-top: 1px dashed var(--accent); }
+.category-breakdown-button { display: block; width: 100%; padding: 5px; margin: -5px; text-align: left; border-radius: 7px; }
+.category-breakdown-button:hover { background: var(--accent-soft); }
+.category-breakdown-button:focus-visible,
+.insight-largest:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.category-breakdown-button .category-bar { display: block; }
+.category-row-head small { white-space: nowrap; font-size: 11px; }
+.insight-largest { width: 100%; text-align: left; }
+.insight-largest > span:first-child { min-width: 0; }
+.insight-largest > span:last-child { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
+.insight-largest:hover { color: var(--accent); }
+.insight-summary-note { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.insight-month-summary .setting-row { gap: 12px; }
+.amounts-hidden .insight-chart .chart text:not(.money) { filter: none; }
+
+.transaction-filter-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 16px; }
+.transaction-filter-tags .category-tag { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.transaction-search-scope { width: fit-content; margin-bottom: 12px; }
+.page-tools .filter-row { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-end; }
+.transaction-day-row td { background: #f5f4fa; padding: 10px 12px; }
+.transaction-day-heading { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: center; gap: 6px 18px; color: var(--muted); font-size: 11px; }
+.transaction-day-heading > b { color: var(--ink); font-size: 12px; }
+.transaction-day-heading .money { font-weight: 500; }
+.goal-progress-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; font-size: 12px; }
+.goal-achieved { color: var(--green); font-weight: 600; }
+.goal-deposit-summary { display: flex; flex-wrap: wrap; gap: 12px 22px; margin-bottom: 20px; color: var(--muted); font-size: 12px; }
+#goal-deposit-form .segmented { width: fit-content; margin-bottom: 18px; }
+.transaction-date-actions { display: flex; align-items: center; gap: 10px; }
+.transaction-date-actions input { min-width: 0; flex: 1; }
+.transaction-date-actions button { white-space: nowrap; flex-shrink: 0; }
+.transaction-footer { flex-wrap: wrap; }
+#toast .toast-action { margin-left: 18px; color: inherit; text-decoration: underline; font-weight: 600; }
+#toast.toast-visible .toast-action { pointer-events: auto; }
+#toast .toast-action:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+
+@media (max-width: 760px) {
+  .transaction-panel tbody tr.transaction-day-row { display: block; padding: 10px; background: #f5f4fa; border-radius: 8px; }
+  .transaction-panel tbody tr.transaction-day-row > td { display: block; }
+  .transaction-day-heading { align-items: start; flex-direction: column; }
+  .page-tools .filter-row { width: 100%; }
+  .page-tools .table-search { flex: 1 1 100%; min-width: 0; }
+  .page-tools .filter-select { min-width: 0; max-width: 100%; flex: 1 1 100px; }
+  .monthly-trend-panel { grid-column: auto; }
+  .daily-trend-panel .panel-head,
+  .monthly-trend-panel .panel-head { gap: 10px; }
+  .stat-comparison { font-size: 10px; }
+  .insight-month-summary .setting-row { flex-wrap: wrap; }
+}

@@ -37,6 +37,8 @@
       "desktop/legacy-locations.json",
       "index.html",
       "app.js",
+      "assets/ledger-insights.mjs",
+      "assets/ledger-actions.mjs",
       "icon-select.js",
       "icon-select.css",
       "update-ui.js",
