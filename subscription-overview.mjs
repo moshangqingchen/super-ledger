@@ -4,6 +4,10 @@ import {
 } from './engine.mjs';
 import { accountCurrency } from './currencies.mjs';
 
+export function subscriptionPeriodLabel(sub) {
+  return sub.recurring ? ({ 1: '月', 3: '季', 6: '半年', 12: '年' }[sub.intervalMonths ?? 1]) : '次';
+}
+
 function amount(exact) {
   const value = Number(exact);
   if (!Number.isSafeInteger(value)) throw new Error('订阅概览合计超过安全金额范围');

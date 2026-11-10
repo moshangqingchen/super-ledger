@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { makeEmptyState, validateState } from '../engine.mjs';
+import { makeEmptyState, validateState, upgradeSchemaVersion } from '../engine.mjs';
 import { renderSubscriptionChart } from '../subscription-chart.js';
 
 const NOW = new Date('2026-11-07T02:00:00Z');
@@ -16,6 +16,7 @@ function fixture(subscriptions) {
   state.schemaVersion = 3;
   state.accounts = [{ id: 'cash', name: '共享账户', type: '现金', openingBalance: 10000, color: '#123456' }];
   state.subscriptions = subscriptions;
+  upgradeSchemaVersion(state);
   validateState(state);
   return state;
 }
@@ -28,6 +29,16 @@ function render(state, visibleIds = state.subscriptions.map(row => row.id), hidd
   });
 }
 const count = (html, className) => [...html.matchAll(new RegExp(`class="${className}(?:[ "]|$)`, 'g'))].length;
+
+test('chart fee units describe each recurring period without discounting the next actual charge', () => {
+  const state = fixture([sub('quarterly', { intervalMonths: 3 }), sub('half-year', { intervalMonths: 6 }),
+    sub('annual', { intervalMonths: 12 }), sub('monthly'), sub('single', { recurring: false })]);
+  const html = render(state);
+  for (const [id, unit] of [['quarterly', '季'], ['half-year', '半年'], ['annual', '年'], ['monthly', '月'], ['single', '次']]) {
+    assert.match(html, new RegExp(`class="subscription-chart-service" data-id="${id}"[\\s\\S]*?<small>/ ${unit}</small>`));
+  }
+  assert.match(html, /下一笔费用合计 <b class="money">¥ 400\.00<\/b>/);
+});
 
 test('TT voice keeps its dark brand background in every chart logo without changing logo sizing', () => {
   const css = readFileSync(new URL('../subscription-polish.css', import.meta.url), 'utf8');

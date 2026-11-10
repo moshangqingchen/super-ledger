@@ -4,7 +4,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { makeEmptyState, makeInitialState, validateState, applyRecurring, beijingDateTime } from './engine.mjs';
+import { makeEmptyState, makeInitialState, validateState, applyRecurring, beijingDateTime, subscriptionIntervalMonths, prepareSubscriptionEdit } from './engine.mjs';
 import { createRateService } from './exchange-rates.mjs';
 import { accountCurrency } from './currencies.mjs';
 import { createMobileSync, newSyncMetadata, checkedMetadata, mergeMobileOperations } from './mobile-sync.mjs';
@@ -318,9 +318,22 @@ export async function createLedgerServer({ port = 4317, dataDirectory = path.joi
         if (!body || typeof body !== 'object' || Array.isArray(body) || !body.state) throw fail(400, '缺少要保存的账本数据。');
         reconcile();
         checkRevision(body.expectedRevision);
-        try { validateState(body.state); } catch (error) { throw fail(400, error.message); }
         let next;
-        try { next = applyRecurring(applyCachedRates(body.state), now()).state; }
+        try {
+          const edited = structuredClone(body.state);
+          const previousById = new Map(state.subscriptions.map(sub => [sub.id, sub]));
+          if (Array.isArray(edited.subscriptions)) for (const sub of edited.subscriptions) {
+            const previous = previousById.get(sub?.id);
+            if (!previous || subscriptionIntervalMonths(previous) === subscriptionIntervalMonths(sub)) continue;
+            // Reject invalid schema/one-time fields before the writer can omit intervalMonths: 1.
+            if (Object.hasOwn(sub, 'intervalMonths') && (edited.schemaVersion < 4 || sub.recurring !== true)) validateState(edited);
+            // A whole-ledger PUT is an edit, not a backup import. Protect direct callers as well
+            // as the renderer from booking elapsed months when a yearly plan becomes monthly.
+            prepareSubscriptionEdit(previous, sub, edited.transactions, now());
+          }
+          validateState(edited);
+          next = applyRecurring(applyCachedRates(edited), now()).state;
+        }
         catch (error) { throw fail(400, error.message); }
         // Mobile receipts are server-owned and must survive edits from an older
         // renderer. A whole-ledger PUT cannot erase deduplication history.

@@ -77,7 +77,7 @@ public final class LedgerStoreTest {
         JSONArray fullOps=store.syncRequest(UUID.randomUUID().toString()).getJSONArray("operations");int subscriptionIndex=-1,autoIndex=-1;for(int i=0;i<fullOps.length();i++){JSONObject entry=fullOps.getJSONObject(i);if(entry.optString("entity").equals("subscription"))subscriptionIndex=i;if(entry.optString("entity").equals("transaction")&&entry.getJSONObject("transaction").has("occurrenceKey"))autoIndex=i;}
         check(subscriptionIndex>=0&&autoIndex>subscriptionIndex,"subscription and processed history queued before dependent auto transaction");
         check(store.syncRequest(UUID.randomUUID().toString()).getInt("protocolVersion")==2,"generic entity queue declares protocol 2");
-        check(store.syncRequest(UUID.randomUUID().toString()).getInt("supportedSchemaVersion")==3,"sync declares hourly ledger support before transmitting offline operations");
+        check(store.syncRequest(UUID.randomUUID().toString()).getInt("supportedSchemaVersion")==4,"sync declares schema 4 ledger support before transmitting offline operations");
         JSONObject firstAccount=fullOps.getJSONObject(0);check(firstAccount.isNull("base")&&firstAccount.getJSONObject("record").getString("name").equals("美元账户"),"repeated account edits retain earliest null base and queue position");
         store.deleteSubscription("music");JSONArray detached=store.snapshot().getJSONObject("state").getJSONArray("transactions");for(int i=0;i<detached.length();i++)check(!detached.getJSONObject(i).has("subscriptionId"),"subscription deletion keeps expenses without dangling link");
         for(int i=0;i<store.snapshot().getJSONArray("operations").length();i++){JSONObject entry=store.snapshot().getJSONArray("operations").getJSONObject(i);if(entry.optString("entity").equals("transaction")&&entry.optString("kind").equals("put"))check(!entry.getJSONObject("transaction").has("subscriptionId"),"pending transaction put detached with deleted subscription");}
@@ -144,7 +144,7 @@ public final class LedgerStoreTest {
         JSONObject hourlyBackup=store.snapshot(),hourlyState=hourlyBackup.getJSONObject("state");
         check(hourlyState.getInt("schemaVersion")==3&&hourlyState.getJSONArray("transactions").length()==0,"normal save upgrades hourly scheduling and waits for a future charge");
         JSONObject hourlyRequest=store.syncRequest(UUID.randomUUID().toString());JSONObject hourlyRecord=null;
-        check(hourlyRequest.getInt("schemaVersion")==3&&hourlyRequest.getInt("supportedSchemaVersion")==3,"hourly upload advertises both required schema and client capability");
+        check(hourlyRequest.getInt("schemaVersion")==3&&hourlyRequest.getInt("supportedSchemaVersion")==4,"hourly upload advertises both required schema and client capability");
         for(int i=0;i<hourlyRequest.getJSONArray("operations").length();i++){JSONObject entry=hourlyRequest.getJSONArray("operations").getJSONObject(i);if(entry.optString("entity").equals("subscription"))hourlyRecord=entry.getJSONObject("record");}
         check(hourlyRecord!=null&&hourlyRecord.getInt("startHour")==18&&hourlyRecord.getInt("billingHour")==9,"outbound synchronization retains separate first and monthly hours");
         store.saveAccount(MobileLedgerTest.account("usd","USD",10000,"7.2"));
@@ -155,7 +155,7 @@ public final class LedgerStoreTest {
         SyncClient.Pairing oldDesktop=SyncClient.parsePairing(pairingQr.toString());
         check(oldDesktop.supportedSchemaVersion==2,"older desktop pairing defaults to the previous schema capability");
         oldDesktop.key=null;
-        try{SyncClient.synchronize(oldDesktop,hourlyRequest);throw new AssertionError("hourly request reached an older desktop");}catch(AssertionError error){throw error;}catch(Exception expected){check(expected.getMessage().contains("1.8.10"),"hourly upload to an old desktop is rejected before encryption or network access");}
+        try{SyncClient.synchronize(oldDesktop,hourlyRequest);throw new AssertionError("hourly request reached an older desktop");}catch(AssertionError error){throw error;}catch(Exception expected){check(expected.getMessage().contains("版本 3")&&expected.getMessage().contains("电脑"),"hourly upload to an old desktop is rejected before encryption or network access");}
         pairingQr.put("supportedSchemaVersion",3);
         check(SyncClient.parsePairing(pairingQr.toString()).supportedSchemaVersion==3,"new desktop pairing advertises hourly support");
         store=fresh(new File(workspace,"renewing-membership"));store.saveAccount(MobileLedgerTest.account("bank","CNY",10000,null));

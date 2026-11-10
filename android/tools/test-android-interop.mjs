@@ -4,9 +4,11 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { nextSubscriptionDue } from '../../engine.mjs';
 import { appleBalanceRegions } from '../../account-presets.mjs';
 import { createLedgerServer } from '../../server.mjs';
 import { networkChoices } from '../../mobile-sync.mjs';
+import { generateLedgerCategories } from './generate-ledger-categories.mjs';
 const execute=promisify(execFile), tools=path.dirname(fileURLToPath(import.meta.url)), root=path.resolve(tools,'../..');
 const build=path.join(root,'android','build','native-interop-'+Date.now());
 const classes=path.join(build,'classes'), data=path.join(build,'desktop'), phone=path.join(build,'phone');
@@ -16,8 +18,9 @@ const source=path.join(root,'android','app','src','main','java','com','moneylab'
 const androidRegions=[...fs.readFileSync(path.join(source,'AppleBalance.java'),'utf8').matchAll(/new Region\("([^"]+)","([^"]+)",("[^"]+"|null)\)/g)].map(([,id,name,currency])=>({id,name,currency:currency==='null'?null:JSON.parse(currency)}));
 assert.deepEqual(androidRegions,appleBalanceRegions,'Apple regions must match desktop');
 const files=[path.join(tools,'AndroidInteropHarness.java'),...['SyncClient','LedgerStore','MobileLedger','AppleBalance','SubscriptionDetails','SubscriptionOverview','PaymentParser','PaymentRouting','PaymentPageParser','UpdatePolicy','UpdateSources'].map(n=>path.join(source,n+'.java'))];
+files.push(generateLedgerCategories(build));
 const testSource=path.join(root,'android','app','src','test','java','com','moneylab','superledger','mobile');
-const testNames=['PaymentParserTest','PaymentRoutingTest','PaymentPageParserTest','LedgerStoreTest','MobileLedgerTest','SubscriptionDetailsTest','SubscriptionRenewalTest','SubscriptionOverviewTest','UpdatePolicyTest'];
+const testNames=['PaymentParserTest','PaymentRoutingTest','PaymentPageParserTest','LedgerStoreTest','MobileLedgerTest','Schema4Test','SubscriptionDetailsTest','SubscriptionRenewalTest','SubscriptionOverviewTest','UpdatePolicyTest'];
 files.push(...testNames.map(n=>path.join(testSource,n+'.java')));
 for(const file of ['android/util/Base64.java','android/util/AtomicFile.java','android/content/Context.java','android/os/Build.java'])files.push(path.join(tools,'test-stubs',file));
 await execute('javac.exe',['-J-Duser.language=en','-encoding','UTF-8','-cp',jar,'-d',classes,...files]);
@@ -28,7 +31,7 @@ const address=networkChoices().find(i=>!i.virtual)?.address;
 assert.ok(address,'This integration test requires a local private IPv4 interface.');
 let server,base;
 async function start(){
-  server=await createLedgerServer({port:0,dataDirectory:data,authToken:'java-source-test',mobileSyncOptions:{interfaces:()=>[{address,label:'Local interop test'}]}});
+  server=await createLedgerServer({port:0,dataDirectory:data,onlineRates:false,authToken:'java-source-test',mobileSyncOptions:{interfaces:()=>[{address,label:'Local interop test'}]}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));base=`http://127.0.0.1:${server.address().port}`;
 }
 async function stop(){if(server?.listening){await new Promise(resolve=>server.close(resolve));await new Promise(resolve=>setImmediate(resolve));}}
@@ -93,6 +96,8 @@ try{
   r=await java('stale-funding-plan');const recoveredExpiry=r.expectedExpiry;r=await java('sync');assert.equal(r.response.conflicts.some(c=>c.retryWhenFunded),true);assert.equal(r.snapshot.state.transactions.filter(t=>t.subscriptionId==='stale_member').length,0);assert.equal(r.snapshot.state.subscriptions.find(s=>s.id==='stale_member').processedOccurrences.length,0);
   state=await api('/api/state');state.transactions.push({id:'desktop_stale_topup',type:'income',amount:100,accountId:'stale_wallet',category:'其他收入',title:'电脑补足待扣账期',date:state.subscriptions.find(s=>s.id==='stale_member').startDate,note:''});await api('/api/state',{state,expectedRevision:state.revision},'PUT');
   r=await java('sync-until-settled');assert.ok(r.rounds<=2);assert.equal(r.snapshot.conflicts.length,0);assert.equal(r.snapshot.operations.length,0);assert.equal(r.snapshot.state.transactions.filter(t=>t.subscriptionId==='stale_member').length,1);assert.equal(r.snapshot.state.subscriptions.find(s=>s.id==='stale_member').expiresOn,recoveredExpiry);checks.push('stale mobile funding is held without a local debit, then a desktop top-up settles the pending period and retry acknowledgement automatically');
+  r=await java('schema4-create');const javaAnnual={nextDue:r.nextDue,keys:r.keys};r=await java('sync');assert.equal(r.response.conflicts.length,0,JSON.stringify(r.response.conflicts));state=await api('/api/state');let annual=state.subscriptions.find(s=>s.id==='schema4_annual');assert.equal(state.schemaVersion,4);assert.equal(nextSubscriptionDue(annual,new Date()),javaAnnual.nextDue);assert.deepEqual([...annual.processedOccurrences].sort(),[...javaAnnual.keys].sort());assert.equal(annual.intervalMonths,12);assert.equal(state.goals.find(g=>g.id==='schema4_goal').deadline,'2030-01-31');assert.equal(state.settings.categoryBudgets['宠物'],4567);assert.equal(state.settings.schema4Opaque.value,'preserved');
+  state.settings.monthlyBudget=654321;await api('/api/state',{state,expectedRevision:state.revision},'PUT');r=await java('sync');assert.equal(r.snapshot.state.settings.categoryBudgets['宠物'],4567);assert.deepEqual(r.snapshot.state.settings.customCategories,{expense:['宠物'],income:['稿费']});await java('schema4-edit');r=await java('sync');state=await api('/api/state');assert.equal(state.settings.monthlyBudget,765432);assert.equal(state.settings.schema4Opaque.value,'preserved');assert.equal(state.settings.categoryBudgets['宠物'],4567);checks.push('schema 4 annual leap-day schedule and occurrence keys agree in Java and JS; custom categories, category budgets, deadline and opaque settings survive both directions');
   const report={passed:true,checks,scope:'Production Android Java sources on JDK with test-only platform adapters; not an Android runtime/device test.',completedAt:new Date().toISOString()};
   fs.writeFileSync(path.join(build,'report.json'),JSON.stringify(report,null,2));
   fs.writeFileSync(path.join(tools,'native-interop-latest.json'),JSON.stringify({...report,artifacts:build},null,2));

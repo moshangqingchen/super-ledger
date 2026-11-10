@@ -1,10 +1,14 @@
 import { createMobileSyncUI, mobileSyncSettingsCard } from './mobile-sync-ui.js';
 import { createUpdateUI } from './update-ui.js';
 import { createIconSelects } from './icon-select.js';
-import { renderAccountLibrary } from './account-cards.js';
+import { renderAccountLibrary, accountCardArtKey } from './account-cards.js';
 import { renderSubscriptionChart } from './subscription-chart.js';
-import { sortedLedgerRows, monthlySeries, monthComparison, groupTransactionsByDay, categorySummary, dailySeries, dailyBudget } from './assets/ledger-insights.mjs';
+import { sortedLedgerRows, monthlySeries, monthComparison, groupTransactionsByDay, categorySummary, dailySeries, dailyBudget, budgetPace, frequentExpenses, accountBalanceShares, transactionQuickCategories, transactionQuickAccounts } from './assets/ledger-insights.mjs';
 import { adjustedGoalSaved, captureDeletion, restoreDeletion } from './assets/ledger-actions.mjs';
+import { expenseCategories, incomeCategories } from './assets/ledger-categories.mjs';
+import { categoryOptions, budgetCategories, goalDeadlinePlan, removeCustomCategory } from './assets/ledger-planning.mjs';
+import { subscriptionPeriodLabel } from './subscription-overview.mjs';
+import { subscriptionMonthlyCnyAmount, subscriptionAnnualCnyAmount, prepareSubscriptionEdit } from './engine.mjs';
 import { getBalances, getCnyBalances, getNetWorth, transactionCnyAmount, moneyToCents, localDate, beijingDateTime, subscriptionDueHour, nextSubscriptionDue, setSubscriptionActive, replaceRecord, addMonthsDue, resetSubscriptionExpiry, upgradeSchemaVersion, validateState, subscriptionAccountTypes, subscriptionExpiryStatus } from './engine.mjs';
 import { subscriptionCatalog } from './subscription-catalog.mjs';
 import { accountPresets, accountPreset, accountLabel, appleBalanceRegions, appleBalanceRegion, isAppleBalance } from './account-presets.mjs';
@@ -46,8 +50,6 @@ const icons = {
   work:'<rect x="3" y="7" width="18" height="14" rx="3"/><path d="M8 7V3h8v4M3 12a21 21 0 0 0 18 0m-9 0v4"/>',heart:'<path d="M12 21S2 15 2 8a5 5 0 0 1 10-1 5 5 0 0 1 10 1c0 7-10 13-10 13Z"/>',download:'<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',upload:'<path d="M12 16V4m-5 5 5-5 5 5M4 16v5h16v-5"/>',edit:'<path d="m15 4 5 5M3 21l5-1L21 7a2 2 0 0 0-4-4L4 16l-1 5Z"/>',trash:'<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/>',menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/>',check:'<path d="m5 12 4 4L19 6"/>',spark:'<path d="m12 2 2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5L12 2Z"/>'
 };
 const icon = (name, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.wallet}</svg>`;
-const expenseCategories = ['餐饮美食','购物消费','交通出行','居住生活','会员订阅','娱乐休闲','学习成长','医疗健康','人情往来','其他支出'];
-const incomeCategories = ['工资薪资','副业收入','投资收益','红包礼金','退款报销','其他收入'];
 const categoryIcons = {'餐饮美食':'food','购物消费':'bag','交通出行':'car','居住生活':'home','会员订阅':'repeat','娱乐休闲':'play','学习成长':'book','医疗健康':'heart','人情往来':'heart','工资薪资':'work','副业收入':'spark','投资收益':'chart','红包礼金':'heart','账户转账':'repeat'};
 const navItems = [['overview','grid','财务总览'],['transactions','ledger','收支账单'],['accounts','wallet','我的资产'],['subscriptions','repeat','订阅管理'],['insights','chart','收支洞察'],['goals','goal','心愿储蓄']];
 let state, page = 'overview', month = beijingDateTime().date.slice(0,7), filter = 'all', query = '', accountFilter = '', hidden = false, menuOpen = false, busy = false, toastTimer, modalFocus;
@@ -73,7 +75,9 @@ const monthRows = () => state.transactions.filter(t=>t.date.startsWith(month));
 const monthly = () => totals(monthRows());
 const balances = () => getBalances(state,today());
 const netWorth = () => getNetWorth(state,today());
-const recurringTotal = () => state.subscriptions.filter(s=>s.active&&s.recurring).reduce((a,s)=>a+toCnyCents(s.amount,accountCurrency(accountById(s.accountId)),currencyRate(accountById(s.accountId))),0);
+const recurringTotal = () => state.subscriptions.filter(s=>s.active&&s.recurring).reduce((a,s)=>a+subscriptionMonthlyCnyAmount(s,accountById(s.accountId)),0);
+const recurringAnnualTotal = () => state.subscriptions.filter(s=>s.active&&s.recurring).reduce((a,s)=>a+subscriptionAnnualCnyAmount(s,accountById(s.accountId)),0);
+const recurringConversionNote = () => state.subscriptions.some(s=>s.active&&s.recurring&&(s.intervalMonths||1)>1)?' · 含按月折算':'';
 const periodLabel = () => month===today().slice(0,7)?'本月':`${Number(month.slice(5))} 月`;
 const monthLabel = () => `${month.slice(0,4)} 年 ${Number(month.slice(5))} 月`;
 const dateLabel = d => d ? `${Number(d.slice(5,7))} 月 ${Number(d.slice(8))} 日` : '已完成';
@@ -235,9 +239,11 @@ function statCards() {
 function goalCard(g) {
   const pct = g ? Math.min(100,Math.round(g.saved/g.target*100)) : 0;
   const achieved = g && g.saved >= g.target;
+  const plan = goalDeadlinePlan(g, today());
   return `<div class="goal-card"><div class="wish-art" aria-hidden="true"><span>${icon('spark',48)}</span><i>${icon('goal',30)}</i><em>MAKE IT HAPPEN</em></div><div class="goal-body"><div class="goal-title-row"><h3>${g?esc(g.name):'下一件想实现的小事'}</h3><button data-action="${g?'edit-goal':'add-goal'}" ${g?'data-id="'+esc(g.id)+'"':''} aria-label="${g?'编辑储蓄心愿':'创建储蓄目标'}">${icon(g?'arrow':'plus',17)}</button></div>${g?`
     <div class="goal-numbers"><span><b class="money">${yuan(g.saved)}</b> / <span class="money">${yuan(g.target)}</span></span><span class="money">${pct}%</span></div>
     <div class="progress" role="progressbar" aria-label="储蓄进度" ${hidden?'':`aria-valuenow="${pct}"`} aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>
+    ${plan?`<p class="small">目标日期 ${esc(g.deadline)} · ${plan.days<0?(plan.overdue?'已过目标日期':'目标日期已过'):plan.days===0?'今天到期':`剩余 ${plan.days} 天`}${plan.monthly!==null?`<br>建议每月存入 <b class="money">${insightMoney(plan.monthly)}</b>`:''}</p>`:''}
     <div class="goal-progress-actions"><span class="${achieved?'goal-achieved':'muted'}">${achieved?'已达成':`还差 <b class="money">${yuan(Math.max(0,g.target-g.saved))}</b>`}</span><button class="btn btn-soft btn-sm" data-action="goal-deposit" data-id="${esc(g.id)}">${icon('plus',13)} 存入一笔</button></div>`:'<p class="small muted">旅行、新设备，或任何让你开心的事。</p>'}</div></div>`;
 }
 
@@ -247,15 +253,21 @@ function insightMoney(value) {
 function chart(rows = monthRows()) {
  const daily = dailySeries({ ...state, transactions: rows }, month, today());
  const averageBudget = dailyBudget(state.settings.monthlyBudget, month);
- const max = Math.max(100, ...daily.filter(day => !day.future).map(day => day.expense));
+ // One rent-sized day would flatten every other bar. When a single day towers over the
+ // rest, scale to the runner-up and draw that day as a broken bar labelled with its amount.
+ const spent = daily.filter(day => !day.future && day.expense > 0).map(day => day.expense).sort((a, b) => b - a);
+ const clipped = spent.length >= 3 && spent[0] > spent[1] * 3;
+ const max = Math.max(100, clipped ? Math.round(spent[1] * 1.5) : spent[0] || 0);
  const width = 620, height = 220, left = 82, right = 8, top = 24, bottom = 28;
  const plotWidth = width - left - right, plotHeight = height - top - bottom;
  const step = plotWidth / daily.length;
  const x = index => left + (index + .5) * step;
- const y = value => height - bottom - value / max * plotHeight;
+ const y = value => height - bottom - Math.min(value, max) / max * plotHeight;
  const ticks = [0, Math.round(max / 2), max];
  const bars = daily.map((day, index) => day.future ? '' : `
-  <rect class="daily-expense-bar" x="${x(index) - step * .3}" y="${y(day.expense)}" width="${step * .6}" height="${day.expense / max * plotHeight}" rx="2"/>
+  <rect class="daily-expense-bar" x="${x(index) - step * .3}" y="${y(day.expense)}" width="${step * .6}" height="${Math.min(day.expense, max) / max * plotHeight}" rx="2"/>
+  ${day.expense > max ? `<line class="daily-bar-break" x1="${x(index) - step * .42}" y1="${top + 13}" x2="${x(index) + step * .42}" y2="${top + 7}"/>
+  <text class="money daily-bar-over" x="${x(index) + (index < daily.length / 2 ? step * .5 : -step * .5)}" y="${top + 4}" text-anchor="${index < daily.length / 2 ? 'start' : 'end'}">${insightMoney(day.expense)} · 超出刻度</text>` : ''}
   ${day.income ? `<circle class="daily-income-dot" cx="${x(index)}" cy="${y(day.expense) - 5}" r="2.5"/>` : ''}`).join('');
  const budgetInRange = averageBudget <= max;
  const budgetLine = state.settings.monthlyBudget ? `
@@ -323,10 +335,14 @@ function subscriptionStatus(sub){
  return status;
 }
 function upcoming(){const now=new Date();return state.subscriptions.filter(s=>s.active&&nextSubscriptionDue(s,now)).sort((a,b)=>{const ad=nextSubscriptionDue(a,now),bd=nextSubscriptionDue(b,now);return (ad+' '+subscriptionTime(a,ad)).localeCompare(bd+' '+subscriptionTime(b,bd))})}
-function subPreview(){const subs=upcoming().slice(0,3);return `<section class="panel"><div class="panel-head"><div><h2>${icon('repeat',17)} 会员订阅</h2><p>下一次续费，提前心中有数</p></div><button class="text-btn" data-page="subscriptions">管理 ${icon('arrow',12)}</button></div><div class="sub-preview">${subs.length?subs.map(s=>`<button class="subscription-item" data-action="edit-subscription" data-id="${s.id}" style="text-align:left;padding:0">${subIcon(s)}<span class="service-info"><b>${esc(s.name)}${s.tier?`<span class="inline-tier">${esc(s.tier)}</span>`:''}</b><small>${dateLabel(nextSubscriptionDue(s,new Date()))} ${subscriptionTime(s,nextSubscriptionDue(s,new Date()))} 北京时间${subscriptionStatus(s).pending?'待扣账':'扣账'} · ${esc(accountName(s.accountId))}</small></span><span class="service-price money">${esc(subscriptionMoney(s))}<small>${s.recurring?'每月':'单次'}</small></span></button>`).join(''):empty('还没有订阅','加上你的第一项会员，让账本替你记住。','add-subscription','添加订阅')}</div><div class="subscription-footer"><span>连续订阅 / 月${hasForeign()?' · 折合 CNY':''}</span><b class="money">${yuan(recurringTotal())}</b></div></section>`}
+function subPreview(){const subs=upcoming().slice(0,3);return `<section class="panel"><div class="panel-head"><div><h2>${icon('repeat',17)} 会员订阅</h2><p>下一次续费，提前心中有数</p></div><button class="text-btn" data-page="subscriptions">管理 ${icon('arrow',12)}</button></div><div class="sub-preview">${subs.length?subs.map(s=>`<button class="subscription-item" data-action="edit-subscription" data-id="${s.id}" style="text-align:left;padding:0">${subIcon(s)}<span class="service-info"><b>${esc(s.name)}${s.tier?`<span class="inline-tier">${esc(s.tier)}</span>`:''}</b><small>${dateLabel(nextSubscriptionDue(s,new Date()))} ${subscriptionTime(s,nextSubscriptionDue(s,new Date()))} 北京时间${subscriptionStatus(s).pending?'待扣账':'扣账'} · ${esc(accountName(s.accountId))}</small></span><span class="service-price money">${esc(subscriptionMoney(s))}<small>${s.recurring?'每'+subscriptionPeriodLabel(s):'单次'}</small></span></button>`).join(''):empty('还没有订阅','加上你的第一项会员，让账本替你记住。','add-subscription','添加订阅')}</div><div class="subscription-footer"><span>连续订阅 / 月${recurringConversionNote()}${hasForeign()?' · 折合 CNY':''}</span><b class="money">${yuan(recurringTotal())}</b></div></section>`}
 function empty(title,copy,action,label){return `<div class="empty">${icon('leaf',25)}<strong>${title}</strong><p>${copy}</p>${action?`<button class="btn btn-primary btn-sm" data-action="${action}">${icon('plus',13)} ${label}</button>`:''}</div>`}
 function transactionTable(rows, grouped = false) {
-  if (!rows.length) return empty('这里还没有账单','从一杯咖啡开始，记录属于你的生活。','add-transaction','记下第一笔');
+  if (!rows.length) {
+    const filtered = grouped && Boolean(query.trim() || filter !== 'all' || accountFilter || categoryFilter || dateFilter);
+    return filtered ? empty('没有匹配的账单','换个关键词，或移除上方的筛选条件再看看。') :
+      empty('这里还没有账单','从一杯咖啡开始，记录属于你的生活。','add-transaction','记下第一笔');
+  }
   const fullDate = grouped && isCrossMonthSearch();
   const rowHtml = t => {
     const subtitle = t.subscriptionId ? '订阅自动记账' : t.mobileCapture ? '手机通知记账' :
@@ -344,10 +360,39 @@ function transactionTable(rows, grouped = false) {
   }).join('') : rows.map(rowHtml).join('');
   return `<div class="table-wrap"><table><thead><tr><th>收支事项</th><th>分类</th><th>账户</th><th>日期</th><th style="text-align:right">金额</th><th></th></tr></thead><tbody>${body}</tbody></table></div>`;
 }
+function budgetPaceNote(pace) {
+ return pace ? `<div class="budget-pace-note is-${pace.status}"><span>${esc(pace.label)}</span><span class="budget-calendar-progress">本月已过 ${Math.round(pace.expectedPercent)}%</span></div>` : '';
+}
+function accountAllocation() {
+ const shares = accountBalanceShares(state, getCnyBalances(state, today()));
+ if (!shares) return '';
+ const segments = shares.segments.map(segment => {
+  const theme = segment.account ? accountCardArtKey(segment.account) : 'generic';
+  const color = segment.account && /^#(?:[\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/i.test(segment.account.color) ? segment.account.color : 'var(--accent)';
+  return { ...segment, name: segment.account ? accountLabel(segment.account) : '其他',
+   theme: theme === 'generic' ? '' : ` data-account-theme="${esc(theme)}"`,
+   color: theme === 'generic' ? color : 'var(--card-accent)' };
+ });
+ const label = '正余额账户占比：' + segments.map(segment => segment.name + (hidden ? '' : ` ${segment.percent.toFixed(1)}%`)).join('、') + (hidden ? '（比例已隐藏）' : '');
+ return `<button type="button" class="account-allocation" data-page="accounts" aria-label="查看我的资产">
+  <span class="account-allocation-bar" role="img" aria-label="${esc(label)}">${segments.map(segment => `<span class="account-allocation-segment"${segment.theme} style="--allocation-color:${esc(segment.color)};width:${segment.percent}%" aria-hidden="true"></span>`).join('')}</span>
+  <span class="account-allocation-legend">${segments.map(segment => `<span class="account-allocation-item"><i${segment.theme} style="--allocation-color:${esc(segment.color)}" aria-hidden="true"></i><span>${esc(segment.name)}</span><span class="money">${insightMoney(segment.amount)}</span></span>`).join('')}${shares.hasDebt ? '<span class="account-allocation-debt">不含负债</span>' : ''}</span>
+ </button>`;
+}
+function frequentExpenseButtons() {
+ if (!state.accounts.length) return '';
+ const items = frequentExpenses(state, today());
+ return items.length ? `<div class="frequent-expenses" role="group" aria-label="常记支出"><span class="frequent-expenses-label">常记</span>${items.map(item => `<button type="button" class="frequent-expense category-tag" data-action="frequent-expense" data-title="${esc(item.title)}" title="${esc(item.title)}"><span>${esc(item.title)}</span></button>`).join('')}</div>` : '';
+}
+function openFrequentExpense(title) {
+ const item = frequentExpenses(state, today(), transactionDefaults('expense').accountId).find(entry => entry.title === title);
+ if (item) transactionModal(undefined, 'expense', { title: item.title, category: item.category, accountId: item.accountId, focusAmount: true });
+}
 function overview(){
  const m=monthly(),d=totals(state.transactions.filter(t=>t.date===today())),budget=state.settings.monthlyBudget;
  const pct=budget?Math.round(m.expense/budget*100):0,hasAccounts=Boolean(state.accounts.length),rows=sortedRows(monthRows()).slice(0,4),subs=upcoming().slice(0,3);
  const currentMonth=month===today().slice(0,7),monthPrefix=currentMonth?'本月':Number(month.slice(5))+' 月';
+ const pace=budgetPace({month,today:today(),budget,expense:m.expense});
  const g=state.goals[0],goalPct=g?Math.min(100,Math.round(g.saved/g.target*100)):0;
  return `<div class="overview-heading"><div class="overview-intro"><p class="overview-kicker"><span></span>${Number(today().slice(5,7))} 月 ${Number(today().slice(8))} 日 · ${['周日','周一','周二','周三','周四','周五','周六'][new Date(today()+'T12:00:00').getDay()]}</p><h1>每一笔<span>，</span>都心中有数。</h1><p class="overview-subtitle">好好生活，慢慢积累。</p></div><div class="overview-date">${monthControl()}</div><img class="overview-art" src="/assets/illustrations/ledger-bloom.png" alt="" aria-hidden="true" width="180" height="144"></div>
  ${state.demo?demoBanner():''}
@@ -355,17 +400,18 @@ function overview(){
   <section class="balance-board" aria-label="资产总览">
    <div class="balance-topline"><span>${icon('wallet',18)} 当前净资产${hasForeign()?' <em class="currency-badge">折合 CNY</em>':''}</span><button class="icon-btn" data-action="privacy" aria-label="${hidden?'显示':'隐藏'}金额">${icon('eye',19)}</button></div>
    <button class="balance-value money ${amount(netWorth()).length>11?'long-balance':''}" data-page="accounts" aria-label="查看我的资产"><span>¥</span>${amount(netWorth())}${icon('arrow',27)}</button>
+   ${accountAllocation()}
    <div class="balance-caption"><span>${state.accounts.length} 个账户${hasForeign()?' · 按账户汇率折算':'的当前余额'}</span><button data-page="accounts">管理账户 ${icon('right',14)}</button></div>
    <div class="balance-month"><span>${monthPrefix}收支</span><i></i><button data-page="insights">查看分析 ${icon('right',13)}</button></div>
    <div class="balance-stats"><button data-action="view-income"><span><i class="income-dot"></i>收入</span><strong class="money" style="--digits:${Math.max(10,amount(m.income).length+2)}">${yuan(m.income)}</strong><small class="${currentMonth?'money':''}">${currentMonth?'今日 '+yuan(d.income):'所选月份收入'}</small></button><button data-action="view-expense"><span><i class="expense-dot"></i>支出</span><strong class="money" style="--digits:${Math.max(10,amount(m.expense).length+2)}">${yuan(m.expense)}</strong><small class="${currentMonth?'money':''}">${currentMonth?'今日 '+yuan(d.expense):'所选月份支出'}</small></button><div><span><i class="balance-dot"></i>结余</span><strong class="money" style="--digits:${Math.max(10,amount(m.income-m.expense).length+2)}">${yuan(m.income-m.expense)}</strong><small>收入减去支出</small></div></div>
   </section>
-  <section class="record-board"><div class="record-label">${icon('spark',17)} ${hasAccounts?'今日记录':'开始你的账本'}<span>${state.transactions.filter(t=>t.date===today()).length} 笔</span></div><h2>${hasAccounts?'随手记，轻松一点。':'从第一个账户开始。'}</h2>${hasAccounts?`<div class="record-today"><span>今日支出${hasForeign()?' · 折合 CNY':''}</span><strong class="money">${yuan(d.expense)}</strong></div>`:'<p>添加钱包或银行卡，填入真实余额。<br>你的财务空间就准备好了。</p>'}<button class="record-primary" data-action="${hasAccounts?'add-expense':'add-account'}"><span>${icon('plus',21)} ${hasAccounts?'记一笔支出':'添加第一个账户'}</span><i>${icon('right',18)}</i></button><div class="record-secondary"><button data-action="add-income">${icon('down',16)} 记收入</button><button data-action="add-transfer">${icon('repeat',16)} 转账</button></div><div class="record-foot">${icon('shield',12)} ${hasAccounts?'本地保存，随时与手机同步':'余额由你填写，安心开始'}</div></section>
+  <section class="record-board"><div class="record-label">${icon('spark',17)} ${hasAccounts?'今日记录':'开始你的账本'}<span>${state.transactions.filter(t=>t.date===today()).length} 笔</span></div><h2>${hasAccounts?'随手记，轻松一点。':'从第一个账户开始。'}</h2>${hasAccounts?`<div class="record-today"><span>今日支出${hasForeign()?' · 折合 CNY':''}</span><strong class="money">${yuan(d.expense)}</strong></div>`:'<p>添加钱包或银行卡，填入真实余额。<br>你的财务空间就准备好了。</p>'}${frequentExpenseButtons()}<button class="record-primary" data-action="${hasAccounts?'add-expense':'add-account'}"><span>${icon('plus',21)} ${hasAccounts?'记一笔支出':'添加第一个账户'}</span><i>${icon('right',18)}</i></button><div class="record-secondary"><button data-action="add-income">${icon('down',16)} 记收入</button><button data-action="add-transfer">${icon('repeat',16)} 转账</button></div><div class="record-foot">${icon('shield',12)} ${hasAccounts?'本地保存，随时与手机同步':'余额由你填写，安心开始'}</div></section>
  </div>
  <div class="overview-content">
   <section class="activity-panel"><div class="dashboard-section-head"><div><span class="section-mark coral">${icon('ledger',19)}</span><h2>最近账单</h2><span class="section-note">${monthPrefix}</span></div><button class="text-btn" data-action="view-all-transactions">全部账单 ${icon('right',14)}</button></div>${rows.length?transactionTable(rows):`<div class="activity-empty"><div class="receipt-illustration" aria-hidden="true"><span>${icon('check',20)}</span><i></i><i></i><i></i><b>HELLO, LIFE.</b></div><div><h3>${state.transactions.length?'这个月，还没有账单。':'故事，等你写下第一笔。'}</h3><p>${state.transactions.length?'可以切换月份，看看之前的记录。':'从今天开始，让钱的来去清清楚楚。'}</p><button class="text-btn" data-action="${hasAccounts?'add-transaction':'add-account'}">${hasAccounts?'记下第一笔':'先添加一个账户'} ${icon('arrow',15)}</button></div></div>`}</section>
-  <section class="subscriptions-panel"><div class="dashboard-section-head"><div><span class="section-mark purple">${icon('repeat',19)}</span><h2>会员订阅</h2></div><button class="icon-btn" data-action="add-subscription" aria-label="添加订阅">${icon('plus',18)}</button></div><div class="subscriptions-total"><span>连续订阅 / 月</span><b class="money">${yuan(recurringTotal())}</b></div>${subs.length?`<div class="sub-preview">${subs.map(s=>`<button class="subscription-item" data-action="edit-subscription" data-id="${esc(s.id)}">${subIcon(s)}<span class="service-info"><b>${esc(s.name)}</b><small class="expiry-text expiry-${subscriptionStatus(s).tone}" title="${esc(subscriptionStatus(s).detail)}">${esc(subscriptionStatus(s).label)}${s.tier?' · '+esc(s.tier):''}</small></span><span class="service-price money">${esc(subscriptionMoney(s))}</span></button>`).join('')}</div>`:`<div class="subscriptions-empty"><div class="service-orbit" aria-hidden="true">${subscriptionCatalog.slice(0,3).map(s=>`<span><img src="${esc(s.logo)}" alt="" width="23" height="23"></span>`).join('')}</div><h3>喜欢的服务，安排明白。</h3><p>添加你的会员，续费日期不再忘记。</p></div>`}<button class="subscription-manage" data-page="subscriptions">${subs.length?'管理我的订阅':'查看会员选项'} ${icon('right',14)}</button></section>
+  <section class="subscriptions-panel"><div class="dashboard-section-head"><div><span class="section-mark purple">${icon('repeat',19)}</span><h2>会员订阅</h2></div><button class="icon-btn" data-action="add-subscription" aria-label="添加订阅">${icon('plus',18)}</button></div><div class="subscriptions-total"><span>连续订阅 / 月${recurringConversionNote()}</span><b class="money">${yuan(recurringTotal())}</b></div>${subs.length?`<div class="sub-preview">${subs.map(s=>`<button class="subscription-item" data-action="edit-subscription" data-id="${esc(s.id)}">${subIcon(s)}<span class="service-info"><b>${esc(s.name)}</b><small class="expiry-text expiry-${subscriptionStatus(s).tone}" title="${esc(subscriptionStatus(s).detail)}">${esc(subscriptionStatus(s).label)}${s.tier?' · '+esc(s.tier):''}</small></span><span class="service-price money">${esc(subscriptionMoney(s))}<small>/ ${subscriptionPeriodLabel(s)}</small></span></button>`).join('')}</div>`:`<div class="subscriptions-empty"><div class="service-orbit" aria-hidden="true">${subscriptionCatalog.slice(0,3).map(s=>`<span><img src="${esc(s.logo)}" alt="" width="23" height="23"></span>`).join('')}</div><h3>喜欢的服务，安排明白。</h3><p>添加你的会员，续费日期不再忘记。</p></div>`}<button class="subscription-manage" data-page="subscriptions">${subs.length?'管理我的订阅':'查看会员选项'} ${icon('right',14)}</button></section>
  </div>
- <div class="overview-extras"><section class="budget-strip"><div class="extra-symbol">${icon('chart',23)}</div><div class="extra-copy"><h2>${monthPrefix}预算<span class="${budget?'money':''}">${budget?(pct>100?'已超预算':'已用 '+pct+'%'):'还未设置'}</span></h2>${budget?`<p>${pct>100?'超出':'剩余'} <b class="money">${yuan(Math.abs(budget-m.expense))}</b><span class="muted"> / 预算 <span class="money">${yuan(budget)}</span></span></p><div class="progress"><span style="width:${Math.min(pct,100)}%"></span></div>`:'<p>为日常花销，留一点计划。</p>'}</div><button class="icon-btn" data-action="budget" aria-label="设置预算">${icon('arrow',17)}</button></section><section class="wish-strip"><div class="extra-symbol">${icon('goal',24)}</div><div class="extra-copy"><h2>${g?esc(g.name):'给喜欢的事，存一点。'}${g?`<span class="money">${goalPct}%</span>`:''}</h2><p>${g?`已存 <b class="money">${yuan(g.saved)}</b>`:'把下一个小心愿，慢慢变成现实。'}</p></div><button class="icon-btn" ${g?'data-page="goals"':'data-action="add-goal"'} aria-label="${g?'查看储蓄心愿':'创建储蓄目标'}">${icon(g?'arrow':'plus',17)}</button></section></div>`;
+ <div class="overview-extras"><section class="budget-strip"><div class="extra-symbol">${icon('chart',23)}</div><div class="extra-copy"><h2>${monthPrefix}预算<span class="${budget?'money':''}">${budget?(m.expense>budget?'已超预算':'已用 '+pct+'%'):'还未设置'}</span></h2>${budget?`<p>${m.expense>budget?'超出':'剩余'} <b class="money">${yuan(Math.abs(budget-m.expense))}</b><span class="muted"> / 预算 <span class="money">${yuan(budget)}</span></span></p><div class="budget-progress-track"><div class="progress"><span style="width:${Math.min(pct,100)}%"></span></div>${pace?`<i class="budget-pace-marker" style="left:${pace.expectedPercent}%" aria-hidden="true"></i>`:''}</div>${budgetPaceNote(pace)}`:'<p>为日常花销，留一点计划。</p>'}</div><button class="icon-btn" data-action="budget" aria-label="设置预算">${icon('arrow',17)}</button></section><section class="wish-strip"><div class="extra-symbol">${icon('goal',24)}</div><div class="extra-copy"><h2>${g?esc(g.name):'给喜欢的事，存一点。'}${g?`<span class="money">${goalPct}%</span>`:''}</h2><p>${g?`已存 <b class="money">${yuan(g.saved)}</b>`:'把下一个小心愿，慢慢变成现实。'}</p></div><button class="icon-btn" ${g?'data-page="goals"':'data-action="add-goal"'} aria-label="${g?'查看储蓄心愿':'创建储蓄目标'}">${icon(g?'arrow':'plus',17)}</button></section></div>`;
 }
 
 function isCrossMonthSearch() { return Boolean(query.trim()) && searchScope === 'all'; }
@@ -378,7 +424,7 @@ function clearTransactionFilters() {
   searchScope = 'all';
 }
 function transactionCategories() {
-  return [...new Set([...expenseCategories,...incomeCategories,...state.transactions.map(t=>t.category)])];
+  return [...new Set([...categoryOptions(state,'expense'),...categoryOptions(state,'income'),...state.transactions.map(t=>t.category)])];
 }
 function filteredTransactions() {
   const needle = query.trim().toLowerCase();
@@ -436,7 +482,7 @@ function updateSubscriptionPayment(){
 function subscriptionCompact(s,status,currentBalances){
  const account=accountById(s.accountId),code=account?accountCurrency(account):'',shortfall=account?Math.max(0,s.amount-currentBalances[s.accountId]):0;
  const gap=hidden?'<b class="money" aria-label="金额已隐藏">••••</b>':'<b class="money">'+esc(subscriptionDifferenceMoney(shortfall,code))+'</b>';
- return '<section class="subscription-card is-compact '+(s.active?'':'paused')+'" data-expiry="'+status.tone+'"><div class="compact-head">'+subIcon(s)+'<div class="compact-title"><h3>'+esc(s.name)+'</h3>'+(s.tier?'<span class="membership-tier-badge">'+esc(s.tier)+'</span>':'')+'</div><div class="subscription-top-actions">'+(!s.active?'<span class="status-pill paused">记账已暂停</span>':'')+'<button class="icon-btn" data-action="edit-subscription" data-id="'+esc(s.id)+'" aria-label="编辑'+esc(s.name)+'">'+icon('edit',15)+'</button></div></div><div class="money">'+esc(subscriptionMoney(s))+' <small>/ '+(s.recurring?'月':'次')+'</small></div><div class="compact-facts"><span class="compact-expiry">'+icon(status.tone==='expired'?'info':'calendar',13)+'<b>'+esc(status.label)+'</b>'+(status.date?'<small>'+esc(status.date+(status.time?' '+status.time:''))+'</small>':'')+'</span>'+(account?'<span class="compact-funding" data-funding="'+(shortfall>0?'shortfall':'enough')+'" title="'+esc(accountLabel(account))+'">'+accountLogo(account)+(shortfall>0?'余额不足，还差 '+gap+(status.pending?' · 待补款':''):'余额充足'+(status.pending?' · 待扣账':''))+'</span>':'')+'</div></section>';
+ return '<section class="subscription-card is-compact '+(s.active?'':'paused')+'" data-expiry="'+status.tone+'"><div class="compact-head">'+subIcon(s)+'<div class="compact-title"><h3>'+esc(s.name)+'</h3>'+(s.tier?'<span class="membership-tier-badge">'+esc(s.tier)+'</span>':'')+'</div><div class="subscription-top-actions">'+(!s.active?'<span class="status-pill paused">记账已暂停</span>':'')+'<button class="icon-btn" data-action="edit-subscription" data-id="'+esc(s.id)+'" aria-label="编辑'+esc(s.name)+'">'+icon('edit',15)+'</button></div></div><div class="money">'+esc(subscriptionMoney(s))+' <small>/ '+subscriptionPeriodLabel(s)+'</small></div><div class="compact-facts"><span class="compact-expiry">'+icon(status.tone==='expired'?'info':'calendar',13)+'<b>'+esc(status.label)+'</b>'+(status.date?'<small>'+esc(status.date+(status.time?' '+status.time:''))+'</small>':'')+'</span>'+(account?'<span class="compact-funding" data-funding="'+(shortfall>0?'shortfall':'enough')+'" title="'+esc(accountLabel(account))+'">'+accountLogo(account)+(shortfall>0?'余额不足，还差 '+gap+(status.pending?' · 待补款':''):'余额充足'+(status.pending?' · 待扣账':''))+'</span>':'')+'</div></section>';
 }
 function subscriptions(){
  const active=state.subscriptions.filter(s=>s.active).length;
@@ -450,30 +496,34 @@ function subscriptions(){
  const count='<p class="subscription-count">'+(state.subscriptions.length?'显示 '+entriesShown.length+' / '+state.subscriptions.length+' 项 · 按到期 / 续费日期排序':'添加第一份订阅，把关联账号和会员期限一起记好。')+'</p>';
  if(subscriptionView==='chart')return header+tools+count+renderSubscriptionChart({state,visibleIds:entriesShown.map(({sub})=>sub.id),hidden,icon,subIcon,accountLogo});
  return header+
- '<div class="summary-grid"><div class="summary-card"><span class="stat-icon">'+icon('repeat')+'</span><div><small>连续订阅 / 月'+(hasForeign()?' · 折合 CNY':'')+'</small><b class="money">'+yuan(recurringTotal())+'</b></div></div><div class="summary-card"><span class="stat-icon purple">'+icon('calendar')+'</span><div><small>连续订阅 / 年估算'+(hasForeign()?' · 折合 CNY':'')+'</small><b class="money">'+yuan(recurringTotal()*12)+'</b></div></div><div class="summary-card"><span class="stat-icon orange">'+icon('spark')+'</span><div><small>启用的订阅</small><b class="subscription-active-count">'+active+' <small>/ '+state.subscriptions.length+' 项</small></b></div></div></div>'+
+ '<div class="summary-grid"><div class="summary-card"><span class="stat-icon">'+icon('repeat')+'</span><div><small>连续订阅 / 月'+recurringConversionNote()+(hasForeign()?' · 折合 CNY':'')+'</small><b class="money">'+yuan(recurringTotal())+'</b></div></div><div class="summary-card"><span class="stat-icon purple">'+icon('calendar')+'</span><div><small>连续订阅 / 年估算'+(hasForeign()?' · 折合 CNY':'')+'</small><b class="money">'+yuan(recurringAnnualTotal())+'</b></div></div><div class="summary-card"><span class="stat-icon orange">'+icon('spark')+'</span><div><small>启用的订阅</small><b class="subscription-active-count">'+active+' <small>/ '+state.subscriptions.length+' 项</small></b></div></div></div>'+
  '<div class="subscription-legend" aria-label="到期状态颜色说明"><strong>到期 / 续费提醒</strong><span><i class="expiry-normal"></i>超过 30 天</span><span><i class="expiry-soon"></i>8–30 天</span><span><i class="expiry-urgent"></i>7 天内（含今天）</span><span><i class="expiry-expired"></i>已到期</span><span><i class="expiry-unset"></i>未设置日期</span></div>'+
  tools+
  count+'<div class="page-grid subscription-grid'+(subscriptionView==='compact'?' is-compact':'')+'">'+entriesShown.map(({sub:s,status})=>{
   if(subscriptionView==='compact')return subscriptionCompact(s,status,currentBalances);
   const due=nextSubscriptionDue(s,new Date());
-  return '<section class="subscription-card '+(s.active?'':'paused')+'" data-expiry="'+status.tone+'"><div class="subscription-top">'+subIcon(s)+'<div class="subscription-top-actions">'+(!s.active?'<span class="status-pill paused">记账已暂停</span>':'')+'<button class="icon-btn" data-action="edit-subscription" data-id="'+esc(s.id)+'" aria-label="编辑'+esc(s.name)+'">'+icon('edit',16)+'</button></div></div><h3>'+esc(s.name)+'</h3>'+(s.tier?'<span class="membership-tier-badge">'+esc(s.tier)+'</span>':'')+'<div class="money">'+esc(subscriptionMoney(s))+' <small>/ '+(s.recurring?'月':'次')+'</small></div>'+expiryBanner(status)+
+  return '<section class="subscription-card '+(s.active?'':'paused')+'" data-expiry="'+status.tone+'"><div class="subscription-top">'+subIcon(s)+'<div class="subscription-top-actions">'+(!s.active?'<span class="status-pill paused">记账已暂停</span>':'')+'<button class="icon-btn" data-action="edit-subscription" data-id="'+esc(s.id)+'" aria-label="编辑'+esc(s.name)+'">'+icon('edit',16)+'</button></div></div><h3>'+esc(s.name)+'</h3>'+(s.tier?'<span class="membership-tier-badge">'+esc(s.tier)+'</span>':'')+'<div class="money">'+esc(subscriptionMoney(s))+' <small>/ '+subscriptionPeriodLabel(s)+'</small></div>'+expiryBanner(status)+
   subscriptionPayment(s.accountId,s.amount,{currentBalances})+
   '<div class="subscription-logins"><div class="subscription-login-heading">关联登录账号</div><div class="linked-account-list">'+((s.linkedAccounts||[]).length?s.linkedAccounts.map(a=>'<div class="linked-account-item"><span>'+esc(subscriptionAccountLabel(a))+'</span><b>'+esc(a.value)+'</b>'+(a.label?'<small>'+esc(a.label)+'</small>':'')+'</div>').join(''):'<div class="linked-account-empty">尚未关联登录账号</div>')+'</div></div>'+
-  '<div class="subscription-dates"><div class="sub-details"><span>会员到期日</span><b>'+(s.expiresOn?esc(s.expiresOn):'未设置')+'</b></div><div class="sub-details"><span>'+(status.pending?'待扣账':'下一次扣账')+' · 北京时间</span><b>'+(s.active?(due?esc(due+' '+subscriptionTime(s,due)):'已完成'):'已暂停')+'</b></div></div>'+(s.note?'<div class="subscription-note"><span>备注</span><p>'+esc(s.note)+'</p></div>':'')+'<div class="toggle-row"><span>'+(s.recurring?'连续订阅 · 每月自动记账':'单次订阅')+'</span><button class="switch '+(s.active?'on':'')+'" role="switch" aria-checked="'+s.active+'" aria-label="'+(s.active?'暂停':'恢复')+esc(s.name)+'" data-action="toggle-subscription" data-id="'+esc(s.id)+'"></button></div></section>';
- }).join('')+'<button class="add-card" data-action="add-subscription">'+icon('plus',26)+'<span>'+(state.subscriptions.length&&!entriesShown.length?'没有匹配的订阅，添加一份':'把下一项喜欢，放进来')+'</span></button></div><div class="callout">'+icon('info',16)+'<span>余额不足的账期会保留待扣，补足后自动处理。连续订阅成功记账后，已填写的会员到期日会顺延一个自然月；未填写时按待扣账时间提示续费。实际付款和续费由订阅平台处理，暂停期间的账期恢复后跳过。</span></div>';
+  '<div class="subscription-dates"><div class="sub-details"><span>会员到期日</span><b>'+(s.expiresOn?esc(s.expiresOn):'未设置')+'</b></div><div class="sub-details"><span>'+(status.pending?'待扣账':'下一次扣账')+' · 北京时间</span><b>'+(s.active?(due?esc(due+' '+subscriptionTime(s,due)):'已完成'):'已暂停')+'</b></div></div>'+(s.note?'<div class="subscription-note"><span>备注</span><p>'+esc(s.note)+'</p></div>':'')+'<div class="toggle-row"><span>'+(s.recurring?'连续订阅 · 每'+subscriptionPeriodLabel(s)+'自动记账':'单次订阅')+'</span><button class="switch '+(s.active?'on':'')+'" role="switch" aria-checked="'+s.active+'" aria-label="'+(s.active?'暂停':'恢复')+esc(s.name)+'" data-action="toggle-subscription" data-id="'+esc(s.id)+'"></button></div></section>';
+ }).join('')+'<button class="add-card" data-action="add-subscription">'+icon('plus',26)+'<span>'+(state.subscriptions.length&&!entriesShown.length?'没有匹配的订阅，添加一份':'把下一项喜欢，放进来')+'</span></button></div><div class="callout">'+icon('info',16)+'<span>余额不足的账期会保留待扣，补足后自动处理。连续订阅成功记账后，已填写的会员到期日会按所选扣账周期顺延；未填写时按待扣账时间提示续费。实际付款和续费由订阅平台处理，暂停期间的账期恢复后跳过。</span></div>';
 }
 
 function insights(){
  const m=monthly(), rows=monthRows(), budget=state.settings.monthlyBudget;
  const pct=budget?Math.round(m.expense/budget*100):0;
+ const pace=budgetPace({month,today:today(),budget,expense:m.expense});
  const breakdown = categorySummary(rows, state);
  const colors=['#8d7bcf','#df9c7d','#70a99e','#809ec9','#c19b55'];
- const categoryRows=breakdown.map(({category:name,amount:value,count},index)=>{
+ const categoryRows=breakdown.map(({category:name,amount:value,count,budget:categoryBudget},index)=>{
   const share=m.expense?value/m.expense*100:0;
+  const over=categoryBudget&&value>categoryBudget;
+  const barPercent=categoryBudget?Math.min(100,value/categoryBudget*100):share;
   const categoryIcon=Object.hasOwn(categoryIcons,name)?categoryIcons[name]:'wallet';
   return `<button type="button" class="category-breakdown-button" data-action="insight-category" data-category="${esc(name)}">
    <span class="category-row-head"><span>${icon(categoryIcon,14)} ${esc(name)} <small class="muted">${count} 笔</small></span><span><b class="money">${insightMoney(value)}</b> <span class="muted money">· ${hidden?'••••':Math.round(share)+'%'}</span></span></span>
-   <span class="category-bar"><span style="width:${share}%;background:${colors[index%colors.length]}"></span></span>
+   ${categoryBudget?`<span class="small ${over?'over-budget':''}">已用 <span class="money">${insightMoney(value)}</span> / 预算 <span class="money">${insightMoney(categoryBudget)}</span>${over?` · 已超支 <span class="money">${insightMoney(value-categoryBudget)}</span>`:''}</span>`:''}
+   <span class="category-bar ${over?'over-budget':''}"><span style="width:${barPercent}%;background:${over?'var(--danger, #b74836)':colors[index%colors.length]}"></span></span>
   </button>`;
  }).join('');
  const current=month===today().slice(0,7);
@@ -486,7 +536,8 @@ function insights(){
   ${trendPanel()}
   <section class="panel budget-panel ${budget&&m.expense>budget?'over-budget':''}">
    <div class="panel-head"><div><h2>${icon('goal',17)} 月度预算</h2><p>${monthLabel()}</p></div></div>
-   <div class="budget-ring" style="--progress:${Math.min(100,pct)}%"><div class="budget-ring-inner"><b>${budget?pct+'%':'—'}</b><small>${budget?'预算已使用':'未设置预算'}</small></div></div>
+   <div class="budget-ring" style="--progress:${Math.min(100,pct)}%"><div class="budget-ring-inner"><b class="money">${hidden?'••••':budget?pct+'%':'—'}</b><small>${budget?'预算已使用':'未设置预算'}</small></div></div>
+   ${budgetPaceNote(pace)}
    <div class="budget-info"><div>月度预算<b class="money">${yuan(budget)}</b></div><div>${!budget?periodLabel()+'支出':m.expense>budget?'已超预算':'剩余预算'}<b class="money">${yuan(Math.abs(budget-m.expense))}</b></div></div>
    <button class="btn btn-soft budget-edit" data-action="budget">调整预算 ${icon('arrow',14)}</button>
   </section>
@@ -507,6 +558,7 @@ function settings(){
  ${desktop?desktopUpdateSettings():''}
  <section class="panel"><div class="panel-head"><h2>${icon('settings',17)} 账本偏好</h2></div>
   <div class="setting-row"><div><b>月度生活预算</b><p>给每个月的花销一点计划</p></div><button class="btn btn-soft btn-sm money" data-action="budget">${yuan(state.settings.monthlyBudget)}</button></div>
+  <div class="setting-row"><div><b>自定义分类</b><p>管理支出和收入分类，历史账单保留原分类</p></div><button class="btn btn-soft btn-sm" data-action="custom-categories">管理分类</button></div>
   <div class="setting-row"><div><b>金额隐私</b><p>隐藏浏览金额；编辑时正常显示</p></div><button class="switch ${hidden?'on':''}" role="switch" aria-checked="${hidden}" aria-label="隐藏金额" data-action="privacy"></button></div>
   <div class="setting-row"><div><b>汇总币种</b><p>外币按账户汇率折算，账户保留原币</p></div><span class="category-tag">CNY ¥</span></div>
   <div class="setting-row"><div><b>快捷记账</b><p>按 N 记一笔，Esc 关闭弹窗</p></div><span class="keycap">N</span></div>
@@ -589,10 +641,10 @@ function describePickerOption(select,option){
   const region=appleBalanceRegion(value);
   return {iconHtml:pickerSymbol('globe','mint'),title:region?.name||title,badge:region?.currency||''};
  }
- if(name==='category')return {iconHtml:pickerSymbol(categoryIcons[value]||'ledger',incomeCategories.includes(value)?'mint':'peach'),title};
+ if(name==='category')return {iconHtml:pickerSymbol(categoryIcons[value]||'wallet',incomeCategories.includes(value)?'mint':'peach'),title};
  if(name==='icon')return {iconHtml:pickerSymbol(value),title};
  if(['startHour','billingHour'].includes(name))return {iconHtml:pickerSymbol('calendar','peach'),title};
- if(name==='billingDay')return {iconHtml:pickerSymbol('calendar','peach'),title:'每月 '+title};
+ if(name==='billingDay')return {iconHtml:pickerSymbol('calendar','peach'),title};
  if(name==='rateMode')return {iconHtml:pickerSymbol(value==='auto'?'repeat':'edit','mint'),title};
  if(name==='type')return {iconHtml:pickerSymbol(({'银行卡':'bankCard','数字钱包':'wallet','现金':'cash','虚拟卡':'virtualCard','Apple 账户余额':'gift','储蓄投资':'chart','信用卡 / 负债':'bankCard'})[value]||'wallet'),title};
  if(select.dataset.linkedField==='type')return {iconHtml:linkedAccountIcon(value),title};
@@ -772,6 +824,7 @@ function transactionDefaults(type) {
   try {
     const value = JSON.parse(localStorage.getItem(`moneylab-transaction-defaults-${type}`) || '{}');
     if (!value || typeof value !== 'object') return {};
+    if (value.custom && !state.settings.customCategories?.[type]?.includes(value.category)) value.category = '';
     return {
       accountId: typeof value.accountId === 'string' ? value.accountId : '',
       category: typeof value.category === 'string' && value.category.trim() && value.category.length <= 50 ? value.category : '',
@@ -783,7 +836,7 @@ function rememberTransactionDefaults(tx) {
   if (!['income', 'expense'].includes(tx.type)) return;
   try {
     localStorage.setItem(`moneylab-transaction-defaults-${tx.type}`, JSON.stringify({
-      accountId: tx.accountId, category: tx.category,
+      accountId: tx.accountId, category: tx.category, custom: Boolean(state.settings.customCategories?.[tx.type]?.includes(tx.category)),
     }));
   } catch { /* A blocked preference store must not prevent saving a bill. */ }
 }
@@ -798,6 +851,23 @@ function recentTransactionTitles(type) {
   return [...titles.values()];
 }
 
+function transactionShortcutField(label, name, options, value, type) {
+  const choices = name === 'category'
+    ? transactionQuickCategories(state, type).map(category => ({ value: category, label: category }))
+    : transactionQuickAccounts(state).map(account => ({ value: account.id, label: accountLabel(account), logo: accountLogo(account) }));
+  const shortcuts = `<div class="segmented transaction-shortcuts" role="group" aria-label="${name === 'category' ? '常用分类' : '常用账户'}">${choices.map(choice => `<button type="button" data-action="transaction-shortcut" data-shortcut-field="${name}" data-shortcut-value="${esc(choice.value)}" class="${choice.value === value ? 'selected' : ''}" aria-pressed="${choice.value === value}">${choice.logo || ''}<span>${esc(choice.label)}</span></button>`).join('')}</div>`;
+  return selectField(label, name, options, value, true).replace('<select', shortcuts + '<select');
+}
+
+function syncTransactionShortcuts(form = $('#transaction-form')) {
+  if (!form) return;
+  for (const button of form.querySelectorAll('[data-action="transaction-shortcut"]')) {
+    const selected = form.elements[button.dataset.shortcutField]?.value === button.dataset.shortcutValue;
+    button.classList.toggle('selected', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  }
+}
+
 function transactionModal(id, type, preset = {}) {
   if (!ensureAccount()) return;
   const tx = state.transactions.find(item => item.id === id);
@@ -807,7 +877,7 @@ function transactionModal(id, type, preset = {}) {
     return;
   }
   const defaults = tx ? {} : { ...transactionDefaults(type), ...preset };
-  const cats = type === 'income' ? [...incomeCategories] : type === 'transfer' ? ['账户转账'] : [...expenseCategories];
+  const cats = categoryOptions(state, type);
   for (const category of [...state.transactions.filter(item => item.type === type).map(item => item.category), defaults.category]) {
     if (category && !cats.includes(category)) cats.push(category);
   }
@@ -829,13 +899,13 @@ function transactionModal(id, type, preset = {}) {
     <form id="transaction-form" data-id="${esc(id || '')}" data-type="${esc(type)}" data-account-id="${esc(from)}" data-currency="${code}" data-to-currency="${toCode}" data-default-category="${esc(category)}">
       <div class="segmented">${[['expense','支出'],['income','收入'],['transfer','转移资产']].map(([value,label]) => `<button type="button" data-action="transaction-type" data-type="${value}" data-id="${esc(id || '')}" class="${type === value ? 'selected' : ''}">${label}</button>`).join('')}</div>
       <div class="form-grid">
-        ${type === 'transfer' ? selectField('转出账户','accountId',transferOptions,from) + selectField('转入账户','toAccountId',transferOptions.filter(option => option[0] !== from),to) + '<div class="transfer-route field full" id="transfer-preview"></div>' : selectField('记账账户','accountId',accountOptions(),from,true)}
+        ${type === 'transfer' ? selectField('转出账户','accountId',transferOptions,from) + selectField('转入账户','toAccountId',transferOptions.filter(option => option[0] !== from),to) + '<div class="transfer-route field full" id="transfer-preview"></div>' : transactionShortcutField('记账账户','accountId',accountOptions(),from,type)}
         <div class="field full"><label for="field-amount">${type === 'transfer' ? '转出' : '本次'}金额（${code}）</label><input class="amount-input" id="field-amount" name="amount" inputmode="decimal" value="${tx ? amountInput(tx.amount,tx.currency || code) : ''}" required autofocus></div>
         ${type === 'transfer' ? `<div class="field full transfer-receive-field" id="transfer-receive-field"><label for="field-toAmount">实际到账金额（${toCode}）</label><input id="field-toAmount" name="toAmount" inputmode="decimal" value="${tx?.toAmount ? amountInput(tx.toAmount,tx.toCurrency || toCode) : ''}"><p class="hint">按转入账户币种填写，包含兑换或手续费后实际到账的金额。</p></div>` : ''}
         <div class="field full" id="transaction-rate-field"><label for="field-cnyRate">本笔折算汇率</label><input id="field-cnyRate" name="cnyRate" inputmode="decimal" maxlength="30" value="${esc(tx?.cnyRate || currencyRate(fromAccount))}"><p class="hint">随这笔记录保存，今后调整账户汇率不会改写历史收支。</p></div>
-        ${field(type === 'transfer' ? '转移说明 · 可不填' : '这笔钱的故事 · 可不填','title',tx?.title || '', 'text', `maxlength="120" list="transaction-titles" placeholder="${type === 'transfer' ? '不填则用账户间转移' : '不填则用分类名'}"`,true)}
+        ${field(type === 'transfer' ? '转移说明 · 可不填' : '这笔钱的故事 · 可不填','title',tx?.title || defaults.title || '', 'text', `maxlength="120" list="transaction-titles" placeholder="${type === 'transfer' ? '不填则用账户间转移' : '不填则用分类名'}"`,true)}
         <datalist id="transaction-titles">${suggestions.map(item => `<option value="${esc(item.title)}"></option>`).join('')}</datalist>
-        ${type === 'transfer' ? '' : selectField('收支分类','category',cats,category,true)}
+        ${type === 'transfer' ? '' : transactionShortcutField('收支分类','category',cats,category,type)}
         <div class="field full">
           <label for="field-date">发生日期</label>
           <div class="transaction-date-actions"><input id="field-date" name="date" type="date" value="${esc(tx?.date || defaults.date || today())}" required max="${today()}" min="1900-01-01"><button type="button" class="text-btn" data-transaction-date="today">今天</button><button type="button" class="text-btn" data-transaction-date="yesterday">昨天</button></div>
@@ -848,6 +918,7 @@ function transactionModal(id, type, preset = {}) {
     </form>`);
   updateTransferPreview();
   refreshFormVisuals();
+  if (!tx && preset.focusAmount) $('#transaction-form')?.elements.amount.focus();
 }
 
 for (const event of ['input', 'change']) document.addEventListener(event, eventObject => {
@@ -857,14 +928,26 @@ for (const event of ['input', 'change']) document.addEventListener(event, eventO
   const match = sortedRows(state.transactions.filter(tx => tx.type === form.dataset.type && tx.title === input.value))[0];
   if (match) {
     form.elements.category.value = match.category;
-    queueMicrotask(refreshFormVisuals);
+    form.elements.category.dispatchEvent(new Event('change', { bubbles: true }));
   }
 });
 
+document.addEventListener('change', event => {
+  const form = event.target.closest('#transaction-form');
+  if (form && ['category', 'accountId'].includes(event.target.name)) syncTransactionShortcuts(form);
+});
+
 document.addEventListener('click', event => {
-  const button = event.target.closest('[data-transaction-date]');
+  const button = event.target.closest('[data-transaction-date],[data-action="transaction-shortcut"]');
   const form = button?.closest('#transaction-form');
   if (!form) return;
+  if (button.dataset.action === 'transaction-shortcut') {
+    const field = form.elements[button.dataset.shortcutField];
+    if (!field || !['category', 'accountId'].includes(button.dataset.shortcutField)) return;
+    field.value = button.dataset.shortcutValue;
+    field.dispatchEvent(new Event('change', { bubbles: true }));
+    return;
+  }
   const date = new Date(`${today()}T12:00:00Z`);
   if (button.dataset.transactionDate === 'yesterday') date.setUTCDate(date.getUTCDate() - 1);
   form.elements.date.value = date.toISOString().slice(0,10);
@@ -905,6 +988,13 @@ function readLinkedAccounts(){
 function syncSubscriptionSchedule(target){
  const form=target.closest('#subscription-form');if(!form)return;
  const recurring=form.elements.recurring.checked,custom=form.elements.customBilling;
+ const interval=form.elements.intervalMonths;
+ interval.disabled=!recurring;
+ form.querySelector('#subscription-interval-field').hidden=!recurring;
+ const prefix=Number(interval.value)===1?'每月':'';
+ form.querySelector('label[for="field-billingDay"]').textContent=prefix+'扣账日';
+ form.querySelector('label[for="field-billingHour"]').textContent=prefix+'扣账时间';
+ form.querySelector('#subscription-schedule-label').textContent='单独设置'+prefix+'扣账日和时间';
  custom.disabled=!recurring;
  form.querySelector('#subscription-monthly-toggle').hidden=!recurring;
  form.querySelector('#subscription-monthly-fields').hidden=!recurring||!custom.checked;
@@ -919,10 +1009,11 @@ function syncSubscriptionSchedule(target){
 function updateSubscriptionExpiryPreview(){
  const form=$('#subscription-form');if(!form)return;syncSubscriptionSchedule(form.elements.startDate);const old=state.subscriptions.find(s=>s.id===form.dataset.id);
  const sub={...old,id:old?.id||'preview',expiresOn:form.elements.expiresOn.value,startDate:form.elements.startDate.value,startHour:Number(form.elements.startHour.value),billingDay:Number(form.elements.billingDay.value),billingHour:Number(form.elements.billingHour.value),recurring:form.elements.recurring.checked,active:old?.active??true,processedOccurrences:old?.processedOccurrences||[]};
+ if(sub.recurring&&Number(form.elements.intervalMonths.value)>1)sub.intervalMonths=Number(form.elements.intervalMonths.value);else delete sub.intervalMonths;
  form.elements.expiresOn.min=sub.startDate||'1900-01-01';
  const preview=$('#subscription-expiry-preview');
  if(sub.expiresOn&&sub.startDate&&sub.expiresOn<sub.startDate){preview.textContent='会员到期日不能早于首次扣账日期';return;}
- try{preview.innerHTML=expiryBanner(subscriptionStatus(sub))}catch{preview.textContent='选择日期后显示到期提醒';}
+ try{if(old)prepareSubscriptionEdit(old,sub,state.transactions,new Date());preview.innerHTML=expiryBanner(subscriptionStatus(sub))}catch{preview.textContent='选择日期后显示到期提醒';}
 }
 function subscriptionModal(id){
  if(!ensureAccount())return;
@@ -934,11 +1025,12 @@ function subscriptionModal(id){
  selectField('选择会员服务','serviceId',[['','其他服务 / 自定义'],...subscriptionCatalog.map(p=>[p.id,p.name])],serviceId,true)+field('订阅名称','name',s?.name||'','text','required maxlength="80" placeholder="选择服务后自动填写，也可以自定义"',true)+
  '<div class="field full"><label for="field-tier">会员档位 · 可选择，也可自行填写</label><div class="tier-picker-row"><select id="membership-tier-select" name="tierPreset" aria-label="已有会员档位"><option value="">自定义档位 / 选择已有档位</option>'+(provider?.tiers||[]).map(t=>'<option value="'+esc(t)+'" '+(s?.tier===t?'selected':'')+'>'+esc(t)+'</option>').join('')+'</select><input id="field-tier" name="tier" list="membership-tiers" value="'+esc(s?.tier||'')+'" maxlength="80" placeholder="也可以直接填写档位" autocomplete="off"></div><datalist id="membership-tiers">'+(provider?.tiers||[]).map(t=>'<option value="'+esc(t)+'"></option>').join('')+'</datalist><p class="hint" id="membership-tier-hint">先选一个服务查看档位，或直接输入你的会员档位。</p></div>'+
  '<section class="subscription-section field full"><div class="subscription-section-title"><h3>关联登录账号</h3><p>填写使用会员的邮箱、Apple 账号等；费用从下方所选的扣款账户记账。</p></div><div id="linked-accounts-editor">'+(s?.linkedAccounts||[]).map(linkedAccountRow).join('')+'</div><p class="linked-account-empty" id="linked-account-empty">可选填写，最多关联 10 个账号。</p><div class="linked-account-actions"><select id="saved-linked-account" aria-label="选择已保存的关联账号"><option value="">'+(saved.length?'选择已保存的账号…':'暂无已保存账号')+'</option>'+saved.map((a,i)=>'<option value="'+i+'">'+esc(subscriptionAccountLabel(a)+' · '+a.value+(a.label?' · '+a.label:''))+'</option>').join('')+'</select><button type="button" id="add-linked-account" class="btn btn-outline btn-sm" data-action="add-linked-account">'+icon('plus',14)+' 添加关联账号</button></div></section>'+
- '<section class="subscription-section field full"><div class="subscription-section-title"><h3>会员到期提醒</h3><p>填写平台显示的会员到期日，自动标注剩余天数和颜色。</p></div>'+field('会员到期日 · 可不填','expiresOn',s?.expiresOn||'','date','min="1900-01-01" max="2199-12-31"')+'<div class="subscription-expiry-preview" id="subscription-expiry-preview" aria-live="polite"></div><p class="hint">余额充足并成功记账后，此日期自动顺延一个自然月，月底会适配短月份。余额不足时保留待扣账期，补足后自动重试。未填写时按下次扣账时间提示续费。可手动校正日期，停止记账请关闭订阅开关。</p></section>'+
+ '<section class="subscription-section field full"><div class="subscription-section-title"><h3>会员到期提醒</h3><p>填写平台显示的会员到期日，自动标注剩余天数和颜色。</p></div>'+field('会员到期日 · 可不填','expiresOn',s?.expiresOn||'','date','min="1900-01-01" max="2199-12-31"')+'<div class="subscription-expiry-preview" id="subscription-expiry-preview" aria-live="polite"></div><p class="hint">余额充足并成功记账后，此日期按所选扣账周期自动顺延，月底会适配短月份。余额不足时保留待扣账期，补足后自动重试。未填写时按下次扣账时间提示续费。可手动校正日期，停止记账请关闭订阅开关。</p></section>'+
  field('每次费用','amount',s?amountInput(s.amount,s.currency||accountCurrency(accountById(s.accountId))):'','text','required inputmode="decimal" placeholder="填写实际扣款金额"')+selectField('扣款账户','accountId',accountOptions(),s?.accountId||state.accounts[0].id)+
- '<div class="field full" id="subscription-payment-preview" aria-live="polite"></div><p class="field full currency-hint">费用按扣款账户币种填写；更换不同币种账户后请重填金额。自动记账保留每笔汇率。</p><p class="field full currency-hint">以下扣账时间均为北京时间（UTC+8），按整点自动记账。每月默认沿用首次扣账的日期和小时。</p>'+field('首次扣账日期','startDate',s?.startDate||now.date,'date','required min="1900-01-01" max="2198-12-31"')+selectField('首次扣账时间','startHour',hours,String(s?s.startHour??0:now.hour))+
- '<label class="checkbox-field field full"><input type="checkbox" name="recurring" '+(!s||s.recurring?'checked':'')+'><span>连续订阅，每月自动记账<small>取消勾选则只在首次日期和时间记录一次</small></span></label>'+
- '<label id="subscription-monthly-toggle" class="checkbox-field field full" '+(s&&!s.recurring?'hidden':'')+'><input type="checkbox" name="customBilling" aria-controls="subscription-monthly-fields" aria-expanded="'+Boolean(customBilling&&(!s||s.recurring))+'" '+(customBilling?'checked':'')+'><span>单独设置每月扣账日和时间<small>展开后可单独调整，关闭后恢复跟随首次设置。</small></span></label>'+
+ '<div class="field full" id="subscription-payment-preview" aria-live="polite"></div><p class="field full currency-hint">费用按扣款账户币种填写；更换不同币种账户后请重填金额。自动记账保留每笔汇率。</p><p class="field full currency-hint">以下扣账时间均为北京时间（UTC+8），按整点自动记账。后续周期默认沿用首次扣账的日期和小时。</p>'+field('首次扣账日期','startDate',s?.startDate||now.date,'date','required min="1900-01-01" max="2198-12-31"')+selectField('首次扣账时间','startHour',hours,String(s?s.startHour??0:now.hour))+
+ '<label class="checkbox-field field full"><input type="checkbox" name="recurring" '+(!s||s.recurring?'checked':'')+'><span>连续订阅，按周期自动记账<small>取消勾选则只在首次日期和时间记录一次</small></span></label>'+
+ '<div id="subscription-interval-field" class="field full" '+(s&&!s.recurring?'hidden':'')+'>'+selectField('扣账周期','intervalMonths',[['1','每月'],['3','每季度'],['6','每半年'],['12','每年']],String(s?.intervalMonths||1))+'</div>'+
+ '<label id="subscription-monthly-toggle" class="checkbox-field field full" '+(s&&!s.recurring?'hidden':'')+'><input type="checkbox" name="customBilling" aria-controls="subscription-monthly-fields" aria-expanded="'+Boolean(customBilling&&(!s||s.recurring))+'" '+(customBilling?'checked':'')+'><span><span id="subscription-schedule-label">单独设置每月扣账日和时间</span><small>展开后可单独调整，关闭后恢复跟随首次设置。</small></span></label>'+
  '<div id="subscription-monthly-fields" class="form-grid field full subscription-monthly-fields" '+(customBilling&&(!s||s.recurring)?'':'hidden')+'>'+selectField('每月扣账日','billingDay',Array.from({length:31},(_,i)=>[String(i+1),(i+1)+' 日']),String(s?.billingDay||Number(now.date.slice(8))))+selectField('每月扣账时间','billingHour',hours,String(s?s.billingHour??0:now.hour))+'</div>'+
  selectField('自定义服务图标','icon',[['music','音乐'],['play','视频'],['cloud','云存储'],['spark','AI / 创作'],['book','学习'],['repeat','其他']],s?.icon||'spark')+field('自定义标记色','color',s?.color||'#a498cf','color')+
  '<div class="field full subscription-note-field"><label for="field-note">订阅备注 · 可不填</label><textarea id="field-note" name="note" maxlength="500" placeholder="如购买渠道、共享成员、续费注意事项">'+esc(s?.note||'')+'</textarea></div><div class="field full"><p class="hint">选择过去的日期和时间会补记未处理账期；29–31 日在短月按月末记账。旧订阅默认北京时间 00:00，可在此调整。实际付款和续费由订阅平台处理。</p></div></div>'+footer(s?'保存订阅':'添加订阅',s?{action:'delete-subscription',id:s.id}:null)+'</form>',true);
@@ -968,8 +1060,15 @@ function goalDepositModal(id, mode = 'deposit', value = '') {
       <p class="hint">心愿金额仅记录储蓄进度，不影响总资产，也不会生成收支。</p>${footer(withdrawing?'确认取出':'确认存入')}
     </form>`);
 }
-function goalModal(id){const g=state.goals.find(x=>x.id===id);modal(g?'离心愿，又近了一点':'给未来一个小期待','把想做的事，变成看得见的进度。',`<form id="goal-form" data-id="${id||''}"><div class="form-grid">${field('心愿名称','name',g?.name||'','text','required maxlength="80" placeholder="例如：下一站，去看世界"',true)}${field('目标金额（元）','target',g?String(g.target/100):'','text','required inputmode="decimal" placeholder="15000"')}${field('已经存下（元）','saved',g?String(g.saved/100):'0','text','required inputmode="decimal"')}<div class="field full"><p class="hint">这是储蓄进度的记录，不会重复增加总资产。新增资金的实际流动请另行记账。</p></div></div>${footer(g?'更新心愿':'创建心愿',g?{action:'delete-goal',id:g.id}:null)}</form>`)}
-function budgetModal(){modal('给这个月，一点规划','预算是参考线，好的生活由你定义。',`<form id="budget-form"><div class="form-grid">${field('月度预算（元）','budget',String(state.settings.monthlyBudget/100),'text','required inputmode="decimal"',true)}</div>${footer('保存预算')}</form>`)}
+function goalModal(id){const g=state.goals.find(x=>x.id===id);modal(g?'离心愿，又近了一点':'给未来一个小期待','把想做的事，变成看得见的进度。',`<form id="goal-form" data-id="${id||''}"><div class="form-grid">${field('心愿名称','name',g?.name||'','text','required maxlength="80" placeholder="例如：下一站，去看世界"',true)}${field('目标金额（元）','target',g?String(g.target/100):'','text','required inputmode="decimal" placeholder="15000"')}${field('已经存下（元）','saved',g?String(g.saved/100):'0','text','required inputmode="decimal"')}${field('目标日期 · 可不填','deadline',g?.deadline||'','date','min="1900-01-01" max="2198-12-31"')}<div class="field full"><p class="hint">这是储蓄进度的记录，不会重复增加总资产。新增资金的实际流动请另行记账。</p></div></div>${footer(g?'更新心愿':'创建心愿',g?{action:'delete-goal',id:g.id}:null)}</form>`)}
+function budgetModal(){
+ const categories=budgetCategories(state);
+ modal('给这个月，一点规划','总预算与分类预算独立设置，金额均为人民币。',`<form id="budget-form"><div class="form-grid">${field('月度预算（元）','budget',amountInput(state.settings.monthlyBudget,'CNY'),'text','required inputmode="decimal"',true)}</div><h3>分类预算</h3><p class="hint">留空或填 0 表示不设预算，最多设置 50 项。</p><div class="form-grid">${categories.map((name,index)=>field(esc(name)+'（元）','categoryBudget'+index,Object.hasOwn(state.settings.categoryBudgets||{},name)?amountInput(state.settings.categoryBudgets[name],'CNY'):'','text',`inputmode="decimal" data-budget-category="${esc(name)}"`)).join('')}</div>${footer('保存预算')}</form>`);
+}
+function customCategoriesModal(){
+ const custom=state.settings.customCategories||{expense:[],income:[]};
+ modal('自定义分类','删除分类保留历史账单，并移除该分类预算。',`<div class="form-error" role="alert"></div>${[['expense','支出'],['income','收入']].map(([type,label])=>`<section><h3>${label}分类 <small>${custom[type].length} / 30</small></h3>${custom[type].map(name=>`<div class="setting-row"><span>${esc(name)}</span><button type="button" class="btn btn-soft btn-sm" data-action="delete-custom-category" data-type="${type}" data-category="${esc(name)}" aria-label="删除${esc(name)}分类">删除</button></div>`).join('')}<form id="custom-category-${type}" data-type="${type}"><div class="form-grid">${field('新增'+label+'分类','category-'+type,'','text','required maxlength="50"',true)}</div><div class="modal-footer"><button type="submit" class="btn btn-primary" ${custom[type].length>=30?'disabled':''}>新增${label}分类</button></div></form></section>`).join('')}<div class="modal-footer"><button type="button" class="btn btn-outline" data-action="close-modal">完成</button></div>`);
+}
 function confirmModal(title,copy,action){modal(title,'每一步，都由你决定。',`<p class="confirm-copy">${copy}</p><div class="form-error" role="alert"></div><div class="modal-footer"><button class="btn btn-outline" data-action="close-modal">再想想</button><button class="btn btn-dark" id="confirm-action">确认继续 ${icon('right',14)}</button></div>`);$('#confirm-action').onclick=async()=>{const b=$('#confirm-action');b.disabled=true;try{await action();if(b.isConnected)b.disabled=false}catch(e){formError(e.message);b.disabled=false}}}
 function calendarModal(){
  const [y,m]=month.split('-').map(Number);
@@ -979,7 +1078,7 @@ function calendarModal(){
   if(!sub.active)continue;
   const [sy,sm]=sub.startDate.split('-').map(Number);
   const delta=(y-sy)*12+m-sm;
-  if(delta<0||(!sub.recurring&&delta>0))continue;
+  if(delta<0||(!sub.recurring&&delta>0)||(sub.recurring&&delta%(sub.intervalMonths||1)!==0))continue;
   const due=addMonthsDue(sub.startDate,delta,sub.billingDay);
   (bills[Number(due.slice(8))]??=[]).push(sub);
  }
@@ -987,7 +1086,7 @@ function calendarModal(){
   const date=`${month}-${String(i+1).padStart(2,'0')}`;
   const entries=(bills[i+1]||[]).slice().sort((a,b)=>subscriptionDueHour(a,date)-subscriptionDueHour(b,date)).map(sub=>{
    const price=hidden?'':subscriptionMoney(sub);
-   return `<button class="calendar-amount" data-action="edit-subscription" data-id="${esc(sub.id)}" title="${esc(sub.name+' · '+subscriptionTime(sub,date)+' 北京时间'+(price?' · '+price:''))}"><span>${subscriptionTime(sub,date)} ${esc(sub.name)}</span>${price?`<small>${esc(price)}</small>`:''}</button>`;
+   return `<button class="calendar-amount" data-action="edit-subscription" data-id="${esc(sub.id)}" title="${esc(sub.name+' · '+subscriptionTime(sub,date)+' 北京时间 · '+(sub.recurring?'每'+subscriptionPeriodLabel(sub):'单次')+(price?' · '+price:''))}"><span>${subscriptionTime(sub,date)} ${esc(sub.name)}</span>${price?`<small class="money">${esc(price)} / ${subscriptionPeriodLabel(sub)}</small>`:''}</button>`;
   }).join('');
   return `<div class="calendar-day ${date===beijingDateTime().date?'today':''}"><span>${i+1}</span>${entries}</div>`;
  }).join('');
@@ -1034,7 +1133,7 @@ async function deleteItem(kind,id) {
   });
 }
 
-document.addEventListener('click',async e=>{const target=e.target.closest('button,[data-page]');if(!target)return;if(target.dataset.page){navigate(target.dataset.page);return}if(target.dataset.filter){filter=target.dataset.filter;render();return}const a=target.dataset.action,id=target.dataset.id;if(!a)return;try{switch(a){case'check-updates':await updateUI?.check();break;case'download-update':await updateUI?.download();break;case'cancel-update':await updateUI?.cancel();break;case'install-update':await updateUI?.install();break;case'mobile-sync':await mobileSync.open();break;case'retry':location.reload();break;case'refresh-rates':await refreshRates({announce:true});break;case'menu':menuOpen=!menuOpen;render();break;case'close-modal':closeModal();break;case'add-transaction':transactionModal();break;case'add-expense':transactionModal(undefined,'expense');break;case'add-income':transactionModal(undefined,'income');break;case'add-transfer':transactionModal(undefined,'transfer');break;case'view-all-transactions':clearTransactionFilters();navigate('transactions');break;case'view-income':clearTransactionFilters();filter='income';navigate('transactions');break;case'view-expense':clearTransactionFilters();filter='expense';navigate('transactions');break;case'edit-transaction':transactionModal(id);break;case'transaction-type':{
+document.addEventListener('click',async e=>{const target=e.target.closest('button,[data-page]');if(!target)return;if(target.dataset.page){navigate(target.dataset.page);return}if(target.dataset.filter){filter=target.dataset.filter;render();return}const a=target.dataset.action,id=target.dataset.id;if(!a)return;try{switch(a){case'check-updates':await updateUI?.check();break;case'download-update':await updateUI?.download();break;case'cancel-update':await updateUI?.cancel();break;case'install-update':await updateUI?.install();break;case'mobile-sync':await mobileSync.open();break;case'retry':location.reload();break;case'refresh-rates':await refreshRates({announce:true});break;case'menu':menuOpen=!menuOpen;render();break;case'close-modal':closeModal();break;case'add-transaction':transactionModal();break;case'add-expense':transactionModal(undefined,'expense');break;case'add-income':transactionModal(undefined,'income');break;case'frequent-expense':openFrequentExpense(target.dataset.title);break;case'add-transfer':transactionModal(undefined,'transfer');break;case'view-all-transactions':clearTransactionFilters();navigate('transactions');break;case'view-income':clearTransactionFilters();filter='income';navigate('transactions');break;case'view-expense':clearTransactionFilters();filter='expense';navigate('transactions');break;case'edit-transaction':transactionModal(id);break;case'transaction-type':{
  const previousForm=$('#transaction-form');
  if(previousForm.dataset.type===target.dataset.type)break;
  const draft=new FormData(previousForm),transferTarget=String(draft.get('toAccountId')||previousForm.dataset.transferTarget||''),toAmount=String(draft.get('toAmount')||previousForm.dataset.transferAmount||''),toCode=previousForm.dataset.toCurrency||'',code=previousForm.dataset.currency,rate=previousForm.elements.cnyRate.value;
@@ -1044,6 +1143,7 @@ document.addEventListener('click',async e=>{const target=e.target.closest('butto
  for(const key of ['amount','title','date','note']){if(nextForm.elements[key]&&draft.has(key))nextForm.elements[key].value=key==='amount'&&!sameCurrency?'':draft.get(key);}
  nextForm.dataset.transferTarget=transferTarget;nextForm.dataset.transferAmount=sameCurrency?toAmount:'';
  updateTransferPreview(transferTarget);if(nextForm.elements.toAmount&&sameCurrency&&nextForm.dataset.toCurrency===toCode)nextForm.elements.toAmount.value=toAmount;
+ syncTransactionShortcuts(nextForm);
  break;}case'add-account':accountModal();break;
  case'add-bank-account':if(bankById(target.dataset.bankId))accountModal(undefined,target.dataset.bankId);break;
  case'toggle-bank':{const bankId=target.dataset.bankId;if(!bankById(bankId))break;if(expandedBanks.has(bankId))expandedBanks.delete(bankId);else{expandedBanks.add(bankId);dealBank=bankId;}render();dealBank='';document.querySelector('[data-action="toggle-bank"][data-bank-id="'+bankId+'"]').focus({preventScroll:true});break;}
@@ -1072,7 +1172,15 @@ document.addEventListener('click',async e=>{const target=e.target.closest('butto
   }
   render();break;
  }
- case'add-goal':goalModal();break;case'edit-goal':goalModal(id);break;case'budget':budgetModal();break;case'privacy':hidden=!hidden;sessionStorage.setItem('moneylab-hidden',String(hidden));render();break;case'month-prev':case'month-next':{const d=new Date(`${month}-15T12:00:00`);d.setMonth(d.getMonth()+(a==='month-prev'?-1:1));month=localDate(d).slice(0,7);render();if($('.calendar'))calendarModal();break}case'filter-subscriptions':subscriptionFilter=target.dataset.value;render();break;case'choose-apple-region':chooseAppleRegion(target.dataset.region);break;case'add-linked-account':addLinkedAccount();break;case'remove-linked-account':target.closest('.linked-account-row')?.remove();updateLinkedAccountEditor();break;case'calendar':month=beijingDateTime().date.slice(0,7);calendarModal();break;case'account-transactions':clearTransactionFilters();accountFilter=id;navigate('transactions');break;case'export':{const data=await api('/api/state');if(await download(`MoneyLab-backup-${today()}.json`,JSON.stringify(data,null,2),'application/json'))toast('完整账本已导出');break}case'export-csv':await exportCsv();break;case'open-data':await desktop?.openDataDirectory();break;case'toggle-tray':desktopInfo=await desktop.setPreferences({keepInTray:!desktopInfo.keepInTray});render();break;case'exit-app':desktop?.quit();break;case'import':importModal();break;case'start-empty':resetEmpty();break;case'delete-transaction':case'delete-account':case'delete-subscription':case'delete-goal':deleteItem(a.replace('delete-',''),id);break}}catch(error){formError(error.message)}});
+ case'add-goal':goalModal();break;case'edit-goal':goalModal(id);break;case'budget':budgetModal();break;case'custom-categories':customCategoriesModal();break;case'delete-custom-category':{
+ const type=target.dataset.type,category=target.dataset.category,next=structuredClone(state);
+ removeCustomCategory(next.settings,type,category);
+ if(await commit(next,'分类已删除，历史账单保留')){
+  try{const key='moneylab-transaction-defaults-'+type,value=JSON.parse(localStorage.getItem(key)||'{}');if(value.category===category){value.category='';localStorage.setItem(key,JSON.stringify(value));}}catch{}
+  customCategoriesModal();
+ }
+ break;
+} case'privacy':hidden=!hidden;sessionStorage.setItem('moneylab-hidden',String(hidden));render();break;case'month-prev':case'month-next':{const d=new Date(`${month}-15T12:00:00`);d.setMonth(d.getMonth()+(a==='month-prev'?-1:1));month=localDate(d).slice(0,7);render();if($('.calendar'))calendarModal();break}case'filter-subscriptions':subscriptionFilter=target.dataset.value;render();break;case'choose-apple-region':chooseAppleRegion(target.dataset.region);break;case'add-linked-account':addLinkedAccount();break;case'remove-linked-account':target.closest('.linked-account-row')?.remove();updateLinkedAccountEditor();break;case'calendar':month=beijingDateTime().date.slice(0,7);calendarModal();break;case'account-transactions':clearTransactionFilters();accountFilter=id;navigate('transactions');break;case'export':{const data=await api('/api/state');if(await download(`MoneyLab-backup-${today()}.json`,JSON.stringify(data,null,2),'application/json'))toast('完整账本已导出');break}case'export-csv':await exportCsv();break;case'open-data':await desktop?.openDataDirectory();break;case'toggle-tray':desktopInfo=await desktop.setPreferences({keepInTray:!desktopInfo.keepInTray});render();break;case'exit-app':desktop?.quit();break;case'import':importModal();break;case'start-empty':resetEmpty();break;case'delete-transaction':case'delete-account':case'delete-subscription':case'delete-goal':deleteItem(a.replace('delete-',''),id);break}}catch(error){formError(error.message)}});
 document.addEventListener('submit',async e=>{const form=e.target;e.preventDefault();const data=new FormData(form),get=name=>String(data.get(name)||'').trim();if(ratesRefreshPromise){formError('正在更新汇率，请稍后保存');return}const next=structuredClone(state),id=form.dataset.id;try{switch(form.id){case'transaction-form': {
   const type = form.dataset.type, old = state.transactions.find(item => item.id === id);
   const category = type === 'transfer' ? '账户转账' : get('category');
@@ -1113,12 +1221,29 @@ document.addEventListener('submit',async e=>{const form=e.target;e.preventDefaul
     }
   }
   return;
-}case'account-form':{const item={id:id||uid('acc'),name:get('name'),type:get('type'),color:get('color'),currency:form.elements.currency.value,openingBalance:parseMoney(get('openingBalance'),form.elements.currency.value)};if(item.currency!=='CNY'){item.rateMode=get('rateMode')==='manual'?'manual':'auto';item.cnyRate=normalizeRate(item.rateMode==='auto'?form.elements.cnyRate.value:get('cnyRate'));const quote=cachedRate(item.currency);if(item.rateMode==='auto'&&quote&&quote.cnyRate===item.cnyRate){if(quote.asOf)item.rateAsOf=quote.asOf;if(quote.source)item.rateSource=quote.source;}}if(get('providerId'))item.providerId=get('providerId');if(item.providerId==='apple-balance'){item.appleRegion=get('appleRegion');if(get('appleAccount'))item.appleAccount=get('appleAccount');}if(isCardType(item.providerId,item.type)){if(get('bankId'))item.bankId=get('bankId');if(get('lastFour')){if(!/^[0-9]{4}$/.test(get('lastFour')))throw new Error('卡片尾号需要填写 4 位数字');item.lastFour=get('lastFour');}}if(id)replaceRecord(next.accounts,id,item);else next.accounts.push(item);break}case'subscription-form':{syncSubscriptionSchedule(form.elements.startDate);const old=state.subscriptions.find(x=>x.id===id);const sub={id:id||uid('sub'),name:get('name'),currency:accountCurrency(accountById(get('accountId'))),amount:parseMoney(get('amount'),accountCurrency(accountById(get('accountId')))),accountId:get('accountId'),category:'会员订阅',startDate:get('startDate'),startHour:Number(form.elements.startHour.value),billingDay:Number(form.elements.billingDay.value),billingHour:Number(form.elements.billingHour.value),recurring:data.has('recurring'),active:old?.active??true,color:get('color'),icon:get('icon'),processedOccurrences:old?.processedOccurrences||[],tier:get('tier'),linkedAccounts:readLinkedAccounts(),expiresOn:get('expiresOn'),note:get('note')};if(get('serviceId'))sub.serviceId=get('serviceId');if(old&&get('expiresOn')===form.elements.expiresOn.defaultValue)sub.expiresOn=old.expiresOn||'';if(old?.expiryRenewal)sub.expiryRenewal=structuredClone(old.expiryRenewal);if(!old||sub.expiresOn!==old.expiresOn||sub.recurring!==old.recurring)resetSubscriptionExpiry(sub,next.transactions);if(id)replaceRecord(next.subscriptions,id,sub);else next.subscriptions.push(sub);break}case'goal-form':{const goal={id:id||uid('goal'),name:get('name'),target:moneyToCents(get('target')),saved:moneyToCents(get('saved')),color:'#c7dfa2',cover:'assets/alpine-goal.png'};if(id)replaceRecord(next.goals,id,goal);else next.goals.push(goal);break}case'goal-deposit-form':{
+}case'account-form':{const item={id:id||uid('acc'),name:get('name'),type:get('type'),color:get('color'),currency:form.elements.currency.value,openingBalance:parseMoney(get('openingBalance'),form.elements.currency.value)};if(item.currency!=='CNY'){item.rateMode=get('rateMode')==='manual'?'manual':'auto';item.cnyRate=normalizeRate(item.rateMode==='auto'?form.elements.cnyRate.value:get('cnyRate'));const quote=cachedRate(item.currency);if(item.rateMode==='auto'&&quote&&quote.cnyRate===item.cnyRate){if(quote.asOf)item.rateAsOf=quote.asOf;if(quote.source)item.rateSource=quote.source;}}if(get('providerId'))item.providerId=get('providerId');if(item.providerId==='apple-balance'){item.appleRegion=get('appleRegion');if(get('appleAccount'))item.appleAccount=get('appleAccount');}if(isCardType(item.providerId,item.type)){if(get('bankId'))item.bankId=get('bankId');if(get('lastFour')){if(!/^[0-9]{4}$/.test(get('lastFour')))throw new Error('卡片尾号需要填写 4 位数字');item.lastFour=get('lastFour');}}if(id)replaceRecord(next.accounts,id,item);else next.accounts.push(item);break}case'subscription-form':{syncSubscriptionSchedule(form.elements.startDate);const old=state.subscriptions.find(x=>x.id===id);const sub={id:id||uid('sub'),name:get('name'),currency:accountCurrency(accountById(get('accountId'))),amount:parseMoney(get('amount'),accountCurrency(accountById(get('accountId')))),accountId:get('accountId'),category:'会员订阅',startDate:get('startDate'),startHour:Number(form.elements.startHour.value),billingDay:Number(form.elements.billingDay.value),billingHour:Number(form.elements.billingHour.value),recurring:data.has('recurring'),active:old?.active??true,color:get('color'),icon:get('icon'),processedOccurrences:old?.processedOccurrences||[],tier:get('tier'),linkedAccounts:readLinkedAccounts(),expiresOn:get('expiresOn'),note:get('note')};if(sub.recurring&&Number(get('intervalMonths'))>1)sub.intervalMonths=Number(get('intervalMonths'));if(get('serviceId'))sub.serviceId=get('serviceId');if(old&&get('expiresOn')===form.elements.expiresOn.defaultValue)sub.expiresOn=old.expiresOn||'';if(old?.expiryRenewal)sub.expiryRenewal=structuredClone(old.expiryRenewal);if(!old||sub.expiresOn!==old.expiresOn||sub.recurring!==old.recurring)resetSubscriptionExpiry(sub,next.transactions);if(old)prepareSubscriptionEdit(old,sub,next.transactions,new Date());if(id)replaceRecord(next.subscriptions,id,sub);else next.subscriptions.push(sub);break}case'goal-form':{const goal={id:id||uid('goal'),name:get('name'),target:moneyToCents(get('target')),saved:moneyToCents(get('saved')),color:'#c7dfa2',cover:'assets/alpine-goal.png'};if(get('deadline'))goal.deadline=get('deadline');if(id)replaceRecord(next.goals,id,goal);else next.goals.push(goal);break}case'goal-deposit-form':{
   const goal=next.goals.find(g=>g.id===id);
   if(!goal)throw new Error('这个心愿已不存在');
   goal.saved=adjustedGoalSaved(goal.saved,get('amount'),form.dataset.mode);
   break;
-}case'budget-form':next.settings.monthlyBudget=moneyToCents(get('budget'));break;case'import-form':{const file=data.get('backup');if(!file?.size)throw new Error('请选择有效的 JSON 文件');if(file.size>2*1024*1024)throw new Error('备份不能超过 2 MB');let imported;try{imported=JSON.parse((await file.text()).replace(/^\uFEFF/,''))}catch{throw new Error('文件不是有效的 JSON 备份')}validateState(imported);await commit(imported,'完整账本已恢复',true);return}default:return}upgradeSchemaVersion(next);validateState(next);const saved=await commit(next);if(saved&&form.id==='account-form'&&!id&&bankById(get('bankId'))){expandedBanks.add(get('bankId'));render()}}catch(error){formError(error.message)}});
+}case'budget-form':{
+ next.settings.monthlyBudget=moneyToCents(get('budget'));
+ const budgets=Object.create(null);
+ for(const input of form.querySelectorAll('[data-budget-category]')){
+  const value=input.value.trim()?moneyToCents(input.value.trim()):0;
+  if(value<0)throw new Error('分类预算不能为负数，留空或填 0 表示不设预算');
+  if(value>0)budgets[input.dataset.budgetCategory]=value;
+ }
+ if(Object.keys(budgets).length)next.settings.categoryBudgets=budgets;else delete next.settings.categoryBudgets;
+ break;
+}case'custom-category-expense':case'custom-category-income':{
+ const type=form.dataset.type,category=get('category-'+type);
+ next.settings.customCategories??={expense:[],income:[]};
+ next.settings.customCategories[type].push(category);
+ upgradeSchemaVersion(next);validateState(next);
+ if(await commit(next,'分类已添加'))customCategoriesModal();
+ return;
+}case'import-form':{const file=data.get('backup');if(!file?.size)throw new Error('请选择有效的 JSON 文件');if(file.size>2*1024*1024)throw new Error('备份不能超过 2 MB');let imported;try{imported=JSON.parse((await file.text()).replace(/^\uFEFF/,''))}catch{throw new Error('文件不是有效的 JSON 备份')}validateState(imported);await commit(imported,'完整账本已恢复',true);return}default:return}upgradeSchemaVersion(next);validateState(next);const saved=await commit(next);if(saved&&form.id==='account-form'&&!id&&bankById(get('bankId'))){expandedBanks.add(get('bankId'));render()}}catch(error){formError(error.message)}});
 document.addEventListener('compositionend',e=>{
  if(['subscription-search','transaction-search'].includes(e.target.id))e.target.dispatchEvent(new Event('input',{bubbles:true}));
 });
@@ -1137,7 +1262,7 @@ document.addEventListener('input',e=>{
  }
  if(['expiresOn','startDate'].includes(name)&&e.target.closest('#subscription-form'))updateSubscriptionExpiryPreview();
 });
-document.addEventListener('change',e=>{if(e.target.name==='appleRegion'&&e.target.closest('#account-form'))updateAppleBalanceFields({request:true});if(e.target.id==='saved-linked-account'&&e.target.value!==''){const account=savedSubscriptionAccounts()[Number(e.target.value)];if(account)addLinkedAccount(account);e.target.value=''}if(e.target.dataset.linkedField==='type'){const input=e.target.closest('.linked-account-row').querySelector('[data-linked-field="value"]');input.type=e.target.value==='email'?'email':'text';}if(['expiresOn','startDate','startHour','billingDay','billingHour','recurring'].includes(e.target.name)&&e.target.closest('#subscription-form'))updateSubscriptionExpiryPreview();if(['currency','rateMode'].includes(e.target.name)&&e.target.closest('#account-form'))updateAppleBalanceFields({request:true});if(e.target.name==='accountId'&&e.target.closest('#subscription-form'))updateSubscriptionCurrency();if(e.target.name==='bankId'&&e.target.closest('#account-form'))chooseBank(e.target.value);if(e.target.name==='type'&&e.target.closest('#account-form'))updateBankFields();if(e.target.name==='providerId'&&e.target.closest('#account-form'))chooseAccountPreset(e.target.value);if(['accountId','toAccountId'].includes(e.target.name)&&e.target.closest('#transaction-form'))updateTransferPreview();if(e.target.name==='serviceId'){chooseSubscriptionService(e.target.value)}if(e.target.name==='tierPreset'){const tier=$('#field-tier');tier.value=e.target.value;if(!e.target.value)tier.focus();}if(e.target.id==='account-filter'){accountFilter=e.target.value;render()}if(e.target.id==='category-filter'){categoryFilter=e.target.value;render()}});
+document.addEventListener('change',e=>{if(e.target.name==='appleRegion'&&e.target.closest('#account-form'))updateAppleBalanceFields({request:true});if(e.target.id==='saved-linked-account'&&e.target.value!==''){const account=savedSubscriptionAccounts()[Number(e.target.value)];if(account)addLinkedAccount(account);e.target.value=''}if(e.target.dataset.linkedField==='type'){const input=e.target.closest('.linked-account-row').querySelector('[data-linked-field="value"]');input.type=e.target.value==='email'?'email':'text';}if(['expiresOn','startDate','startHour','billingDay','billingHour','recurring','intervalMonths'].includes(e.target.name)&&e.target.closest('#subscription-form'))updateSubscriptionExpiryPreview();if(['currency','rateMode'].includes(e.target.name)&&e.target.closest('#account-form'))updateAppleBalanceFields({request:true});if(e.target.name==='accountId'&&e.target.closest('#subscription-form'))updateSubscriptionCurrency();if(e.target.name==='bankId'&&e.target.closest('#account-form'))chooseBank(e.target.value);if(e.target.name==='type'&&e.target.closest('#account-form'))updateBankFields();if(e.target.name==='providerId'&&e.target.closest('#account-form'))chooseAccountPreset(e.target.value);if(['accountId','toAccountId'].includes(e.target.name)&&e.target.closest('#transaction-form'))updateTransferPreview();if(e.target.name==='serviceId'){chooseSubscriptionService(e.target.value)}if(e.target.name==='tierPreset'){const tier=$('#field-tier');tier.value=e.target.value;if(!e.target.value)tier.focus();}if(e.target.id==='account-filter'){accountFilter=e.target.value;render()}if(e.target.id==='category-filter'){categoryFilter=e.target.value;render()}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();if(menuOpen){menuOpen=false;render()}}if($('.modal')){if(e.key==='Tab'){const nodes=[...$('.modal').querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]')].filter(node=>node.tabIndex>=0&&node.getClientRects().length&&!node.closest('[hidden]'));const first=nodes[0],last=nodes.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}return}if(e.key.toLowerCase()==='n'&&!e.ctrlKey&&!e.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)){e.preventDefault();transactionModal()}});
 window.addEventListener('hashchange',()=>{const next=location.hash.slice(1);if([...navItems.map(x=>x[0]),'settings'].includes(next)&&page!==next){page=next;render()}});
 async function refresh(){try{const next=await api('/api/state');if(!busy&&(!state||next.revision>state.revision||renderedDay!==today()||renderedHour!==beijingDateTime().hour)){state=next;if($('.modal'))ratesDeferredRender=true;else render()}}catch(e){if(!state)$('#app').innerHTML=`<div class="boot"><span class="brand-mark"><img src="/assets/app-icon.png" alt="超级账本" width="54" height="54"></span><h2>暂时无法打开本地账本</h2><p class="muted">${esc(e.message)}</p><p class="small muted">请先尝试重新连接；仍无法打开时，退出应用，再从桌面或开始菜单打开「超级账本」。</p><button class="btn btn-primary" data-action="retry">重新连接</button></div>`}finally{await loadLedgerHealth()}}

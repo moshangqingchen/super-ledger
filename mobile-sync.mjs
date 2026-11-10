@@ -161,7 +161,7 @@ function mergeSubscriptionExpiry(record, current, base, transactions, pendingCha
   record.expiryRenewal.renewedOccurrences = record.expiryRenewal.renewedOccurrences
     // The matching transaction may still be rejected later in this batch.
     .filter(key => covered.has(key) || paid.has(key) || !pendingCharges.has(key));
-  record.expiresOn = addMonthsDue(record.expiryRenewal.baseDate, record.expiryRenewal.renewedOccurrences.length, Number(record.expiryRenewal.baseDate.slice(8)));
+  record.expiresOn = addMonthsDue(record.expiryRenewal.baseDate, record.expiryRenewal.renewedOccurrences.length * (record.intervalMonths ?? 1), Number(record.expiryRenewal.baseDate.slice(8)));
 }
 
 function sameScheduledCharge(left, right) {
@@ -170,12 +170,18 @@ function sameScheduledCharge(left, right) {
     && left.amount === right.amount && left.date === right.date && (left.currency || 'CNY') === (right.currency || 'CNY');
 }
 
-function subscriptionOccurrencePending(sub, monthKey, clock) {
+function subscriptionOccurrenceDue(sub, monthKey) {
   const [year, month] = monthKey.split('-').map(Number);
   const [startYear, startMonth] = sub.startDate.split('-').map(Number);
   const offset = (year - startYear) * 12 + month - startMonth;
-  const due = sub.recurring && offset >= 0 ? addMonthsDue(sub.startDate, offset, sub.billingDay) : sub.startDate;
-  return due > clock.date || due === clock.date && subscriptionDueHour(sub, due) > clock.hour;
+  if (offset < 0 || sub.recurring && offset % (sub.intervalMonths ?? 1) !== 0 || !sub.recurring && offset !== 0) return null;
+  return sub.recurring ? addMonthsDue(sub.startDate, offset, sub.billingDay) : sub.startDate;
+}
+
+function subscriptionOccurrencePending(sub, monthKey, clock) {
+  const due = subscriptionOccurrenceDue(sub, monthKey);
+  // Historical keys outside an edited schedule remain harmless receipts.
+  return due !== null && (due > clock.date || due === clock.date && subscriptionDueHour(sub, due) > clock.hour);
 }
 
 export function mergeMobileOperations(state, payload, now = new Date()) {
@@ -185,8 +191,8 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
       || !Array.isArray(payload.operations) || payload.operations.length > MAX_OPERATIONS) throw fail(400, '手机同步请求格式不正确，单次最多同步 500 项。');
   const fullLedger = payload.protocolVersion === MOBILE_PROTOCOL_VERSION;
   if (payload.protocolVersion !== undefined && ![1, MOBILE_PROTOCOL_VERSION].includes(payload.protocolVersion)) throw fail(400, '手机同步版本不兼容，请更新两端应用。');
-  if (state.schemaVersion >= 3 && (!Number.isSafeInteger(payload.supportedSchemaVersion) || payload.supportedSchemaVersion < 3)) {
-    throw fail(409, '此账本包含北京时间按小时扣账，请先升级手机到 1.3.6 或更新版本再同步。');
+  if (state.schemaVersion >= 3 && (!Number.isSafeInteger(payload.supportedSchemaVersion) || payload.supportedSchemaVersion < state.schemaVersion)) {
+    throw fail(409, `电脑账本需要版本 ${state.schemaVersion} 数据结构，请先升级手机应用后再同步。`);
   }
   if (payload.bookId !== metadata.bookId && !(payload.bookId === null && (payload.operations.length === 0 || fullLedger))) {
     throw fail(409, '此手机绑定的是另一份账本，或电脑账本已恢复/重置。请在手机上处理未同步记录，再重新配对。');
@@ -246,7 +252,13 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
           if (!Array.isArray(record.processedOccurrences)) { reject('订阅的已记账账期无效。'); continue; }
           record.processedOccurrences = [...new Set([...(current?.processedOccurrences || []), ...record.processedOccurrences])];
         }
-        if (entity === 'settings') candidate.settings = record;
+        if (entity === 'settings') {
+          // Settings is one conflict-detected entity. Preserve opaque extensions
+          // when a peer edits known fields; absent known optionals mean removal.
+          const known = new Set(['monthlyBudget', 'currency', 'categoryBudgets', 'customCategories']);
+          candidate.settings = Object.fromEntries(Object.entries(current || {}).filter(([key]) => !known.has(key)));
+          Object.assign(candidate.settings, record);
+        }
         else if (current) candidate[collection][candidate[collection].findIndex(item => item.id === recordId)] = record;
         else candidate[collection].push(record);
       }
@@ -265,6 +277,9 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
         if (pendingProcessed || pendingRenewal) { reject('订阅的已记账账期尚未到北京时间扣账时间，请核对两端时间后重试。'); continue; }
         try {
           sub.processedOccurrences = sub.processedOccurrences.filter(key => processed.has(key)
+            // An offline cycle edit can carry already-paid historical periods.
+            // Preserve their receipts even if importing the charge must retry.
+            || subscriptionOccurrenceDue(sub, key.slice(sub.id.length + 1)) === null
             || !pendingCharges.has(key) || candidate.transactions.some(tx => tx.occurrenceKey === key));
           mergeSubscriptionExpiry(sub, current, operation.base, candidate.transactions, pendingCharges);
           reconcileSubscriptionExpiry(candidate, now);
@@ -318,6 +333,12 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
       if (fullLedger && !current && tx.subscriptionId && isValidDate(tx.date)) {
         const sub = next.subscriptions.find(item => item.id === tx.subscriptionId);
         if (sub) {
+          const historical = sub.processedOccurrences.includes(tx.occurrenceKey);
+          if (subscriptionOccurrenceDue(sub, tx.date.slice(0, 7)) === null && (!historical || tx.date > clock.date)) {
+            reject('手机自动账单不在电脑当前订阅的扣账周期内，请先核对两端的周期设置。', undefined, {
+              canKeepPhone: false, resolutionHint: '请先处理订阅计划的冲突；已实际付款的历史费用可手动记一笔支出。',
+            }); continue;
+          }
           if (subscriptionOccurrencePending(sub, tx.date.slice(0, 7), clock)) {
             reject('电脑上的订阅计划尚未到扣账时间，请先核对两端的扣账日期和小时。', undefined, {
               canKeepPhone: false, resolutionHint: '请先处理订阅计划的冲突。确认实际已付款时，可采用电脑记录后手动添加支出。',
@@ -422,7 +443,7 @@ export function createMobileSync({ ensureBook, synchronize, interfaces = network
     if (current && now() >= current.expiresAt) stop();
     const choices = interfaces();
     return { active: Boolean(current), expiresAt: current?.expiresAt || null, addresses: current ? [current.address] : [], networkChoices: choices,
-      qrPayload: current ? JSON.stringify({ app: 'superledger', v: 1, protocolVersion: MOBILE_PROTOCOL_VERSION, supportedSchemaVersion: 3, addresses: [current.address], sessionId: current.id, key: current.key.toString('base64url'), expiresAt: current.expiresAt }) : null,
+      qrPayload: current ? JSON.stringify({ app: 'superledger', v: 1, protocolVersion: MOBILE_PROTOCOL_VERSION, supportedSchemaVersion: 4, addresses: [current.address], sessionId: current.id, key: current.key.toString('base64url'), expiresAt: current.expiresAt }) : null,
       lastResult };
   };
   async function start(address) {

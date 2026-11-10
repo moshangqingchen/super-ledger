@@ -1,10 +1,13 @@
+import { expenseCategories, incomeCategories } from '../assets/ledger-categories.mjs';
+import { categoryOptions, goalDeadlinePlan } from '../assets/ledger-planning.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as insights from '../assets/ledger-insights.mjs';
-import { transactionCnyAmount } from '../engine.mjs';
+import { transactionCnyAmount, getCnyBalances, getNetWorth } from '../engine.mjs';
 import { accountCurrency, formatMoney } from '../currencies.mjs';
 import { accountLabel } from '../account-presets.mjs';
+import { accountCardArtKey } from '../account-cards.js';
 
 // Exercise the real renderer without starting a server, touching ledger storage,
 // or importing the application's browser startup side effects.
@@ -21,11 +24,11 @@ function constant(name) {
   return match[0];
 }
 const rendererSource = [
-  ...['esc', 'expenseCategories', 'incomeCategories', 'categoryIcons', 'accountById',
+  ...['esc', 'categoryIcons', 'accountById',
     'accountName', 'hasForeign', 'totals', 'monthRows', 'monthly', 'periodLabel',
     'monthLabel', 'dateLabel', 'sortedRows'].map(constant),
   section('function statComparison(', 'function subscriptionTime('),
-  section('function transactionTable(', 'function overview('),
+  section('function transactionTable(', 'function isCrossMonthSearch('),
   section('function isCrossMonthSearch(', 'function accounts('),
   section('function insights(){', 'function goals(){'),
 ].join('\n');
@@ -33,6 +36,7 @@ const rendererSource = [
 function fixture() {
   return {
     settings: { monthlyBudget: 300000 },
+    goals: [], subscriptions: [],
     accounts: [
       { id: 'cash', name: '现金', type: '现金', openingBalance: 0, color: '#123456' },
       { id: 'usd', name: '美元钱包', type: '现金', openingBalance: 0, color: '#123456', currency: 'USD', cnyRate: '7.2' },
@@ -49,11 +53,15 @@ function fixture() {
 
 function renderer(overrides = {}) {
   const environment = {
-    ...insights, transactionCnyAmount, accountCurrency, formatMoney, accountLabel,
+    ...insights, expenseCategories, incomeCategories, categoryOptions, goalDeadlinePlan, transactionCnyAmount, accountCurrency, formatMoney, accountLabel, getCnyBalances, accountCardArtKey,
     state: fixture(), month: '2026-01', query: '', filter: 'all',
     accountFilter: '', categoryFilter: '', dateFilter: '', searchScope: 'all', hidden: false,
     today: () => '2026-01-09', yuan: value => formatMoney(value, 'CNY'), icon: () => '',
     heading: () => '', monthControl: () => '', addButton: () => '', demoBanner: () => '',
+    amount: value => (value / 100).toFixed(2),
+    upcoming: () => [], subscriptionCatalog: [], recurringTotal: () => 0, recurringConversionNote: () => '',
+    netWorth: () => getNetWorth(environment.state, environment.today()),
+    transactionDefaults: () => ({ accountId: 'cash' }),
     empty: () => '<div class="empty"></div>',
     ...overrides,
   };
@@ -61,7 +69,7 @@ function renderer(overrides = {}) {
     ${rendererSource}
     return { filteredTransactions, transactionTable, transactions, transactionFilterTags,
       transactionCategories, clearTransactionFilters, statCards, chart, insights,
-      monthlyTrendPanel, goalCard };
+      monthlyTrendPanel, goalCard, overview, accountAllocation, frequentExpenseButtons, openFrequentExpense };
   }`)(environment);
   return { api, environment };
 }
@@ -186,4 +194,119 @@ test('goal cards expose deposit action, remaining amount and achieved status wit
   environment.hidden = true;
   assert.doesNotMatch(api.goalCard(goal), /aria-valuenow=/);
   assert.match(api.goalCard(), /data-action="add-goal"/);
+});
+
+
+test('category budgets render budget-only rows, overspending text and private escaped amounts', () => {
+  const { api, environment } = renderer();
+  environment.state.settings.categoryBudgets = { '<预算>': 10000, '<b>咖啡</b>': 3000 };
+  const html = api.insights();
+  assert.match(html, /&lt;预算&gt;/);
+  assert.match(html, /0 笔/);
+  assert.match(html, /已用 <span class="money">¥ 0.00/);
+  assert.match(html, /已超支 <span class="money">¥ 11.10/);
+  assert.match(html, /category-bar over-budget/);
+  assert.doesNotMatch(html, /<预算>/);
+  environment.hidden = true;
+  assert.doesNotMatch(api.insights(), /100.00|30.00|11.10/);
+});
+
+test('goal deadlines show remaining days, future savings advice and expired or achieved states', () => {
+  const { api, environment } = renderer();
+  const goal = { id: 'wish', name: '旅行', saved: 0, target: 10001, deadline: '2026-03-09' };
+  const html = api.goalCard(goal);
+  assert.match(html, /目标日期 2026-03-09/);
+  assert.match(html, /剩余 59 天/);
+  assert.match(html, /建议每月存入 <b class="money">¥ 50.01/);
+  assert.match(api.goalCard({ ...goal, deadline: '2026-01-08' }), /已过目标日期/);
+  assert.doesNotMatch(api.goalCard({ ...goal, saved: 10001 }), /建议每月存入/);
+  environment.hidden = true;
+  assert.match(api.goalCard(goal), /建议每月存入 <b class="money">••••/);
+});
+
+test('transaction filters include unused custom categories', () => {
+  const { api, environment } = renderer();
+  environment.state.settings.customCategories = { expense: ['猫咪<用品>'], income: ['稿费'] };
+  assert.ok(api.transactionCategories().includes('稿费'));
+  assert.match(api.transactions(), /猫咪&lt;用品&gt;/);
+});
+
+test('budget pace renders a calendar marker only for the current budgeted month', () => {
+  const { api, environment } = renderer();
+  assert.match(api.overview(), /class="budget-pace-marker" style="left:29\.032/);
+  for (const html of [api.overview(), api.insights()]) {
+    assert.match(html, /本月已过 29%/);
+    assert.match(html, /还有余量/);
+  }
+  environment.month = '2025-12';
+  assert.doesNotMatch(api.overview() + api.insights(), /budget-pace-marker|budget-pace-note|本月已过 \d+%/);
+  environment.month = '2026-01';
+  environment.state.settings.monthlyBudget = 0;
+  assert.doesNotMatch(api.overview() + api.insights(), /budget-pace-marker|budget-pace-note/);
+  environment.state.settings.monthlyBudget = 1000;
+  assert.match(api.overview() + api.insights(), /budget-pace-note is-over"><span>已超预算/);
+  environment.state.settings.monthlyBudget = 4209;
+  const barelyOver = api.overview().match(/<section class="budget-strip"[\s\S]*?<\/section>/)[0];
+  assert.match(barelyOver, /超出 <b class="money">¥ 0\.01/);
+  assert.doesNotMatch(barelyOver, /剩余|已用 100%/);
+  environment.hidden = true;
+  const budgetPanel = api.insights().match(/<section class="panel budget-panel[\s\S]*?<\/section>/)[0];
+  assert.match(budgetPanel, /budget-ring-inner"><b class="money">••••/);
+  assert.doesNotMatch(budgetPanel, /(?:aria-label|title)="[^"]*(?:¥|421)/);
+});
+
+test('positive account allocation reuses card themes, converts CNY and escapes names with private money', () => {
+  const { api, environment } = renderer();
+  environment.state.transactions = [];
+  environment.state.accounts = [
+    { id: 'cash', name: '零钱 <b>&"', type: '其他', openingBalance: 12345, color: '#abc123' },
+    { id: 'usd', name: '美元钱包', providerId: 'alipay', type: '电子钱包', openingBalance: 10000, currency: 'USD', cnyRate: '7.2', color: '#123456' },
+    { id: 'debt', name: '负债', type: '其他', openingBalance: -100, color: '#654321' },
+  ];
+  const html = api.accountAllocation();
+  assert.match(html, /class="account-allocation" data-page="accounts"/);
+  assert.match(html, /role="img" aria-label="正余额账户占比：美元钱包 · USD 85\.4%、零钱 &lt;b&gt;&amp;&quot; 14\.6%"/);
+  assert.match(html, /data-account-theme="alipay" style="--allocation-color:var\(--card-accent\)/);
+  assert.match(html, /--allocation-color:#abc123/);
+  assert.match(html, /class="money">¥ 720\.00/);
+  assert.match(html, /class="money">¥ 123\.45/);
+  assert.match(html, /不含负债/);
+  assert.doesNotMatch(html, /零钱 <b>/);
+  environment.hidden = true;
+  const masked = api.accountAllocation();
+  assert.doesNotMatch(masked, /720\.00|123\.45|85\.4%|14\.6%/);
+  assert.match(masked, /比例已隐藏/);
+  assert.match(masked, /class="money">••••/);
+  environment.hidden = false;
+  for (const color of ['#abc', '#aabbccdd']) {
+    environment.state.accounts[0].color = color;
+    assert.ok(api.accountAllocation().includes(`--allocation-color:${color}`));
+  }
+  environment.state.accounts = environment.state.accounts.slice(0, 1);
+  assert.equal(api.accountAllocation(), '');
+});
+
+test('frequent expense buttons escape full titles and open a fresh entry using the latest details', () => {
+  const { api, environment } = renderer();
+  const title = '咖啡 <img src=x> & "常记"';
+  environment.state.transactions = [
+    { ...fixture().transactions[1], title, date: '2026-01-07' },
+    { ...fixture().transactions[1], title, id: 'latest', date: '2026-01-08', accountId: 'deleted', category: '自定<分类>' },
+  ];
+  let opened;
+  environment.transactionModal = (...args) => { opened = args; };
+  const html = api.frequentExpenseButtons();
+  assert.match(html, /data-title="咖啡 &lt;img src=x&gt; &amp; &quot;常记&quot;"/);
+  assert.match(html, /title="咖啡 &lt;img src=x&gt; &amp; &quot;常记&quot;"/);
+  assert.doesNotMatch(html, /<img src=x>|32\.10|data-amount/);
+  api.openFrequentExpense(title);
+  assert.deepEqual(opened, [undefined, 'expense', { title, category: '自定<分类>', accountId: 'cash', focusAmount: true }]);
+  assert.match(source, /case'frequent-expense':openFrequentExpense\(target.dataset.title\);break;/);
+  environment.hidden = true;
+  assert.equal(api.frequentExpenseButtons(), html);
+  environment.state.accounts = [];
+  assert.equal(api.frequentExpenseButtons(), '');
+  environment.state.accounts = fixture().accounts;
+  environment.state.transactions.pop();
+  assert.equal(api.frequentExpenseButtons(), '');
 });

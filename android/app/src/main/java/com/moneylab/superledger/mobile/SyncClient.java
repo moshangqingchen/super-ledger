@@ -74,8 +74,8 @@ public final class SyncClient {
     }
     public static JSONObject synchronize(Pairing pairing, JSONObject request) throws Exception {
         if (pairing.expiresAt <= System.currentTimeMillis()) throw new Exception("二维码已过期，请在电脑端重新生成并扫码");
-        if (request.optInt("schemaVersion", 1) >= 3 && pairing.supportedSchemaVersion < 3)
-            throw new Exception("按小时扣账需要电脑 1.8.10 或更新版本，请升级电脑端后重新生成同步二维码");
+        if (request.optInt("schemaVersion", 1) >= 3 && pairing.supportedSchemaVersion < request.optInt("schemaVersion", 1))
+            throw new Exception("手机账本需要版本 " + request.optInt("schemaVersion", 1) + " 数据结构，请更新电脑端后重新生成同步二维码");
         byte[] body = encrypt(request, pairing).toString().getBytes(StandardCharsets.UTF_8);
         String lastFailure = "未找到电脑";
         for (String address : pairing.addresses) {

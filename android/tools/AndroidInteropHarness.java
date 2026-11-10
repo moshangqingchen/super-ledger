@@ -17,7 +17,15 @@ public class AndroidInteropHarness {
     String action=args[0];
     LedgerStore store=LedgerStore.get(new Context(new File(args[1])));
     JSONObject output=new JSONObject();
-    if(action.equals("full-ledger")) {
+    if(action.equals("schema4-create")) {
+      store.saveSettings(new JSONObject().put("customCategories",new JSONObject().put("expense",new JSONArray().put("宠物")).put("income",new JSONArray().put("稿费"))).put("categoryBudgets",new JSONObject().put("宠物",4567)).put("schema4Opaque",new JSONObject().put("value","preserved")));
+      store.saveGoal(new JSONObject().put("id","schema4_goal").put("name","有日期的心愿").put("target",10001).put("saved",101).put("deadline","2030-01-31"));
+      store.saveSubscription(new JSONObject().put("id","schema4_annual").put("name","年付互操作").put("accountId","wallet").put("amount",101).put("startDate","2024-02-29").put("billingDay",31).put("intervalMonths",12).put("startHour",9).put("billingHour",18).put("recurring",true).put("active",true).put("expiresOn","2024-02-29"));
+      JSONObject sub=com.moneylab.superledger.mobile.MobileLedger.find(store.snapshot().getJSONObject("state").getJSONArray("subscriptions"),"schema4_annual");
+      output.put("nextDue",com.moneylab.superledger.mobile.MobileLedger.nextSubscriptionDue(sub,LedgerStore.today())).put("keys",sub.getJSONArray("processedOccurrences"));
+    } else if(action.equals("schema4-edit")) {
+      store.saveSettings(new JSONObject().put("monthlyBudget",765432));
+    } else if(action.equals("full-ledger")) {
       store.saveAccount(new JSONObject().put("id","mobile_usd").put("name","手机美元账户").put("type","银行卡").put("color","#778899").put("currency","USD").put("cnyRate","7.2").put("rateMode","manual").put("openingBalance",10000));
       store.saveManual(new JSONObject().put("id","mobile_foreign_expense").put("type","expense").put("amount",1250).put("accountId","mobile_usd").put("currency","USD").put("cnyRate","7.1").put("title","美元消费").put("category","日用购物").put("note","").put("date",LedgerStore.today()));
       store.saveManual(new JSONObject().put("id","mobile_exchange").put("type","transfer").put("amount",7200).put("accountId","wallet").put("toAccountId","mobile_usd").put("toAmount",1000).put("currency","CNY").put("toCurrency","USD").put("title","账户换汇").put("category","账户转账").put("note","").put("date",LedgerStore.today()));

@@ -74,7 +74,7 @@ public final class MobileLedger {
     }
     private static String text(JSONObject obj, String key, int max, boolean empty) throws Exception {
         Object value = obj.opt(key); if (!(value instanceof String)) throw new Exception(key + "必须是文字"); String s = (String) value;
-        if (s.length() > max || !empty && s.trim().isEmpty() || s.matches("(?s).*[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F].*")) throw new Exception(key + "格式不正确"); return s;
+        if (s.length() > max || !empty && s.matches("[\\x09-\\x0D\\x20\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]*") || s.matches("(?s).*[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F].*")) throw new Exception(key + "格式不正确"); return s;
     }
     private static void id(JSONObject obj, String key, int max) throws Exception { if (!text(obj,key,max,false).matches("[A-Za-z0-9_-]+")) throw new Exception(key + "标识不正确"); }
     private static void bool(JSONObject obj, String key) throws Exception { if (!(obj.opt(key) instanceof Boolean)) throw new Exception(key + "必须是开关值"); }
@@ -92,7 +92,17 @@ public final class MobileLedger {
         JSONObject state=copy(source),empty=emptyState(); Iterator<String> keys=empty.keys();while(keys.hasNext()){String key=keys.next();if(!state.has(key))state.put(key,empty.get(key));} return state;
     }
     public static void validateState(JSONObject state) throws Exception {
-        long schema=integer(state,"schemaVersion",1,3);integer(state,"revision",0,9_007_199_254_740_991L);bool(state,"demo");JSONObject settings=state.getJSONObject("settings");integer(settings,"monthlyBudget",0,MAX_MONEY);if(!"CNY".equals(settings.optString("currency")))throw new Exception("汇总币种必须为 CNY");
+        long schema=integer(state,"schemaVersion",1,4);integer(state,"revision",0,9_007_199_254_740_991L);bool(state,"demo");JSONObject settings=state.getJSONObject("settings");integer(settings,"monthlyBudget",0,MAX_MONEY);if(!"CNY".equals(settings.optString("currency")))throw new Exception("汇总币种必须为 CNY");
+        if(settings.has("categoryBudgets")||settings.has("customCategories"))requireSchema4(schema);
+        if(settings.has("categoryBudgets")){
+            JSONObject budgets=settings.optJSONObject("categoryBudgets");if(budgets==null||budgets.length()>50)throw new Exception("分类预算必须是对象且不能超过50项");
+            Iterator<String> keys=budgets.keys();while(keys.hasNext()){String key=keys.next();text(new JSONObject().put("category",key),"category",50,false);integer(budgets,key,1,MAX_MONEY);}
+        }
+        if(settings.has("customCategories")){
+            JSONObject custom=settings.optJSONObject("customCategories");if(custom==null||custom.length()!=2)throw new Exception("自定义分类需要支出和收入两组");
+            Set<String> builtin=new HashSet<>();java.util.Collections.addAll(builtin,LedgerCategories.EXPENSE);java.util.Collections.addAll(builtin,LedgerCategories.INCOME);
+            for(String kind:new String[]{"expense","income"}){JSONArray values=array(custom,kind,30);Set<String> names=new HashSet<>();for(int i=0;i<values.length();i++){String name=text(new JSONObject().put("category",values.get(i)),"category",50,false);if(builtin.contains(name)||!names.add(name))throw new Exception("自定义分类不能重复或与内置分类重名");}}
+        }
         JSONArray accounts=array(state,"accounts",100),transactions=array(state,"transactions",100000),subs=array(state,"subscriptions",1000),goals=array(state,"goals",1000);
         Set<String> accountIds=unique(accounts,80),subIds=unique(subs,80);unique(transactions,128);unique(goals,80);
         for(int i=0;i<accounts.length();i++) { JSONObject a=accounts.getJSONObject(i);text(a,"name",60,false);text(a,"type",40,false);color(a);integer(a,"openingBalance",-MAX_MONEY,MAX_MONEY);String c=currency(a);currencyRate(a);
@@ -118,13 +128,23 @@ public final class MobileLedger {
             if(!"会员订阅".equals(sub.optString("category")))throw new Exception("订阅分类必须为会员订阅");date(sub.getString("startDate"));integer(sub,"billingDay",1,31);bool(sub,"active");bool(sub,"recurring");color(sub);text(sub,"icon",80,false);
             for(String field:new String[]{"startHour","billingHour"})if(sub.has(field))integer(sub,field,0,23);
             if(schema<3&&(sub.has("startHour")||sub.has("billingHour")))throw new Exception("按小时扣账需要 schemaVersion 3，请升级电脑和手机应用");
+            if(sub.has("intervalMonths")){requireSchema4(schema);intervalMonths(sub);if(!sub.getBoolean("recurring"))throw new Exception("单次订阅不能设置扣账周期");}
             SubscriptionDetails.validateSubscription(sub);
-            if(sub.getBoolean("active")&&sub.getBoolean("recurring")){recurringTotal=recurringTotal.add(BigInteger.valueOf(cny));if(recurringTotal.multiply(BigInteger.valueOf(12)).compareTo(LIMIT)>0)throw new Exception("订阅年度折算超过支持范围");}
+            if(sub.getBoolean("active")&&sub.getBoolean("recurring")){recurringTotal=recurringTotal.add(BigInteger.valueOf(cny).multiply(BigInteger.valueOf(12/intervalMonths(sub))));if(recurringTotal.compareTo(LIMIT)>0)throw new Exception("订阅年度折算超过支持范围");}
             JSONArray processed=array(sub,"processedOccurrences",3600);Set<String> unique=new HashSet<>();String prefix=sub.getString("id")+":";for(int j=0;j<processed.length();j++){String key=processed.getString(j);if(!key.startsWith(prefix)||!isValidDate(key.substring(prefix.length())+"-01")||!unique.add(key))throw new Exception("已处理订阅账期无效或重复");}
         }
         for(int i=0;i<goals.length();i++){JSONObject goal=goals.getJSONObject(i);text(goal,"name",80,false);integer(goal,"target",1,MAX_MONEY);integer(goal,"saved",0,MAX_MONEY);color(goal);if(goal.has("cover")){String cover=text(goal,"cover",250,true);if(!cover.isEmpty()&&(!cover.matches("/?assets/[A-Za-z0-9_./-]+")||cover.contains("..")))throw new Exception("目标封面须为本地 assets 资源");}}
+        for(int i=0;i<goals.length();i++){JSONObject goal=goals.getJSONObject(i);if(goal.has("deadline")){requireSchema4(schema);date(text(goal,"deadline",10,false));}}
         balances(state,null);
     }
+    private static void requireSchema4(long schema)throws Exception {if(schema<4)throw new Exception("订阅周期、分类预算、自定义分类和心愿目标日期需要 schemaVersion 4，请升级电脑和手机应用");}
+    public static int intervalMonths(JSONObject sub)throws Exception {int interval=sub.has("intervalMonths")?(int)integer(sub,"intervalMonths",1,12):1;if(interval!=1&&interval!=3&&interval!=6&&interval!=12)throw new Exception("扣账周期只能为1、3、6或12个月");return interval;}
+    public static String periodLabel(JSONObject sub){switch(sub.optInt("intervalMonths",1)){case 3:return "每季度";case 6:return "每半年";case 12:return "每年";default:return "每月";}}
+    public static String periodUnit(JSONObject sub){switch(sub.optInt("intervalMonths",1)){case 3:return "季";case 6:return "半年";case 12:return "年";default:return "月";}}
+    /** Convert each occurrence to CNY cents before half-up monthly division; annual fees never reuse that rounded mean. */
+    public static long recurringTotal(JSONObject state,boolean annual)throws Exception {BigInteger total=BigInteger.ZERO;JSONArray subs=state.getJSONArray("subscriptions");for(int i=0;i<subs.length();i++){JSONObject sub=subs.getJSONObject(i);if(!sub.getBoolean("active")||!sub.getBoolean("recurring"))continue;JSONObject account=find(state.getJSONArray("accounts"),sub.getString("accountId"));long cny=toCnyCents(sub.getLong("amount"),currency(sub),currencyRate(account));int interval=intervalMonths(sub);total=total.add(annual?BigInteger.valueOf(cny).multiply(BigInteger.valueOf(12/interval)):BigInteger.valueOf(cny+interval/2).divide(BigInteger.valueOf(interval)));}return bounded(total,"订阅汇总");}
+    public static String[] categories(JSONObject settings,String kind)throws Exception {java.util.List<String> values=new java.util.ArrayList<>();java.util.Collections.addAll(values,kind.equals("income")?LedgerCategories.INCOME:LedgerCategories.EXPENSE);JSONObject custom=settings.optJSONObject("customCategories");JSONArray extra=custom==null?null:custom.optJSONArray(kind);if(extra!=null)for(int i=0;i<extra.length();i++)values.add(extra.getString(i));return values.toArray(new String[0]);}
+    public static JSONObject goalDeadline(JSONObject goal,String today)throws Exception {date(today);JSONObject result=new JSONObject();if(!goal.has("deadline"))return result;String deadline=goal.getString("deadline");date(deadline);LocalDate start=LocalDate.parse(today),end=LocalDate.parse(deadline);long days=end.toEpochDay()-start.toEpochDay(),remaining=Math.max(0,goal.getLong("target")-goal.getLong("saved"));result.put("date",deadline).put("days",days).put("overdue",days<0&&remaining>0);if(days>0&&remaining>0){long months=java.time.temporal.ChronoUnit.MONTHS.between(start,end);if(start.plusMonths(months).isBefore(end))months++;months=Math.max(1,months);result.put("monthlySaving",(remaining+months-1)/months);}return result;}
     public static JSONObject balances(JSONObject state,String asOf) throws Exception {
         if(asOf!=null)date(asOf);Map<String,BigInteger> exact=new LinkedHashMap<>();JSONArray accounts=state.getJSONArray("accounts"),txs=state.getJSONArray("transactions");
         for(int i=0;i<accounts.length();i++){JSONObject a=accounts.getJSONObject(i);exact.put(a.getString("id"),BigInteger.valueOf(a.getLong("openingBalance")));}
@@ -136,7 +156,7 @@ public final class MobileLedger {
     public static JSONObject dailySummary(JSONObject state,String today) throws Exception {return summary(state,today,today);}
     public static JSONObject monthlySummary(JSONObject state,String month,String today) throws Exception {if(!isValidDate(month+"-01"))throw new Exception("统计月份无效");JSONObject result=summary(state,month+"-",today);long budget=state.getJSONObject("settings").getLong("monthlyBudget");return result.put("budget",budget).put("remaining",budget-result.getLong("expense"));}
     public static String addMonthsDue(String start,int index,int billingDay) throws Exception {date(start);if(index<0||index>3599||billingDay<1||billingDay>31)throw new Exception("订阅扣款月份无效");if(index==0)return start;YearMonth month=YearMonth.from(LocalDate.parse(start)).plusMonths(index);if(month.getYear()>2199)throw new Exception("订阅日期超过支持范围");return month.atDay(Math.min(billingDay,month.lengthOfMonth())).toString();}
-    private static JSONArray dueDates(JSONObject sub,String today) throws Exception {date(today);JSONArray dates=new JSONArray();String start=sub.getString("startDate");if(start.compareTo(today)>0)return dates;if(!sub.getBoolean("recurring"))return dates.put(start);YearMonth first=YearMonth.from(LocalDate.parse(start)),last=YearMonth.from(LocalDate.parse(today));int count=(last.getYear()-first.getYear())*12+last.getMonthValue()-first.getMonthValue();for(int i=0;i<=count;i++){String due=addMonthsDue(start,i,sub.getInt("billingDay"));if(due.compareTo(today)<=0)dates.put(due);}return dates;}
+    private static JSONArray dueDates(JSONObject sub,String today) throws Exception {date(today);JSONArray dates=new JSONArray();String start=sub.getString("startDate");if(start.compareTo(today)>0)return dates;if(!sub.getBoolean("recurring"))return dates.put(start);YearMonth first=YearMonth.from(LocalDate.parse(start)),last=YearMonth.from(LocalDate.parse(today));int count=(last.getYear()-first.getYear())*12+last.getMonthValue()-first.getMonthValue();for(int i=0;i<=count;i+=intervalMonths(sub)){String due=addMonthsDue(start,i,sub.getInt("billingDay"));if(due.compareTo(today)<=0)dates.put(due);}return dates;}
     private static Set<String> strings(JSONArray values) throws Exception {Set<String> result=new java.util.TreeSet<>();for(int i=0;i<values.length();i++)result.add(values.getString(i));return result;}
     public static int subscriptionDueHour(JSONObject sub,String due) throws Exception {
         String field=due.substring(0,7).equals(sub.getString("startDate").substring(0,7))?"startHour":"billingHour";
@@ -166,11 +186,19 @@ public final class MobileLedger {
         if(!sub.getBoolean("recurring"))return processed.contains(id+":"+start.substring(0,7))?null:start;
         YearMonth first=YearMonth.from(LocalDate.parse(start));
         int last=(2199-first.getYear())*12+12-first.getMonthValue();
-        for(int month=0;month<=last;month++){
+        for(int month=0;month<=last;month+=intervalMonths(sub)){
             String due=addMonthsDue(start,month,sub.getInt("billingDay"));
             if(!processed.contains(id+":"+due.substring(0,7)))return due;
         }
         return null;
+    }
+
+    /** Changing the grid never backfills dates before today; keep all pre-existing keys. */
+    public static JSONObject changeSubscriptionInterval(JSONObject source,int interval,String today)throws Exception {
+        date(today);JSONObject sub=copy(source);if(interval==1)sub.remove("intervalMonths");else sub.put("intervalMonths",interval);intervalMonths(sub);
+        Set<String> processed=strings(sub.getJSONArray("processedOccurrences"));JSONArray dates=dueDates(sub,today);
+        for(int i=0;i<dates.length();i++){String due=dates.getString(i);if(due.compareTo(today)<0)processed.add(sub.getString("id")+":"+due.substring(0,7));}
+        return sub.put("processedOccurrences",new JSONArray(processed));
     }
 
     /** Manual changes establish a new expiry baseline without reusing already paid months. */
@@ -218,7 +246,7 @@ public final class MobileLedger {
                 else if(previous==null)baseline.add(key);
             }
             sub.put("expiryRenewal",new JSONObject().put("baseDate",baseDate).put("baselineOccurrences",new JSONArray(baseline)).put("renewedOccurrences",new JSONArray(renewed)));
-            sub.put("expiresOn",addMonthsDue(baseDate,renewed.size(),LocalDate.parse(baseDate).getDayOfMonth()));
+            sub.put("expiresOn",addMonthsDue(baseDate,renewed.size()*intervalMonths(sub),LocalDate.parse(baseDate).getDayOfMonth()));
         }
     }
     /** Exactly once per subscription/month. This records expenses; it never makes a payment. */

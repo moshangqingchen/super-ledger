@@ -1,5 +1,6 @@
 import { accountCurrency, currencyRate, currencyInfo, parseMoney, toCnyCents } from './currencies.mjs';
 import { appleBalanceRegion, isAppleBalance } from './account-presets.mjs';
+import { expenseCategories, incomeCategories } from './assets/ledger-categories.mjs';
 
 /** Balances and transactions use integer units of their account currency; reports use CNY cents. */
 export const MAX_MONEY = 1_000_000_000_000;
@@ -13,6 +14,7 @@ export const subscriptionAccountTypes = Object.freeze([
   { id: 'other', label: '其他' },
 ].map(item => Object.freeze(item)));
 const SUBSCRIPTION_ACCOUNT_TYPES = new Set(subscriptionAccountTypes.map(item => item.id));
+const BUILTIN_CATEGORIES = new Set([...expenseCategories, ...incomeCategories]);
 const DATE_PATTERN = /^(19\d{2}|20\d{2}|21\d{2})-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/;
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const own = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -123,8 +125,26 @@ function subscriptionOccurrenceSet(values, sub, label) {
   return occurrences;
 }
 
-function renewedExpiry(renewal) {
-  return addMonthsDue(renewal.baseDate, renewal.renewedOccurrences.length, Number(renewal.baseDate.slice(8)));
+export function subscriptionIntervalMonths(sub) {
+  const interval = own(sub, 'intervalMonths') ? sub.intervalMonths : 1;
+  if (!Number.isInteger(interval) || ![1, 3, 6, 12].includes(interval)) fail('扣账周期必须为 1、3、6 或 12 个月');
+  return interval;
+}
+
+/** Convert each occurrence to CNY first, then round the monthly average half up to a cent. */
+export function subscriptionMonthlyCnyAmount(sub, account) {
+  const amount = toCnyCents(sub.amount, accountCurrency(account), currencyRate(account));
+  const interval = BigInt(subscriptionIntervalMonths(sub));
+  return Number((BigInt(amount) + interval / 2n) / interval);
+}
+
+/** Annual estimates use full occurrence prices, never the rounded monthly average. */
+export function subscriptionAnnualCnyAmount(sub, account) {
+  return toCnyCents(sub.amount, accountCurrency(account), currencyRate(account)) * (12 / subscriptionIntervalMonths(sub));
+}
+
+function renewedExpiry(renewal, sub) {
+  return addMonthsDue(renewal.baseDate, renewal.renewedOccurrences.length * subscriptionIntervalMonths(sub), Number(renewal.baseDate.slice(8)));
 }
 
 /** A manual expiry edit covers all existing paid periods and starts a new calendar anchor. */
@@ -165,7 +185,7 @@ export function reconcileSubscriptionExpiry(state, now = new Date(), newOccurren
       else baseline.add(key);
     }
     sub.expiryRenewal = { baseDate: renewal.baseDate, baselineOccurrences: [...baseline].sort(), renewedOccurrences: [...renewed].sort() };
-    sub.expiresOn = renewedExpiry(sub.expiryRenewal);
+    sub.expiresOn = renewedExpiry(sub.expiryRenewal, sub);
   }
   return state;
 }
@@ -174,21 +194,52 @@ export function reconcileSubscriptionExpiry(state, now = new Date(), newOccurren
 export function upgradeSchemaVersion(state) {
   if (state.accounts.some(account => accountCurrency(account) !== 'CNY')) state.schemaVersion = Math.max(state.schemaVersion, 2);
   if (state.subscriptions.some(sub => own(sub, 'startHour') || own(sub, 'billingHour'))) state.schemaVersion = Math.max(state.schemaVersion, 3);
+  if (hasSchema4Fields(state)) state.schemaVersion = Math.max(state.schemaVersion, 4);
   return state;
+}
+
+function hasSchema4Fields(state) {
+  return own(state.settings, 'categoryBudgets') || own(state.settings, 'customCategories')
+    || state.subscriptions.some(sub => own(sub, 'intervalMonths')) || state.goals.some(goal => own(goal, 'deadline'));
 }
 
 export function validateState(state) {
   object(state, '账本');
-  if (![1, 2, 3].includes(state.schemaVersion)) fail('不支持此账本版本');
+  if (![1, 2, 3, 4].includes(state.schemaVersion)) fail('不支持此账本版本');
   integer(state.revision, '账本版本号', 0, Number.MAX_SAFE_INTEGER);
   boolean(state.demo, '示例数据标志');
   object(state.settings, '设置');
   integer(state.settings.monthlyBudget, '月预算', 0);
   if (state.settings.currency !== 'CNY') fail('汇总显示币种必须为人民币 CNY');
+  if (own(state.settings, 'categoryBudgets')) {
+    object(state.settings.categoryBudgets, '分类预算');
+    const budgets = Object.entries(state.settings.categoryBudgets);
+    if (budgets.length > 50) fail('分类预算不能超过50项');
+    for (const [category, budget] of budgets) {
+      string(category, '预算分类', 50);
+      integer(budget, '分类预算金额', 1);
+    }
+  }
+  if (own(state.settings, 'customCategories')) {
+    const categories = state.settings.customCategories;
+    object(categories, '自定义分类');
+    if (Object.keys(categories).some(key => !['expense', 'income'].includes(key))) fail('自定义分类只能包含支出和收入两组');
+    for (const kind of ['expense', 'income']) {
+      array(categories[kind], '自定义分类', 30);
+      const seen = new Set();
+      for (const category of categories[kind]) {
+        string(category, '自定义分类名称', 50);
+        if (BUILTIN_CATEGORIES.has(category)) fail('自定义分类不能与内置分类重名');
+        if (seen.has(category)) fail('自定义分类不能重复');
+        seen.add(category);
+      }
+    }
+  }
   array(state.accounts, '账户', 100);
   array(state.transactions, '交易', 100_000);
   array(state.subscriptions, '订阅', 1000);
   array(state.goals, '储蓄目标', 1000);
+  if (state.schemaVersion < 4 && hasSchema4Fields(state)) fail('订阅周期、分类预算、自定义分类和心愿目标日期需要使用版本 4，请使用支持这些功能的新版应用保存');
   const accounts = uniqueIds(state.accounts, '账户', 80);
   const accountById = new Map(state.accounts.map(account => [account.id, account]));
   const subscriptions = uniqueIds(state.subscriptions, '订阅', 80);
@@ -307,14 +358,18 @@ export function validateState(state) {
       const baseline = subscriptionOccurrenceSet(renewal.baselineOccurrences, sub, '已覆盖到期账期');
       const renewed = subscriptionOccurrenceSet(renewal.renewedOccurrences, sub, '已顺延到期账期');
       if ([...renewed].some(key => baseline.has(key))) fail('到期顺延账期不能与已覆盖账期重复');
-      if (!sub.expiresOn || sub.expiresOn !== renewedExpiry(renewal)) fail('会员到期日期与到期顺延记录不一致');
+      if (!sub.expiresOn || sub.expiresOn !== renewedExpiry(renewal, sub)) fail('会员到期日期与到期顺延记录不一致');
     }
     integer(sub.billingDay, '每月扣款日', 1, 31);
     boolean(sub.recurring, '连续订阅');
+    if (own(sub, 'intervalMonths')) {
+      if (!sub.recurring) fail('非连续订阅不能设置扣账周期');
+      subscriptionIntervalMonths(sub);
+    }
     boolean(sub.active, '订阅启用状态');
     if (sub.active && sub.recurring) {
-      recurringCnyTotal += BigInt(convertedAmount);
-      if (recurringCnyTotal * 12n > BigInt(MAX_MONEY)) fail('连续订阅的人民币折算年度预估超过支持的范围');
+      recurringCnyTotal += BigInt(convertedAmount) * BigInt(12 / subscriptionIntervalMonths(sub));
+      if (recurringCnyTotal > BigInt(MAX_MONEY)) fail('连续订阅的人民币折算年度预估超过支持的范围');
     }
     color(sub.color, '订阅颜色');
     string(sub.icon, '订阅图标', 80);
@@ -324,6 +379,7 @@ export function validateState(state) {
     string(goal.name, '储蓄目标名称', 80);
     integer(goal.target, '目标金额', 1);
     integer(goal.saved, '已存金额', 0);
+    if (own(goal, 'deadline')) date(goal.deadline, '心愿目标日期');
     color(goal.color, '目标颜色');
     if (own(goal, 'cover')) {
       string(goal.cover, '目标封面', 250, true);
@@ -397,14 +453,14 @@ function dueDates(sub, today, hour = 23) {
   const [ty, tm] = today.split('-').map(Number);
   const months = (ty - sy) * 12 + tm - sm;
   const dates = [];
-  for (let i = 0; i <= months; i++) {
+  for (let i = 0; i <= months; i += subscriptionIntervalMonths(sub)) {
     const due = addMonthsDue(sub.startDate, i, sub.billingDay);
     if (due < today || due === today && subscriptionDueHour(sub, due) <= hour) dates.push(due);
   }
   return dates;
 }
 
-/** Catch up monthly bookings, exactly once per subscription/month; never initiates bank payments. */
+/** Catch up scheduled bookings, exactly once per subscription/due month; never initiates bank payments. */
 export function applyRecurring(state, now = new Date()) {
   validateState(state);
   // Explicit date-only callers retain their existing whole-day behavior.
@@ -477,6 +533,24 @@ export function replaceRecord(records, id, record) {
   records[index] = record;
 }
 
+/** Save a new interval without charging elapsed periods or rescaling already-earned membership time. */
+export function prepareSubscriptionEdit(previous, sub, transactions, now = new Date()) {
+  if (sub.intervalMonths === 1 || !sub.recurring) delete sub.intervalMonths;
+  if (!previous) return sub;
+  const changed = subscriptionIntervalMonths(previous) !== subscriptionIntervalMonths(sub);
+  sub.processedOccurrences = [...new Set([...previous.processedOccurrences, ...sub.processedOccurrences])];
+  if (changed) {
+    const { date: today } = subscriptionClock(now);
+    const processed = new Set(sub.processedOccurrences);
+    for (const due of dueDates(sub, today)) {
+      if (due < today) processed.add(occurrenceKey(sub, due));
+    }
+    sub.processedOccurrences = [...processed].sort();
+    resetSubscriptionExpiry(sub, transactions);
+  }
+  return sub;
+}
+
 export function nextSubscriptionDue(sub, now = new Date()) {
   subscriptionClock(now);
   if (!sub.active) return null;
@@ -484,7 +558,7 @@ export function nextSubscriptionDue(sub, now = new Date()) {
   if (!sub.recurring) return processed.has(occurrenceKey(sub, sub.startDate)) ? null : sub.startDate;
   const [sy, sm] = sub.startDate.split('-').map(Number);
   const lastSupportedMonth = (2199 - sy) * 12 + 12 - sm;
-  for (let i = 0; i <= lastSupportedMonth; i++) {
+  for (let i = 0; i <= lastSupportedMonth; i += subscriptionIntervalMonths(sub)) {
     const due = addMonthsDue(sub.startDate, i, sub.billingDay);
     if (!processed.has(occurrenceKey(sub, due))) return due;
   }

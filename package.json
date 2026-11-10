@@ -39,6 +39,8 @@
       "app.js",
       "assets/ledger-insights.mjs",
       "assets/ledger-actions.mjs",
+      "assets/ledger-categories.mjs",
+      "assets/ledger-planning.mjs",
       "icon-select.js",
       "icon-select.css",
       "update-ui.js",

@@ -186,6 +186,8 @@ test('hour schedules require schema three and promotion never downgrades existin
   assert.equal(validateState(foreign), true);
   foreign.schemaVersion = 4;
   upgradeSchemaVersion(foreign);
+  assert.equal(validateState(foreign), true);
+  foreign.schemaVersion = 5;
   assert.throws(() => validateState(foreign), /不支持此账本版本/);
 });
 

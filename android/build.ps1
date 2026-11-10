@@ -67,6 +67,7 @@ $Output = Join-Path $Release ('SuperLedger-Mobile-' + $VersionName + '.apk')
 # transparent pixels even when the source image itself is copied unchanged.
 Run $Aapt2 @('compile','--no-crunch','--dir',(Join-Path $Sources 'res'),'-o',$Compiled)
 Run $Aapt2 @('link','-o',$Unsigned,'-I',$AndroidJar,'--manifest',(Join-Path $Sources 'AndroidManifest.xml'),'--java',$Gen,'--min-sdk-version','26','--target-sdk-version','35','--version-code',([string]$VersionCode),'--version-name',$VersionName,'--auto-add-overlay',$Compiled)
+Run 'node.exe' @((Join-Path $ActualRoot 'tools\generate-ledger-categories.mjs'),$Gen)
 $SourceFiles = @((Get-ChildItem -LiteralPath (Join-Path $Sources 'java') -Filter '*.java' -Recurse).FullName) + @((Get-ChildItem -LiteralPath $Gen -Filter '*.java' -Recurse).FullName)
 if(!$SourceFiles.Count) { throw 'No Android Java sources found.' }
 $SourceList = Join-Path $Build 'sources.txt'

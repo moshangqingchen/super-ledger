@@ -45,12 +45,14 @@ function scheduleEditor(subscription) {
   const customInput = /<input[^>]*name="customBilling"[^>]*>/.exec(html)[0];
   const panel = { hidden: /\shidden(?:\s|>)/.test(/<div id="subscription-monthly-fields"[^>]*>/.exec(html)[0]) };
   const toggle = { hidden: /\shidden(?:\s|>)/.test(/<label id="subscription-monthly-toggle"[^>]*>/.exec(html)[0]) };
+  const extraControls = Object.fromEntries(['#subscription-interval-field', 'label[for="field-billingDay"]', 'label[for="field-billingHour"]', '#subscription-schedule-label'].map(key => [key, {}]));
   const form = {
     dataset: { id: subscription?.id || '' },
     elements: {},
-    querySelector: selector => selector === '#subscription-monthly-fields' ? panel : toggle,
+    querySelector: selector => selector === '#subscription-monthly-fields' ? panel : selector === '#subscription-monthly-toggle' ? toggle : extraControls[selector],
   };
   const initial = {
+    intervalMonths: String(subscription?.intervalMonths || 1),
     expiresOn: subscription?.expiresOn || '',
     startDate: subscription?.startDate || '2026-11-07',
     startHour: String(selectedHour(html, 'startHour')),
@@ -69,7 +71,7 @@ function scheduleEditor(subscription) {
   const sync = new Function('document', `${handler}\n${wiring}\nreturn syncSubscriptionSchedule;`)({ addEventListener: (event, listener) => { listeners[event] = listener; } });
   sync(form.elements.startDate);
   return {
-    form, panel, toggle, sync,
+    form, panel, toggle, sync, extraControls,
     update(name, value, event = 'change') {
       const target = form.elements[name];
       if (typeof value === 'boolean') target.checked = value;
@@ -192,4 +194,20 @@ test('single subscriptions hide monthly settings and restore their independent v
   assert.equal(editor.toggle.hidden, false);
   assert.equal(elements.billingHour.disabled, false);
   assert.equal(elements.billingHour.value, '20');
+});
+
+
+test('cycle selector changes monthly labels and stays hidden for one-time subscriptions', () => {
+  const editor = scheduleEditor();
+  assert.match(subscriptionForm(), /name="intervalMonths"/);
+  editor.update('intervalMonths', '12');
+  assert.equal(editor.extraControls['label[for="field-billingDay"]'].textContent, '扣账日');
+  assert.equal(editor.extraControls['label[for="field-billingHour"]'].textContent, '扣账时间');
+  assert.equal(editor.panel.hidden, true, 'cycle selection does not expand custom schedule');
+  editor.update('recurring', false);
+  assert.equal(editor.form.elements.intervalMonths.disabled, true);
+  assert.equal(editor.extraControls['#subscription-interval-field'].hidden, true);
+  editor.update('recurring', true);
+  editor.update('intervalMonths', '1');
+  assert.equal(editor.extraControls['label[for="field-billingDay"]'].textContent, '每月扣账日');
 });

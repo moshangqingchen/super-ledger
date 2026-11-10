@@ -4,6 +4,7 @@ import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { subscriptionCatalog } from '../subscription-catalog.mjs';
+import { subscriptionPeriodLabel } from '../subscription-overview.mjs';
 
 const css = readFileSync(new URL('../subscription-polish.css', import.meta.url), 'utf8')
   .replace(/\/\*[\s\S]*?\*\//g, '');
@@ -29,10 +30,10 @@ function compactCard({ hidden = false, sub = {}, balance = 500 } = {}) {
   const [source] = /function subscriptionCompact\(s,status,currentBalances\)\{[\s\S]*?\r?\n\}\r?\n/.exec(appSource);
   const account = { id: 'a', name: '钱包' };
   const render = new Function(
-    'hidden', 'esc', 'icon', 'subIcon', 'accountById', 'accountCurrency', 'accountLogo', 'accountLabel', 'subscriptionMoney', 'subscriptionDifferenceMoney',
+    'hidden', 'esc', 'icon', 'subIcon', 'accountById', 'accountCurrency', 'accountLogo', 'accountLabel', 'subscriptionMoney', 'subscriptionDifferenceMoney', 'subscriptionPeriodLabel',
     `${source}; return subscriptionCompact;`,
   )(hidden, value => String(value).replace(/</g, '&lt;'), () => '<svg></svg>', () => '<span class="service-logo"></span>',
-    id => (id === 'a' ? account : undefined), () => 'USD', () => '<span class="account-logo"></span>', () => '钱包账户', s => `USD ${s.amount / 100}`, (units, code) => `${code} ${units / 100}`);
+    id => (id === 'a' ? account : undefined), () => 'USD', () => '<span class="account-logo"></span>', () => '钱包账户', s => `USD ${s.amount / 100}`, (units, code) => `${code} ${units / 100}`, subscriptionPeriodLabel);
   return render(
     { id: 's1', name: 'Claude', tier: 'Pro', amount: 300, accountId: 'a', recurring: true, active: true, note: '私密备注', linkedAccounts: [{ type: 'email', value: 'login@example.com' }], ...sub },
     { tone: 'soon', label: '26 天后到期', date: '2026-12-02' },

@@ -130,7 +130,7 @@ async function fixture(t, options = {}) {
   });
   const result = { address, directory, close };
   result.start = async () => {
-    server = await createLedgerServer({ port: 0, dataDirectory: directory, authToken: 'test-token', now: options.now, mobileSyncOptions: { interfaces: () => [{ address, label: 'test' }] } });
+    server = await createLedgerServer({ port: 0, dataDirectory: directory, onlineRates: false, authToken: 'test-token', now: options.now, mobileSyncOptions: { interfaces: () => [{ address, label: 'test' }] } });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     result.base = `http://127.0.0.1:${server.address().port}`;
   };
@@ -163,7 +163,7 @@ test('encrypted hourly sync advertises support, blocks older phones and waits fo
   state.subscriptions = [{ id: 'hourly', name: '小时订阅', amount: 1200, accountId: 'wallet', category: '会员订阅', startDate: '2026-11-06', startHour: 10, billingDay: 6, billingHour: 18, recurring: true, active: true, color: '#123456', icon: 'music', processedOccurrences: [] }];
   assert.equal((await f.api('/api/state', { state, expectedRevision: state.revision }, 'PUT')).status, 200);
   await f.pair();
-  assert.equal(f.qr.supportedSchemaVersion, 3);
+  assert.equal(f.qr.supportedSchemaVersion, 4);
   state = (await f.api('/api/state')).body;
   const oldPhone = await f.sync(request(state, [], { protocolVersion: 2 }));
   assert.equal(oldPhone.status, 409);
@@ -221,4 +221,37 @@ test('real local transport encrypts ledger, restricts routes, persists receipts 
   assert.match(mismatch.body.error, /另一份账本/);
   await f.api('/api/mobile-sync/stop', {});
   assert.equal((await f.api('/api/mobile-sync/status')).body.active, false);
+});
+
+test('encrypted v4 sync rejects v3 phones and carries full settings and goal dates through import and restart', async t => {
+  const f = await fixture(t, { now: () => new Date('2026-11-06T02:00:00Z') });
+  if (!f) return;
+  let state = (await f.api('/api/state')).body;
+  state.schemaVersion = 4;
+  state.accounts = ledger().accounts;
+  state.settings = { ...state.settings, categoryBudgets: { 宠物: 15000 }, customCategories: { expense: ['宠物'], income: ['稿费'] },
+    futurePreference: { keep: '未知字段原样往返' } };
+  state.goals = [{ id: 'dated-goal', name: '旅行', target: 10000, saved: 100, color: '#123456', deadline: '2027-01-31' }];
+  const saved = await f.api('/api/import', { state, expectedRevision: state.revision });
+  assert.equal(saved.status, 200);
+  await f.pair();
+  assert.equal(f.qr.supportedSchemaVersion, 4);
+  state = (await f.api('/api/state')).body;
+  const oldPhone = await f.sync(request(state, [], { protocolVersion: 2, supportedSchemaVersion: 3 }));
+  assert.equal(oldPhone.status, 409);
+  assert.match(oldPhone.body.error, /版本 4.*升级手机/);
+  const downloaded = await f.sync(request(state, [], { protocolVersion: 2, supportedSchemaVersion: 4 }));
+  assert.equal(downloaded.status, 200);
+  assert.deepEqual(downloaded.body.state.settings, state.settings);
+  assert.deepEqual(downloaded.body.state.goals, state.goals);
+  const record = { ...downloaded.body.state.settings, monthlyBudget: 80000 };
+  const operation = { id: randomUUID(), entity: 'settings', kind: 'put', recordId: 'settings', record, base: downloaded.body.state.settings };
+  const updated = await f.sync(request(state, [operation], { protocolVersion: 2, supportedSchemaVersion: 4 }));
+  assert.equal(updated.status, 200);
+  assert.deepEqual(updated.body.state.settings, record);
+  await f.close(); await f.start();
+  const restarted = (await f.api('/api/state')).body;
+  assert.deepEqual(restarted.settings, record);
+  assert.equal(restarted.schemaVersion, 4);
+  assert.equal(restarted.goals[0].deadline, '2027-01-31');
 });

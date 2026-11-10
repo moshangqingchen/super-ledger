@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeEmptyState, validateState } from '../engine.mjs';
-import { buildSubscriptionOverview } from '../subscription-overview.mjs';
+import { makeEmptyState, validateState, upgradeSchemaVersion } from '../engine.mjs';
+import { buildSubscriptionOverview, subscriptionPeriodLabel } from '../subscription-overview.mjs';
 
 const NOW = new Date('2026-11-07T02:00:00Z'); // Beijing 10:00.
 const account = (id = 'cash', extra = {}) => ({
@@ -19,11 +19,24 @@ function fixture(subscriptions = [subscription()], accounts = [account()], trans
   state.accounts = accounts;
   state.subscriptions = subscriptions;
   state.transactions = transactions;
+  upgradeSchemaVersion(state);
   assert.equal(validateState(state), true);
   return state;
 }
 const transaction = (id, type, amount, accountId, date, extra = {}) => ({
   id, type, amount, accountId, date, category: '其他', title: id, note: '', ...extra,
+});
+
+test('overview follows quarterly and annual grid dates and reserves the full installment', () => {
+  const state = fixture([
+    subscription('quarter', { startDate: '2024-01-31', billingDay: 31, intervalMonths: 3, processedOccurrences: ['quarter:2024-01'] }),
+    subscription('year', { startDate: '2024-01-31', billingDay: 31, intervalMonths: 12, processedOccurrences: ['year:2024-01'] }),
+  ]);
+  const overview = buildSubscriptionOverview(state, new Date('2024-02-22T02:00:00Z'));
+  assert.deepEqual(overview.rows.map(row => row.due), ['2024-04-30', '2025-01-31']);
+  assert.equal(overview.accounts[0].amount, 3800);
+  assert.deepEqual([1, 3, 6, 12].map(intervalMonths => subscriptionPeriodLabel({ recurring: true, intervalMonths })), ['月', '季', '半年', '年']);
+  assert.equal(subscriptionPeriodLabel({ recurring: false }), '次');
 });
 
 test('empty overview has no dates, funding demand or inferred expiry counts', () => {

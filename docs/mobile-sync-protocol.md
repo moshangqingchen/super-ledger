@@ -10,7 +10,8 @@ IPv4 interface. It starts only when the desktop sync panel opens, expires after
 The desktop QR contains UTF-8 JSON:
 
 ```
-{app:"superledger", v:1, protocolVersion:2, addresses:["http://<private-ip>:<ephemeral-port>"],
+{app:"superledger", v:1, protocolVersion:2, supportedSchemaVersion:4,
+ addresses:["http://<private-ip>:<ephemeral-port>"],
  sessionId:"<16 random bytes as hex>", key:"<32 random bytes as base64url>",
  expiresAt:<epoch milliseconds>}
 ```
@@ -27,7 +28,8 @@ AAD is UTF-8 `superledger-sync-v1:<sessionId>:request` or the corresponding
 
 An authenticated request contains `requestId`, persistent `deviceId`, display-only
 `deviceName`, `bookId`, and up to 500 operations. Android also bounds batches by
-UTF-8 size. Version 2 requests include `protocolVersion:2`. First pairing uses
+UTF-8 size. Version 2 requests include `protocolVersion:2` and
+`supportedSchemaVersion:4`. First pairing uses
 `bookId:null`; version 2 can also merge independently created mobile entities.
 Version 1 first pairing still requires an empty queue. Non-null book IDs must
 match, so a reset desktop ledger never accepts stale edits. The first successful device binds
@@ -51,6 +53,13 @@ Deleting a subscription detaches its history without deleting booked expenses.
 Processed subscription periods union independently of editable plan fields;
 deterministic `rec_<subscriptionId>_<YYYYMM>` charges deduplicate by occurrence and
 native financial fields. Different amounts/accounts require explicit review.
+
+Settings is one complete record, including `categoryBudgets`, `customCategories`
+and any opaque extension fields. Both clients retain the full baseline for conflict
+detection and copy the record before changing individual known settings. The
+desktop preserves omitted unknown extension keys when accepting a settings edit;
+omitted known optional fields explicitly remove those settings. An old baseline
+cannot overwrite newly added preferences: it produces a normal settings conflict.
 
 - Put: `{id,kind:"put",base:<original transaction or null>,transaction}`.
 - Delete: `{id,kind:"delete",base:<original transaction>,transactionId}`.
@@ -81,6 +90,63 @@ transfers, subscriptions, budget and goals. Version 1 retains CNY transaction-on
 scope. Android 1.2 requires desktop 1.7: it checks protocolVersion in both QR and
 authenticated response before applying data. The transport URL/AAD stay v1 for
 old phones; desktop 1.7 still accepts their limited operations.
+
+### Ledger schema versions
+
+Transport and protocol versions are independent from `state.schemaVersion`.
+Both current clients accept ledger schemas 1, 2, 3 and 4. Version 3 adds Beijing
+hour-aware subscription booking. Version 4 is required only when at least one
+of these optional fields is present:
+
+- Subscription `intervalMonths`: recurring only, integer 1, 3, 6 or 12; writers
+  omit 1, whose meaning is also the default when the field is absent.
+- Settings `categoryBudgets`: at most 50 category keys (1–50 characters), each
+  mapped to a positive integer CNY-cent budget. Empty objects are omitted.
+- Settings `customCategories`: `expense` and `income` arrays, each with at most
+  30 distinct 1–50 character names, excluding built-in names. Omit the field when
+  both arrays are empty. Historical transaction category strings stay unchanged.
+- Goal `deadline`: a valid `YYYY-MM-DD`; empty values are omitted.
+
+Writers only promote a schema when a feature needs it and never downgrade an
+existing schema. Readers reject feature fields advertised under an older schema.
+For a desktop ledger at schema 3 or above, the phone must declare integer
+`supportedSchemaVersion >= state.schemaVersion` before any operation is applied;
+otherwise the encrypted error explicitly asks the user to update the phone.
+Schemas 1–2 retain the old-phone behavior. Before upload, Android similarly checks
+the QR's supported schema against its own ledger and asks for a desktop update
+when needed. Thus an old client cannot remove fields it cannot interpret.
+
+### Recurring periods and renewal receipts
+
+For installment `k >= 0`, due date is
+`addMonthsDue(startDate, k * (intervalMonths ?? 1), billingDay)`, with month-end
+clamping. Dates and hours use Beijing time. Occurrence keys remain
+`<subscriptionId>:<YYYY-MM>` and transaction IDs remain
+`rec_<subscriptionId>_<YYYYMM>`, based on the actual due month. The next-payment
+forecast reserves the full installment. Monthly summaries first convert each
+installment to integer CNY cents, then divide by its interval and round half up;
+annual estimates instead multiply each installment's CNY cents by `12 / interval`.
+
+Editing the interval preserves every historical processed key. At save time,
+the client adds new-grid occurrences strictly before Beijing today as skipped,
+preventing a switch from annual to monthly from backfilling old months. Today's
+period remains eligible at its scheduled hour. Off-grid historical keys are kept
+but do not schedule payments. An uploaded automatic charge outside the current
+grid requires a historical processed receipt already held by the desktop or in an
+accepted incoming subscription, and cannot be future-dated. This retains payments
+booked offline before a cycle edit, including a phone's first sync. Without that
+history the stale charge conflicts for review. Existing matching historical
+charges still deduplicate normally. Historical off-grid receipts remain even if
+their transaction import awaits funding, so retrying just that transaction after
+the plan acknowledgement is safe. For current-grid charges, rejection does not
+commit a newly received processed marker or renewal extension.
+
+Each successfully paid occurrence extends membership expiry by `intervalMonths`
+months, anchored to `expiryRenewal.baseDate`; renewal receipts union across peers
+so the same period cannot extend twice. An interval edit reanchors expiry at the
+current earned expiry and moves old paid/renewed occurrences into its baseline.
+Rejected charges do not gain processed/renewed receipts. A later funded retry
+adds exactly one charge and one extension.
 
 `tests/mobile-sync.test.mjs` and `tests/mobile-full-ledger.test.mjs` cover durable retry/delete semantics, concurrent
 edits, duplicate review, wrong-book rejection, invalid transactions, crypto

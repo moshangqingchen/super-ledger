@@ -80,7 +80,7 @@ public final class SubscriptionDetails {
                         throw new Exception("到期续期账期无效或重复");
                 }
             }
-            String expected = MobileLedger.addMonthsDue(baseDate, renewal.getJSONArray("renewedOccurrences").length(), LocalDate.parse(baseDate).getDayOfMonth());
+            String expected = MobileLedger.addMonthsDue(baseDate, renewal.getJSONArray("renewedOccurrences").length()*MobileLedger.intervalMonths(sub), LocalDate.parse(baseDate).getDayOfMonth());
             if (!expected.equals(sub.getString("expiresOn"))) throw new Exception("会员到期日期与续期记录不一致");
         }
     }

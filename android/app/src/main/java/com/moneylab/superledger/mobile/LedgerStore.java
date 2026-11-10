@@ -159,14 +159,17 @@ public final class LedgerStore {
     private static void defaultValue(JSONObject value,String key,Object fallback) throws Exception {if(!value.has(key))value.put(key,fallback);}
     private JSONObject mergedRecord(String entity,JSONObject input,String prefix) throws Exception {
         JSONObject value=copy(input);String id=value.optString("id");if(id.isEmpty())id=prefix+UUID.randomUUID();value.put("id",id);JSONObject merged=MobileLedger.merge(getRecord(state(),entity,id),value);
-        String[] clearable=entity.equals("account")?new String[]{"providerId","bankId","lastFour","rateAsOf","rateSource","appleRegion","appleAccount"}:entity.equals("subscription")?new String[]{"serviceId"}:entity.equals("goal")?new String[]{"cover"}:new String[0];
+        String[] clearable=entity.equals("account")?new String[]{"providerId","bankId","lastFour","rateAsOf","rateSource","appleRegion","appleAccount"}:entity.equals("subscription")?new String[]{"serviceId"}:entity.equals("goal")?new String[]{"cover","deadline"}:new String[0];
         for(String key:clearable)if(input.has(key)&&input.isNull(key))merged.remove(key);return merged;
     }
     private void promoteSchema() throws Exception {
         int schema=state().getInt("schemaVersion");
         JSONArray accounts=state().getJSONArray("accounts"),subscriptions=state().getJSONArray("subscriptions");
         for(int i=0;i<accounts.length();i++)if(!MobileLedger.currency(accounts.getJSONObject(i)).equals("CNY"))schema=Math.max(schema,2);
-        for(int i=0;i<subscriptions.length();i++)if(subscriptions.getJSONObject(i).has("startHour")||subscriptions.getJSONObject(i).has("billingHour"))schema=3;
+        for(int i=0;i<subscriptions.length();i++)if(subscriptions.getJSONObject(i).has("startHour")||subscriptions.getJSONObject(i).has("billingHour"))schema=Math.max(schema,3);
+        for(int i=0;i<subscriptions.length();i++)if(subscriptions.getJSONObject(i).has("intervalMonths"))schema=Math.max(schema,4);
+        JSONArray goals=state().getJSONArray("goals");for(int i=0;i<goals.length();i++)if(goals.getJSONObject(i).has("deadline"))schema=Math.max(schema,4);
+        JSONObject settings=state().getJSONObject("settings");if(settings.has("categoryBudgets")||settings.has("customCategories"))schema=Math.max(schema,4);
         state().put("schemaVersion",schema);
     }
     public synchronized void saveAccount(JSONObject input) throws Exception {
@@ -190,17 +193,21 @@ public final class LedgerStore {
     }
     public synchronized void saveManual(JSONObject input) throws Exception {putTransaction(input,null);}
     public synchronized void deleteManual(String id) throws Exception {requireIdle();change(()->{if(getRecord(state(),"transaction",id)==null)return;queueRecord("transaction",id,null);MobileLedger.validateState(state());applyRecurringInternal();});}
-    public synchronized void saveGoal(JSONObject input) throws Exception {requireIdle();change(()->{JSONObject value=mergedRecord("goal",input,"goal_");defaultValue(value,"color","#c7dfa2");defaultValue(value,"saved",0);queueRecord("goal",value.getString("id"),value);MobileLedger.validateState(state());});}
+    public synchronized void saveGoal(JSONObject input) throws Exception {requireIdle();change(()->{JSONObject value=mergedRecord("goal",input,"goal_");defaultValue(value,"color","#c7dfa2");defaultValue(value,"saved",0);if(value.opt("deadline") instanceof String&&value.getString("deadline").isEmpty())value.remove("deadline");queueRecord("goal",value.getString("id"),value);promoteSchema();MobileLedger.validateState(state());});}
     public synchronized void deleteGoal(String id) throws Exception {requireIdle();change(()->{if(getRecord(state(),"goal",id)!=null)queueRecord("goal",id,null);MobileLedger.validateState(state());});}
-    public synchronized void saveSettings(JSONObject input) throws Exception {requireIdle();change(()->{JSONObject value=MobileLedger.merge(state().getJSONObject("settings"),input);queueRecord("settings","settings",value);MobileLedger.validateState(state());});}
+    public synchronized void saveSettings(JSONObject input) throws Exception {requireIdle();change(()->{JSONObject value=MobileLedger.merge(state().getJSONObject("settings"),input);for(String field:new String[]{"categoryBudgets","customCategories"})if(input.has(field)&&input.isNull(field))value.remove(field);JSONObject budgets=value.optJSONObject("categoryBudgets"),custom=value.optJSONObject("customCategories");if(budgets!=null&&budgets.length()==0)value.remove("categoryBudgets");if(custom!=null&&custom.length()==2&&custom.optJSONArray("expense")!=null&&custom.optJSONArray("income")!=null&&custom.getJSONArray("expense").length()==0&&custom.getJSONArray("income").length()==0)value.remove("customCategories");queueRecord("settings","settings",value);promoteSchema();MobileLedger.validateState(state());});}
     public synchronized void saveSubscription(JSONObject input) throws Exception {
         requireIdle();change(()->{JSONObject value=mergedRecord("subscription",input,"sub_"),old=getRecord(state(),"subscription",value.getString("id"));JSONObject account=getRecord(state(),"account",value.optString("accountId"));if(account==null)throw new Exception("请选择订阅扣款账户");value.put("currency",MobileLedger.currency(account)).put("category","会员订阅");defaultValue(value,"active",true);defaultValue(value,"recurring",true);defaultValue(value,"color","#8bc8ab");defaultValue(value,"icon","repeat");defaultValue(value,"tier","");defaultValue(value,"billingDay",Integer.parseInt(value.getString("startDate").substring(8)));
+            if(value.has("intervalMonths")&&MobileLedger.intervalMonths(value)==1)value.remove("intervalMonths");
+            if(!value.getBoolean("recurring"))value.remove("intervalMonths");
+            boolean intervalChanged=old!=null&&MobileLedger.intervalMonths(old)!=MobileLedger.intervalMonths(value);
             // Billing history is not user-editable; retaining it prevents deleted charges being recreated.
             value.put("processedOccurrences",old==null?new JSONArray():copyArray(old.getJSONArray("processedOccurrences")));
             if(old!=null&&old.has("expiryRenewal"))value.put("expiryRenewal",copy(old.getJSONObject("expiryRenewal")));else value.remove("expiryRenewal");
-            if(old!=null&&(!old.optString("expiresOn").equals(value.optString("expiresOn"))||old.getBoolean("recurring")!=value.getBoolean("recurring")))
+            if(old!=null&&(!old.optString("expiresOn").equals(value.optString("expiresOn"))||old.getBoolean("recurring")!=value.getBoolean("recurring")||intervalChanged))
                 value=MobileLedger.resetSubscriptionExpiry(value,state().getJSONArray("transactions"));
             ZonedDateTime now=MobileLedger.beijingDateTime(System.currentTimeMillis());
+            if(intervalChanged)value=MobileLedger.changeSubscriptionInterval(value,MobileLedger.intervalMonths(value),now.toLocalDate().toString());
             if(old!=null&&!old.getBoolean("active")&&value.getBoolean("active")){value.put("active",false);value=MobileLedger.setSubscriptionActive(value,true,now.toLocalDate().toString(),now.getHour());}
             queueRecord("subscription",value.getString("id"),value);promoteSchema();MobileLedger.validateState(state());applyRecurringInternal(now.toLocalDate().toString(),now.getHour());});
     }
@@ -300,7 +307,7 @@ public final class LedgerStore {
         for (int i = 0; i < conflicts.length(); i++){String id=conflicts.getJSONObject(i).optString("operationId");if(!waiting.contains(id))unresolved.add(id);}
         JSONObject available=waiting.isEmpty()||hasBlockingConflicts()?null:MobileLedger.balances(state(),today());
         JSONArray selected = new JSONArray(), operations = data.getJSONArray("operations");
-        JSONObject request = new JSONObject().put("protocolVersion",2).put("supportedSchemaVersion",3).put("schemaVersion",state().getInt("schemaVersion")).put("requestId", requestId).put("deviceId", data.getString("deviceId")).put("deviceName", Build.MANUFACTURER + " " + Build.MODEL)
+        JSONObject request = new JSONObject().put("protocolVersion",2).put("supportedSchemaVersion",4).put("schemaVersion",state().getInt("schemaVersion")).put("requestId", requestId).put("deviceId", data.getString("deviceId")).put("deviceName", Build.MANUFACTURER + " " + Build.MODEL)
             .put("bookId", data.opt("bookId")).put("operations", selected);
         int bytes = request.toString().getBytes(StandardCharsets.UTF_8).length;
         for (int i = 0; i < operations.length() && selected.length() < 500; i++) {
