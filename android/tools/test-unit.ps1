@@ -32,6 +32,7 @@ $Sources = @(
   (Join-Path $Tests 'PaymentPageParserTest.java'),
   (Join-Path $Tests 'MobileLedgerTest.java'),
   (Join-Path $Tests 'Schema4Test.java'),
+  (Join-Path $Tests 'BudgetCategoriesTest.java'),
   (Join-Path $Tests 'SubscriptionDetailsTest.java'),
   (Join-Path $Tests 'SubscriptionRenewalTest.java'),
   (Join-Path $Tests 'SubscriptionOverviewTest.java'),
@@ -45,7 +46,7 @@ $Sources = @(
 foreach($Stub in @('android\content\Context.java','android\os\Build.java','android\util\AtomicFile.java','android\util\Base64.java')) { $Sources += Join-Path $Tools ('test-stubs\'+$Stub) }
 & javac.exe '-J-Duser.language=en' '-encoding' 'UTF-8' '-cp' $JsonJar '-d' $Output @Sources
 if($LASTEXITCODE -ne 0) { throw 'Android unit-test compilation failed.' }
-foreach($Class in @('PaymentParserTest','PaymentRoutingTest','PaymentPageParserTest','MobileLedgerTest','Schema4Test','SubscriptionDetailsTest','SubscriptionRenewalTest','SubscriptionOverviewTest','LedgerStoreTest','UpdatePolicyTest','UpdatePresentationTest','UpdateTransportTest','UpdateSourcesTest','UpdateSourceClientTest')) {
+foreach($Class in @('PaymentParserTest','PaymentRoutingTest','PaymentPageParserTest','MobileLedgerTest','Schema4Test','BudgetCategoriesTest','SubscriptionDetailsTest','SubscriptionRenewalTest','SubscriptionOverviewTest','LedgerStoreTest','UpdatePolicyTest','UpdatePresentationTest','UpdateTransportTest','UpdateSourcesTest','UpdateSourceClientTest')) {
   & java.exe '-Dfile.encoding=UTF-8' '-cp' ($Output+';'+$JsonJar) ('com.moneylab.superledger.mobile.'+$Class)
   if($LASTEXITCODE -ne 0) { throw ('Android Java unit test failed: '+$Class) }
 }

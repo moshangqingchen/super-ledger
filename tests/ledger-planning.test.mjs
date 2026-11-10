@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { categoryOptions, budgetCategories, goalDeadlinePlan, removeCustomCategory } from '../assets/ledger-planning.mjs';
 import { categorySummary } from '../assets/ledger-insights.mjs';
+import { makeEmptyState, upgradeSchemaVersion, validateState } from '../engine.mjs';
 
 test('category lists include built-in, custom, historical and budget-only names without duplicates', () => {
   const state = { settings: { customCategories: { expense: ['猫咪', '咖啡'], income: ['稿费'] }, categoryBudgets: { 猫咪: 100, 旅行: 200 } },
@@ -23,6 +24,45 @@ test('custom deletion drops its budget and empty optional containers while prese
   assert.deepEqual(state.settings, {});
   assert.equal(state.transactions[0].category, '猫咪');
   assert.ok(categoryOptions(state, 'expense').includes('猫咪'));
+});
+
+test('deleting an income category preserves the same-named expense category and its budget', () => {
+  const state = makeEmptyState();
+  state.settings.customCategories = { expense: ['猫咪'], income: ['猫咪'] };
+  state.settings.categoryBudgets = { 猫咪: 100 };
+  upgradeSchemaVersion(state);
+  assert.doesNotThrow(() => validateState(state), 'same names across income and expense are valid');
+
+  removeCustomCategory(state.settings, 'income', '猫咪');
+  assert.deepEqual(state.settings.customCategories, { expense: ['猫咪'], income: [] });
+  assert.deepEqual(state.settings.categoryBudgets, { 猫咪: 100 });
+  assert.doesNotThrow(() => validateState(state));
+
+  removeCustomCategory(state.settings, 'expense', '猫咪');
+  assert.equal(Object.hasOwn(state.settings, 'customCategories'), false);
+  assert.equal(Object.hasOwn(state.settings, 'categoryBudgets'), false);
+  assert.doesNotThrow(() => validateState(state));
+});
+
+test('deleting an income-only preference preserves a historical expense budget without a custom expense category', () => {
+  const state = makeEmptyState();
+  state.accounts = [{ id: 'cash', name: '现金', type: '现金', openingBalance: 1000, color: '#123456' }];
+  state.transactions = [{ id: 'expense', type: 'expense', accountId: 'cash', amount: 100,
+    category: '猫咪', title: '猫粮', date: '2026-11-09', note: '' }];
+  state.settings.customCategories = { expense: [], income: ['猫咪'] };
+  state.settings.categoryBudgets = { 猫咪: 100 };
+  upgradeSchemaVersion(state);
+  assert.doesNotThrow(() => validateState(state));
+
+  removeCustomCategory(state.settings, 'income', '猫咪');
+  assert.equal(Object.hasOwn(state.settings, 'customCategories'), false);
+  assert.deepEqual(state.settings.categoryBudgets, { 猫咪: 100 });
+  assert.equal(state.transactions[0].category, '猫咪');
+  assert.ok(budgetCategories(state).includes('猫咪'));
+
+  removeCustomCategory(state.settings, 'expense', '猫咪');
+  assert.deepEqual(state.settings.categoryBudgets, { 猫咪: 100 }, 'no expense preference exists to delete');
+  assert.doesNotThrow(() => validateState(state));
 });
 
 test('goal deadline uses calendar-month ceiling and integer-cent ceiling across month ends and leap years', () => {

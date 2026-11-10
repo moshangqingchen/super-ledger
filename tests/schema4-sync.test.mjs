@@ -146,6 +146,73 @@ test('changing annual to monthly resets the earned-expiry baseline and retains s
   assert.equal(next.state.subscriptions[0].expiresOn, '2025-03-28');
 });
 
+for (const [from, to, paidDate, knownExpiry, currentExpiry] of [
+  [1, 12, '2024-02-01', '2024-02-01', '2024-03-01'],
+  [12, 1, '2025-01-01', '2025-01-01', '2026-01-01'],
+]) {
+  test(`offline ${from}-to-${to}-month edit conflicts with a newer desktop renewal and can be redone from its paid expiry`, () => {
+    const original = ledger();
+    const sub = subscription({ startDate: '2024-01-01', billingDay: 1, expiresOn: '2024-01-01' });
+    if (from === 1) delete sub.intervalMonths;
+    original.subscriptions.push(sub);
+    const phone = applyRecurring(original, '2024-01-01').state;
+    const desktop = applyRecurring(phone, paidDate).state;
+    const before = structuredClone(desktop);
+    const baseline = structuredClone(phone.subscriptions[0]);
+    const edited = { ...structuredClone(baseline), intervalMonths: to };
+    const now = new Date(paidDate + 'T18:00:00Z'); // Beijing the following day.
+    prepareSubscriptionEdit(baseline, edited, phone.transactions, now);
+    assert.equal(edited.expiresOn, knownExpiry, 'Only the billing interval was changed by the user');
+    assert.equal(desktop.subscriptions[0].expiresOn, currentExpiry);
+    const operation = put('subscription', edited, baseline);
+
+    const blocked = mergeMobileOperations(desktop, request(desktop, [operation]), now);
+    assert.equal(blocked.accepted.length, 0);
+    assert.equal(blocked.conflicts.length, 1);
+    assert.equal(blocked.conflicts[0].entity, 'subscription');
+    assert.match(blocked.conflicts[0].reason, /已自动续期/);
+    assert.equal(blocked.conflicts[0].canKeepPhone, false, 'The stale phone version cannot be forced into an endless retry');
+    assert.match(blocked.conflicts[0].resolutionHint, /先采用电脑记录.*重新编辑扣账周期/);
+    assert.deepEqual(blocked.conflicts[0].current, desktop.subscriptions[0]);
+    assert.deepEqual(blocked.next, before, 'Paid expiry, transactions, markers and receipts remain untouched');
+    assert.deepEqual(desktop, before, 'The input ledger is unchanged');
+    const retry = mergeMobileOperations(blocked.next, request(blocked.next, [operation]), now);
+    assert.equal(retry.conflicts.length, 1);
+    assert.deepEqual(retry.next, before, 'A rejected operation does not acquire an acceptance receipt');
+
+    // The advertised recovery path is reachable: adopt the computer record,
+    // then make the interval edit using its current earned expiry as the base.
+    const adopted = structuredClone(blocked.conflicts[0].current);
+    const fresh = { ...structuredClone(adopted), intervalMonths: to };
+    prepareSubscriptionEdit(adopted, fresh, desktop.transactions, now);
+    const resolved = mergeMobileOperations(blocked.next, request(blocked.next, [put('subscription', fresh, adopted)]), now);
+    assert.equal(resolved.conflicts.length, 0, JSON.stringify(resolved.conflicts));
+    assert.equal(resolved.accepted.length, 1);
+    assert.equal(resolved.next.subscriptions[0].expiresOn, currentExpiry);
+    assert.equal(resolved.next.subscriptions[0].intervalMonths ?? 1, to);
+    assert.deepEqual(resolved.next.transactions, before.transactions);
+    assert.equal(applyRecurring(resolved.next, now).added.length, 0);
+    assert.equal(validateState(resolved.next), true);
+  });
+}
+
+test('concurrent automatic booking without an explicit expiry still permits a billing-cycle edit', () => {
+  const original = ledger();
+  const monthly = subscription({ startDate: '2024-01-01', billingDay: 1 });
+  delete monthly.intervalMonths;
+  original.subscriptions.push(monthly);
+  const phone = applyRecurring(original, '2024-01-01').state;
+  const desktop = applyRecurring(phone, '2024-02-01').state;
+  const edited = { ...structuredClone(phone.subscriptions[0]), intervalMonths: 12 };
+  const now = new Date('2024-02-02T02:00:00Z');
+  prepareSubscriptionEdit(phone.subscriptions[0], edited, phone.transactions, now);
+  const result = mergeMobileOperations(desktop, request(desktop, [put('subscription', edited, phone.subscriptions[0])]), now);
+  assert.equal(result.conflicts.length, 0, JSON.stringify(result.conflicts));
+  assert.equal(result.next.subscriptions[0].intervalMonths, 12);
+  assert.equal(result.next.subscriptions[0].expiresOn, undefined);
+  assert.deepEqual(result.next.transactions, desktop.transactions);
+});
+
 test('offline monthly payments still import after an accepted annual edit, including first pairing', () => {
   for (const firstPairing of [false, true]) {
     const desktop = ledger();

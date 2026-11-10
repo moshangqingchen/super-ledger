@@ -145,6 +145,11 @@ Each successfully paid occurrence extends membership expiry by `intervalMonths`
 months, anchored to `expiryRenewal.baseDate`; renewal receipts union across peers
 so the same period cannot extend twice. An interval edit reanchors expiry at the
 current earned expiry and moves old paid/renewed occurrences into its baseline.
+If an incoming cycle edit was based on an older expiry and the desktop has since
+renewed that membership, the subscription operation conflicts without replacing
+the desktop record. The conflict sets `canKeepPhone:false` and asks the user to
+adopt the current desktop record before editing the cycle again, so a new cycle
+cannot silently consume already-earned membership time.
 Rejected charges do not gain processed/renewed receipts. A later funded retry
 adds exactly one charge and one extension.
 

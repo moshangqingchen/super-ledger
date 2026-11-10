@@ -20,7 +20,7 @@ assert.deepEqual(androidRegions,appleBalanceRegions,'Apple regions must match de
 const files=[path.join(tools,'AndroidInteropHarness.java'),...['SyncClient','LedgerStore','MobileLedger','AppleBalance','SubscriptionDetails','SubscriptionOverview','PaymentParser','PaymentRouting','PaymentPageParser','UpdatePolicy','UpdateSources'].map(n=>path.join(source,n+'.java'))];
 files.push(generateLedgerCategories(build));
 const testSource=path.join(root,'android','app','src','test','java','com','moneylab','superledger','mobile');
-const testNames=['PaymentParserTest','PaymentRoutingTest','PaymentPageParserTest','LedgerStoreTest','MobileLedgerTest','Schema4Test','SubscriptionDetailsTest','SubscriptionRenewalTest','SubscriptionOverviewTest','UpdatePolicyTest'];
+const testNames=['PaymentParserTest','PaymentRoutingTest','PaymentPageParserTest','LedgerStoreTest','MobileLedgerTest','Schema4Test','BudgetCategoriesTest','SubscriptionDetailsTest','SubscriptionRenewalTest','SubscriptionOverviewTest','UpdatePolicyTest'];
 files.push(...testNames.map(n=>path.join(testSource,n+'.java')));
 for(const file of ['android/util/Base64.java','android/util/AtomicFile.java','android/content/Context.java','android/os/Build.java'])files.push(path.join(tools,'test-stubs',file));
 await execute('javac.exe',['-J-Duser.language=en','-encoding','UTF-8','-cp',jar,'-d',classes,...files]);

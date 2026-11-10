@@ -127,6 +127,17 @@ function sameEntity(left, right, entity) {
 }
 
 function mergeSubscriptionExpiry(record, current, base, transactions, pendingCharges) {
+  // A cycle edit reanchors expiry at the phone's earned date. Concurrent
+  // desktop renewals cannot be folded into that older baseline without losing
+  // paid time or valuing old periods at the new interval. Review the latest
+  // desktop record before editing the cycle again.
+  if (current?.expiresOn && base && current.expiresOn !== base.expiresOn
+      && (record.intervalMonths ?? 1) !== (base.intervalMonths ?? 1)) {
+    throw Object.assign(new Error('电脑端的订阅已自动续期，请核对最新到期日后重新确认扣账周期。'), {
+      canKeepPhone: false,
+      resolutionHint: '请先采用电脑记录，再按最新到期日重新编辑扣账周期。',
+    });
+  }
   if (!record.recurring || !record.expiresOn) {
     delete record.expiryRenewal;
     return;
@@ -221,7 +232,7 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
       const collection = own(ENTITY_COLLECTIONS, entity) ? ENTITY_COLLECTIONS[entity] : null;
       const supported = collection !== null || entity === 'settings';
       const current = supported ? entity === 'settings' ? next.settings : next[collection].find(item => item.id === recordId) || null : null;
-      const reject = reason => conflicts.push({ operationId, entity, reason, current });
+      const reject = (reason, details) => conflicts.push({ operationId, entity, reason, current, ...details });
       if (!fullLedger || !supported) { reject('该操作需要电脑 1.7.0 与新版手机，请先升级。'); continue; }
       if (!['put', 'delete'].includes(operation.kind) || typeof recordId !== 'string' || !ID.test(recordId)
           || entity === 'settings' && (recordId !== 'settings' || operation.kind !== 'put')) { reject('不支持的账本项目操作。'); continue; }
@@ -284,7 +295,11 @@ export function mergeMobileOperations(state, payload, now = new Date()) {
           mergeSubscriptionExpiry(sub, current, operation.base, candidate.transactions, pendingCharges);
           reconcileSubscriptionExpiry(candidate, now);
           validateState(candidate);
-        } catch (error) { reject(error.message); continue; }
+        } catch (error) {
+          reject(error.message, error.canKeepPhone === false
+            ? { canKeepPhone: false, resolutionHint: error.resolutionHint } : undefined);
+          continue;
+        }
       }
       candidate._mobileSync.receipts[receiptKey] = digest; next = candidate; accepted.push(operationId);
       summary[operation.kind === 'delete' ? 'deleted' : current ? 'updated' : 'added']++;

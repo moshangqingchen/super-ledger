@@ -27,13 +27,13 @@ export function goalDeadlinePlan(goal, today) {
   return { days, achieved, overdue: false, months, monthly: Number((remaining + count - 1n) / count) };
 }
 
-/** Delete only the preference and its budget; historical transaction text is untouched. */
+/** Only expense preferences own budgets; historical transaction text is untouched. */
 export function removeCustomCategory(settings, type, category) {
   const custom = settings.customCategories;
   if (!custom || !custom[type]?.includes(category)) return;
   custom[type] = custom[type].filter(value => value !== category);
   if (!custom.expense.length && !custom.income.length) delete settings.customCategories;
-  if (settings.categoryBudgets && Object.hasOwn(settings.categoryBudgets, category)) {
+  if (type === 'expense' && settings.categoryBudgets && Object.hasOwn(settings.categoryBudgets, category)) {
     delete settings.categoryBudgets[category];
     if (!Object.keys(settings.categoryBudgets).length) delete settings.categoryBudgets;
   }
