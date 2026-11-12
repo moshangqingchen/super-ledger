@@ -7,6 +7,7 @@ public final class PaymentRoutingTest {
     private static void check(boolean ok,String name){cases++;if(!ok)throw new AssertionError(name);}
     private static JSONObject account(String id,String provider,String bank,String tail)throws Exception {JSONObject a=new JSONObject().put("id",id).put("providerId",provider).put("currency","CNY");if(!bank.isEmpty())a.put("bankId",bank);if(!tail.isEmpty())a.put("lastFour",tail);return a;}
     private static PaymentParser.Parsed parse(String method){return PaymentParser.parse("com.tencent.mm","微信支付","付款成功28元\n付款方式："+method);}
+    private static PaymentParser.Parsed icbcCard(String sender){return PaymentParser.parse("com.android.mms",sender,"交易提醒\n交易金额28.39元\n账号1234\n交易内容 支出(消费拼多多支付-拼多多平台商户)\n账户余额2606.39元\n银行名称工商银行");}
     public static void main(String[] args)throws Exception {
         JSONArray accounts=new JSONArray().put(account("wx","wechat","","")).put(account("ali","alipay","","")).put(account("cmb","bank-card","cmb","1234")).put(account("icbc","bank-card","icbc","1234"));
         PaymentRouting.Result r=PaymentRouting.match(parse("招商银行(1234)"),accounts,"wx");
@@ -32,6 +33,21 @@ public final class PaymentRoutingTest {
         check(!PaymentRouting.match(parse("零钱"),twoWallets,"").exact,"multiple wallets reviewed without preference");
         check(PaymentRouting.match(parse("零钱"),twoWallets,"wx2").accountId.equals("wx2"),"explicit matching wallet preference");
         check(!PaymentRouting.match(parse("零钱"),new JSONArray(),"wx").exact,"empty ledger reviewed");
+        for(String sender:new String[]{"95588","工商银行"}){
+            PaymentParser.Parsed card=icbcCard(sender);
+            check(card!=null&&card.confident&&card.knownSource&&card.amount==2839&&card.bankId.equals("icbc")&&card.lastFour.equals("1234"),"structured ICBC SMS from a recognized sender has exact transaction and card evidence: "+sender);
+            r=PaymentRouting.match(card,accounts,"wx");
+            check(r.exact&&r.accountId.equals("icbc")&&r.method.equals("bank-tail"),"structured bank plus tail selects ICBC rather than the wallet default or another bank with the same tail: "+sender);
+        }
+        JSONArray noIcbc=new JSONArray().put(account("wx","wechat","","")).put(account("cmb","bank-card","cmb","1234"));
+        r=PaymentRouting.match(icbcCard("95588"),noIcbc,"wx");
+        check(!r.exact&&r.accountId.isEmpty()&&r.candidates.isEmpty(),"a missing ICBC card cannot fall back to the wallet or a different bank with the same tail");
+        JSONArray twoIcbc=new JSONArray(accounts.toString()).put(account("icbc2","bank-card","icbc","1234"));
+        r=PaymentRouting.match(icbcCard("工商银行"),twoIcbc,"icbc");
+        check(!r.exact&&r.accountId.isEmpty()&&r.candidates.size()==2,"duplicate ICBC cards with the same tail require review even when one is the configured default");
+        PaymentParser.Parsed stranger=icbcCard("测试联系人");
+        check(stranger==null||!stranger.knownSource,"a bank name inside a structured card cannot make a stranger a trusted bank sender");
+        check(!PaymentRouting.match(stranger,accounts,"icbc").exact,"an unfamiliar SMS sender cannot route automatically even to an otherwise exact bank card");
         System.out.println("PaymentRouting: "+cases+" checks passed");
     }
 }

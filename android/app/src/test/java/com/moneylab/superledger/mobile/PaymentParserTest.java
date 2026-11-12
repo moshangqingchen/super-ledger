@@ -4,6 +4,7 @@ package com.moneylab.superledger.mobile;
 public final class PaymentParserTest {
     private static int cases;
     private static PaymentParser.Parsed parse(String title, String body) { return PaymentParser.parse("com.tencent.mm", title, body); }
+    private static String bankCard(String amount,String account,String content) { return "交易提醒\n交易金额 "+amount+"\n账号 "+account+"\n交易时间 11月12日07:27\n交易内容 "+content+"\n账户余额 2,606.39元\n银行名称 工商银行"; }
     private static void check(boolean condition, String label) { cases++; if (!condition) throw new AssertionError(label); }
     public static void main(String[] args) {
         PaymentParser.Parsed payment = parse("微信支付", "支付成功\n付款金额：￥28.00\n收款方：好吃餐厅");
@@ -115,6 +116,81 @@ public final class PaymentParserTest {
         check(parse("微信支付","支付成功，即可领取28元红包")==null,"conditional reward is not paid amount");
         PaymentParser.Parsed twoOrders=parse("微信支付","支付成功28元\n订单号：SYNTHETIC001\n订单号：SYNTHETIC002");
         check(twoOrders!=null&&!twoOrders.confident&&twoOrders.reference.isEmpty(),"multiple orders not reduced to first reference");
+        String structured=bankCard("28.39元","1234","支出(消费拼多多支付-拼多多平台商户)");
+        for(String sender:new String[]{"95588","+8695588","工商银行","中国工商银行","工商银行（2条新短信）"}){
+            PaymentParser.Parsed card=PaymentParser.parse("com.android.mms",sender,structured);
+            check(card!=null&&card.confident&&card.completed&&card.amount==2839,"structured bank consumption: "+sender);
+            check(card.bankId.equals("icbc")&&card.lastFour.equals("1234")&&card.fundingSource.equals("bank"),"structured card routes by bank and four-digit account: "+sender);
+            check(card.type.equals("expense")&&card.transactionKind.equals("payment")&&card.amountCandidates.size()==1,"bank balance excluded from consumption: "+sender);
+        }
+        PaymentParser.Parsed penny=PaymentParser.parse("com.android.mms","95588",bankCard("0.01元","0088","支出(消费抖音支付-抖音支付券包售卖)"));
+        check(penny!=null&&penny.confident&&penny.amount==1&&penny.lastFour.equals("0088"),"one-cent SMS and leading-zero card account");
+        PaymentParser.Parsed splitFields=PaymentParser.parse("com.android.mms","95588",structured.replace("交易金额 ","交易金额\n").replace("账号 ","账号\n").replace("平台商户)","平台\n商户)"));
+        check(splitFields!=null&&splitFields.confident&&splitFields.amount==2839&&splitFields.lastFour.equals("1234"),"bank fields and consumption detail can wrap across lines");
+        PaymentParser.Parsed colonFields=PaymentParser.parse("com.android.mms","95588",structured.replace("交易金额 ","交易金额：").replace("账号 ","账号：").replace("交易内容 ","交易内容："));
+        check(colonFields!=null&&colonFields.confident,"bank card field colons optional");
+        PaymentParser.Parsed unitless=PaymentParser.parse("com.android.mms","95588",bankCard("28.39","1234","支出(消费拼多多支付)"));
+        check(unitless!=null&&unitless.confident&&unitless.amount==2839,"explicit structured transaction amount may omit unit");
+        for(String sender:new String[]{"朋友","工商银行客服","955880","陌生95588"}){
+            PaymentParser.Parsed unknownBank=PaymentParser.parse("com.android.mms",sender,structured);
+            check(unknownBank!=null&&!unknownBank.knownSource&&!unknownBank.confident&&unknownBank.lastFour.isEmpty(),"display sender must exactly identify bank: "+sender);
+        }
+        PaymentParser.Parsed longAccount=PaymentParser.parse("com.android.mms","95588",bankCard("28.39元","6222000012345678","支出(消费拼多多支付)"));
+        check(longAccount!=null&&!longAccount.confident&&longAccount.lastFour.isEmpty(),"full account number is never sliced to four digits");
+        for(String account:new String[]{"6222\n0000\n1234\n5678","6222 0000 1234 5678","6222\t000012345678"}){
+            PaymentParser.Parsed splitLongAccount=PaymentParser.parse("com.android.mms","95588",bankCard("28.39元",account,"支出(消费拼多多支付)"));
+            check(splitLongAccount!=null&&!splitLongAccount.confident&&splitLongAccount.lastFour.isEmpty(),"grouped full card account never becomes first four-digit group");
+        }
+        PaymentParser.Parsed mixedAccount=PaymentParser.parse("com.android.mms","95588",structured+"\n另一张卡尾号5678");
+        check(mixedAccount!=null&&!mixedAccount.confident&&mixedAccount.ambiguousFunding&&mixedAccount.lastFour.isEmpty(),"structured account conflicts with different explicit tail");
+        PaymentParser.Parsed twoCards=PaymentParser.parse("com.android.mms","95588",structured+"\n账号 5678");
+        check(twoCards!=null&&!twoCards.confident&&twoCards.amount==0,"multiple independent account fields require review");
+        PaymentParser.Parsed multipleBank=PaymentParser.parse("com.android.mms","95588",structured+"\n建设银行尾号1234");
+        check(multipleBank!=null&&!multipleBank.confident&&multipleBank.ambiguousFunding,"bank identity conflicts remain reviewable");
+        PaymentParser.Parsed twoBankAmounts=PaymentParser.parse("com.android.mms","95588",structured+"\n交易金额 28.39元");
+        check(twoBankAmounts!=null&&!twoBankAmounts.confident&&twoBankAmounts.amount==0,"duplicate same-valued transaction amount fields are not merged into one debit");
+        PaymentParser.Parsed twoBankContents=PaymentParser.parse("com.android.mms","95588",structured+"\n交易内容 支出(消费另一商户)");
+        check(twoBankContents!=null&&!twoBankContents.confident&&twoBankContents.amount==0,"multiple consumption fields never auto-book as one payment");
+        String secondStructured=structured.replace("07:27","08:27").replace("2,606.39","2,578.00");
+        java.util.Set<String> mergedLines=new java.util.LinkedHashSet<>();for(String line:(structured+"\n"+secondStructured).split("\n"))mergedLines.add(line);
+        PaymentParser.Parsed mergedCards=PaymentParser.parse("com.android.mms","95588",String.join("\n",mergedLines));
+        check(mergedCards!=null&&!mergedCards.confident&&mergedCards.amount==0,"line-deduplicated merged cards retain separate transaction evidence");
+        PaymentParser.Parsed twoTimes=PaymentParser.parse("com.android.mms","95588",structured+"\n交易时间 11月12日08:27");
+        check(twoTimes!=null&&!twoTimes.confident&&twoTimes.amount==0,"different transaction times cannot be one structured debit");
+        PaymentParser.Parsed twoBalances=PaymentParser.parse("com.android.mms","95588",structured+"\n账户余额 2578元");
+        check(twoBalances!=null&&!twoBalances.confident&&twoBalances.amount==0,"different balance fields cannot be one structured debit");
+        PaymentParser.Parsed noContent=PaymentParser.parse("com.android.mms","95588",structured.replace("交易内容 支出(消费拼多多支付-拼多多平台商户)","消费信息待核对"));
+        check(noContent!=null&&!noContent.confident&&!noContent.completed&&noContent.lastFour.isEmpty(),"amount and account without structured content are not completion evidence");
+        check(PaymentParser.parse("com.android.mms","95588",structured.replace("交易金额 28.39元\n", ""))==null,"balance alone cannot fill a missing transaction amount");
+        check(PaymentParser.parse("com.android.mms","工商银行","收到一条新短信")==null,"notification placeholder contains no bank payment evidence");
+        check(PaymentParser.parse("com.android.mms","95588",structured+"\n验证码123456")==null,"structured bank OTP remains ignored");
+        check(PaymentParser.parse("com.android.mms","95588",structured+"\n交易失败")==null,"structured failed debit remains ignored");
+        check(PaymentParser.parse("com.android.mms","95588",structured+"\n预计明天扣款")==null,"structured scheduled debit remains ignored");
+        PaymentParser.Parsed bankRefund=PaymentParser.parse("com.android.mms","95588",bankCard("28.39元","1234","收入(消费退款到账)"));
+        check(bankRefund!=null&&!bankRefund.confident&&bankRefund.transactionKind.equals("refund"),"structured bank refund requires review");
+        PaymentParser.Parsed bankTransfer=PaymentParser.parse("com.android.mms","95588",bankCard("28.39元","1234","支出(转账汇款)"));
+        check(bankTransfer!=null&&!bankTransfer.confident&&bankTransfer.transactionKind.equals("transfer"),"structured bank transfer requires review");
+        String rawBank="您尾号1234储蓄卡11月12日07:27支出(消费拼多多支付-拼多多平台商户)28.39元，余额2,606.39元。【工商银行】";
+        for(String sender:new String[]{"95588","工商银行"}){
+            PaymentParser.Parsed rawConsumption=PaymentParser.parse("com.android.mms",sender,rawBank);
+            check(rawConsumption!=null&&rawConsumption.confident&&rawConsumption.completed&&rawConsumption.amount==2839&&rawConsumption.lastFour.equals("1234"),"natural-language bank consumption is a completed debit: "+sender);
+        }
+        PaymentParser.Parsed rawPenny=PaymentParser.parse("com.android.mms","95588",rawBank.replace("28.39元","0.01元"));
+        check(rawPenny!=null&&rawPenny.confident&&rawPenny.amount==1,"one-cent natural-language consumption");
+        PaymentParser.Parsed rawSplit=PaymentParser.parse("com.android.mms","95588",rawBank.replace("平台商户)","平台\n商户)"));
+        check(rawSplit!=null&&rawSplit.confident&&rawSplit.amount==2839,"natural-language consumption can wrap within detail");
+        PaymentParser.Parsed twoRaw=PaymentParser.parse("com.android.mms","95588",rawBank+"\n"+rawBank);
+        check(twoRaw!=null&&!twoRaw.confident&&twoRaw.amount==0,"two identical natural-language debits remain separate review work");
+        PaymentParser.Parsed mixedFormats=PaymentParser.parse("com.android.mms","95588",structured+"\n"+rawBank);
+        check(mixedFormats!=null&&!mixedFormats.confident&&mixedFormats.amount==0,"mixed structured and natural-language receipts require review");
+        PaymentParser.Parsed rawUnknown=PaymentParser.parse("com.android.mms","朋友",rawBank);
+        check(rawUnknown!=null&&!rawUnknown.confident&&!rawUnknown.completed,"bank name in body never verifies unknown sender");
+        check(PaymentParser.parse("com.android.mms","95588",rawBank+"\n交易失败")==null,"failed natural-language debit remains ignored");
+        check(PaymentParser.parse("com.android.mms","95588",rawBank+"\n即将扣款")==null,"scheduled natural-language debit remains ignored");
+        for(String notPaid:new String[]{"尚未支出","待支出","计划支出"}){
+            check(PaymentParser.parse("com.android.mms","95588",rawBank.replace("支出(",notPaid+"("))==null,"natural-language uncompleted consumption is ignored: "+notPaid);
+            check(PaymentParser.parse("com.android.mms","95588",structured.replace("支出(",notPaid+"("))==null,"structured uncompleted consumption is ignored: "+notPaid);
+        }
         System.out.println("PaymentParser: " + cases + " checks passed");
     }
 }

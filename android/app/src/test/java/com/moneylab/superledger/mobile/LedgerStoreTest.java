@@ -19,8 +19,56 @@ public final class LedgerStoreTest {
     private static JSONObject state(JSONArray transactions) throws Exception { return MobileLedger.emptyState().put("accounts", new JSONArray().put(MobileLedgerTest.account("bank","CNY",10000,null))).put("transactions", transactions); }
     private static JSONObject response(JSONObject request, JSONObject state, JSONArray accepted, JSONArray conflicts) throws Exception { return new JSONObject().put("requestId", request.getString("requestId")).put("bookId", "book_test").put("state", state).put("accepted", accepted).put("conflicts", conflicts).put("summary", new JSONObject()); }
     private static void pair(LedgerStore store, JSONArray transactions) throws Exception { JSONObject request = store.syncRequest(UUID.randomUUID().toString()); store.applyResponse(response(request, state(transactions), new JSONArray(), new JSONArray()), request); }
+    private static JSONObject smsWallet()throws Exception{return MobileLedgerTest.account("sms_wallet","CNY",10000,null).put("providerId","wechat");}
+    private static JSONObject smsCard(String id,String bank)throws Exception{return MobileLedgerTest.account(id,"CNY",10000,null).put("providerId","bank-card").put("bankId",bank).put("lastFour","1234");}
+    private static PaymentParser.Parsed structuredSms(String sender,String amount,String merchant){return PaymentParser.parse("com.android.mms",sender,"交易提醒\n交易金额"+amount+"元\n账号1234\n交易内容 支出(消费"+merchant+"支付-"+merchant+"平台商户)\n账户余额2606.39元\n银行名称工商银行");}
+    private static void structuredSmsCapture(File workspace)throws Exception{
+        final String source="com.android.mms";long postedAt=System.currentTimeMillis();
+        for(String sender:new String[]{"95588","工商银行"}){
+            File directory=new File(workspace,"structured-sms-"+(sender.equals("95588")?"number":"bank-name"));LedgerStore captureStore=fresh(directory);
+            captureStore.saveAccount(smsWallet());captureStore.saveAccount(smsCard("sms_icbc","icbc"));captureStore.saveAccount(smsCard("sms_cmb","cmb"));
+            captureStore.setCapture(true);captureStore.setSource(source,"测试短信应用",true,"sms_wallet");
+            PaymentParser.Parsed parsed=structuredSms(sender,"28.39","拼多多");
+            check(parsed!=null&&parsed.confident,"the real structured SMS parser supplies confident card evidence before storage: "+sender);
+            captureStore.capture(source,"structured-payment",postedAt,parsed);
+            JSONObject captured=captureStore.snapshot(),book=captured.getJSONObject("state");JSONArray transactions=book.getJSONArray("transactions");
+            check(transactions.length()==1&&captured.getJSONArray("pending").length()==0,"a recognized structured bank SMS records one expense without a review item: "+sender);
+            JSONObject expense=transactions.getJSONObject(0),metadata=expense.getJSONObject("mobileCapture");
+            check(expense.getLong("amount")==2839&&expense.getString("accountId").equals("sms_icbc")&&expense.getString("type").equals("expense"),"the transaction amount is used instead of the balance, and the bank card overrides the wrong wallet default: "+sender);
+            check(metadata.getString("bankId").equals("icbc")&&metadata.getString("lastFour").equals("1234")&&metadata.getString("routingMethod").equals("bank-tail"),"stored capture evidence retains the matched bank and account tail: "+sender);
+            JSONObject balances=MobileLedger.balances(book,LedgerStore.today());
+            check(balances.getLong("sms_icbc")==7161&&balances.getLong("sms_wallet")==10000&&balances.getLong("sms_cmb")==10000,"only the exact ICBC card balance changes: "+sender);
+            int queued=captured.getJSONArray("operations").length();captureStore.capture(source,"structured-payment",postedAt,parsed);
+            check(captureStore.snapshot().getJSONObject("state").getJSONArray("transactions").length()==1&&captureStore.snapshot().getJSONArray("pending").length()==0&&captureStore.snapshot().getJSONArray("operations").length()==queued,"re-delivery of the same SMS cannot create another expense, review or sync operation: "+sender);
+            captureStore=fresh(directory);captureStore.capture(source,"structured-payment",postedAt,parsed);
+            check(captureStore.snapshot().getJSONObject("state").getJSONArray("transactions").length()==1&&captureStore.snapshot().getJSONArray("operations").length()==queued,"the same notification remains deduplicated after reopening the durable store: "+sender);
+            captureStore.capture(source,"structured-one-cent",postedAt,structuredSms(sender,"0.01","抖音"));
+            JSONObject withCent=captureStore.snapshot();
+            check(withCent.getJSONObject("state").getJSONArray("transactions").length()==2&&withCent.getJSONArray("pending").length()==0&&MobileLedger.balances(withCent.getJSONObject("state"),LedgerStore.today()).getLong("sms_icbc")==7160,"a distinct one-cent SMS is recorded in exact cents on the same card: "+sender);
+        }
+        PaymentParser.Parsed recognized=structuredSms("95588","28.39","拼多多");
+        LedgerStore missing=fresh(new File(workspace,"structured-sms-missing-card"));missing.saveAccount(smsWallet());missing.saveAccount(smsCard("sms_cmb","cmb"));missing.setCapture(true);missing.setSource(source,"测试短信应用",true,"sms_wallet");missing.capture(source,"missing-card",postedAt,recognized);
+        JSONObject missingSnapshot=missing.snapshot();
+        check(missingSnapshot.getJSONObject("state").getJSONArray("transactions").length()==0&&missingSnapshot.getJSONArray("pending").length()==1,"a structured bank SMS without its bank card is retained for review rather than charged to the wallet");
+        check(missingSnapshot.getJSONArray("pending").getJSONObject(0).getJSONObject("transaction").getString("accountId").isEmpty()&&missingSnapshot.getJSONArray("pending").getJSONObject(0).getJSONObject("transaction").getLong("amount")==2839,"missing-card review preserves the actual amount without guessing an account");
+        LedgerStore duplicate=fresh(new File(workspace,"structured-sms-duplicate-cards"));duplicate.saveAccount(smsWallet());duplicate.saveAccount(smsCard("sms_icbc","icbc"));duplicate.saveAccount(smsCard("sms_icbc2","icbc"));duplicate.setCapture(true);duplicate.setSource(source,"测试短信应用",true,"sms_icbc");duplicate.capture(source,"duplicate-cards",postedAt,recognized);
+        JSONObject duplicateSnapshot=duplicate.snapshot();
+        check(duplicateSnapshot.getJSONObject("state").getJSONArray("transactions").length()==0&&duplicateSnapshot.getJSONArray("pending").length()==1,"same-bank same-tail cards require review even with a card default");
+        check(duplicateSnapshot.getJSONArray("pending").getJSONObject(0).getJSONArray("accountCandidates").length()==2&&duplicateSnapshot.getJSONArray("pending").getJSONObject(0).getJSONObject("transaction").getString("accountId").isEmpty(),"ambiguous bank-card review offers both candidates without selecting one");
+        LedgerStore stranger=fresh(new File(workspace,"structured-sms-stranger"));stranger.saveAccount(smsCard("sms_icbc","icbc"));stranger.setCapture(true);stranger.setSource(source,"测试短信应用",true,"sms_icbc");PaymentParser.Parsed unfamiliar=structuredSms("测试联系人","28.39","拼多多");stranger.capture(source,"unfamiliar-sender",postedAt,unfamiliar);
+        check(stranger.snapshot().getJSONObject("state").getJSONArray("transactions").length()==0&&stranger.snapshot().getJSONArray("pending").length()==(unfamiliar==null?0:1),"an unfamiliar sender is either ignored or retained for review, never auto-booked from a bank name inside its message");
+        LedgerStore disabled=fresh(new File(workspace,"structured-sms-disabled"));disabled.saveAccount(smsCard("sms_icbc","icbc"));disabled.setCapture(true);
+        check(disabled.sourceEnabled("com.icbc")&&!disabled.sourceEnabled(source),"enabling the default ICBC app source does not silently enable the separate SMS app");
+        disabled.capture(source,"unselected-sms",postedAt,recognized);
+        check(disabled.snapshot().getJSONObject("state").getJSONArray("transactions").length()==0&&disabled.snapshot().getJSONArray("pending").length()==0&&disabled.snapshot().getJSONArray("seen").length()==0,"an unselected SMS source is not collected or marked seen");
+        disabled.setSource(source,"测试短信应用",false,"sms_icbc");disabled.capture(source,"disabled-sms",postedAt,recognized);
+        check(disabled.snapshot().getJSONObject("state").getJSONArray("transactions").length()==0&&disabled.snapshot().getJSONArray("pending").length()==0&&disabled.snapshot().getJSONArray("seen").length()==0,"an explicitly disabled SMS source remains uncollected");
+        disabled.setSource(source,"测试短信应用",true,"sms_icbc");disabled.setCapture(false);disabled.capture(source,"capture-off",postedAt,recognized);
+        check(disabled.snapshot().getJSONObject("state").getJSONArray("transactions").length()==0&&disabled.snapshot().getJSONArray("pending").length()==0&&disabled.snapshot().getJSONArray("seen").length()==0,"the global capture switch still blocks structured SMS despite a trusted enabled source");
+    }
     public static void main(String[] args) throws Exception {
         File workspace = Files.createTempDirectory("superledger-store-tests-").toFile();
+        structuredSmsCapture(workspace);
         LedgerStore store = fresh(new File(workspace, "delete")); pair(store, new JSONArray());
         JSONObject created = tx("mobile_new", 2800); store.putTransaction(created, null);
         JSONObject unacknowledged = store.syncRequest(UUID.randomUUID().toString());
