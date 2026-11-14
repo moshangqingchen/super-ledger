@@ -6,7 +6,7 @@
 
 ## 安装与打开
 
-Windows 1.8.18 和 Android 1.3.14 可从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/tag/v1.8.18) 下载 `SuperLedger-Setup-1.8.18.exe` 和 `SuperLedger-Mobile-1.3.14.apk`，也可运行本地构建的 `release/超级账本-安装-1.8.18.exe`。Windows 安装包也内附该 APK。安装程序会为当前用户创建桌面与开始菜单入口。
+Windows 1.8.19 和 Android 1.3.15 可从 [GitHub Releases](https://github.com/moshangqingchen/super-ledger/releases/tag/v1.8.19) 下载 `SuperLedger-Setup-1.8.19.exe` 和 `SuperLedger-Mobile-1.3.15.apk`，也可运行本地构建的 `release/超级账本-安装-1.8.19.exe`。Windows 安装包也内附该 APK。安装程序会为当前用户创建桌面与开始菜单入口。
 
 也可直接打开 `release/win-unpacked/超级账本.exe`；免安装版必须保留整个 win-unpacked 文件夹。根目录的 `启动账本.cmd` 仅是兼容启动入口，日常使用桌面或开始菜单图标即可。
 
@@ -20,6 +20,7 @@ Android 1.3.6 支持按北京时间设置首次和每月扣账小时，小时订
 
 ## 功能
 
+- Windows 1.8.19 / Android 1.3.15 将 Grok 会员入口改为「Grok / X / Cursor · 联动会员」，选择后自动填写三项服务名称，兼容旧 Grok 记录；电脑版内附新版 APK。详见 [1.8.19 更新说明](docs/releases/1.8.19.md)。
 - Windows 1.8.18 / Android 1.3.14 修复工行消费短信识别，支持结构化交易字段和「支出(消费…)金额元」原文，按银行与尾号匹配实际扣款卡；电脑版同步内附该 APK。详见 [1.8.18 更新说明](docs/releases/1.8.18.md)。
 - Windows 1.8.17 增加每日支出与近半年对比图、跨月搜索、快捷记账和 6 秒撤销删除；两端同步支持月／季／半年／年订阅、分类预算、自定义分类和心愿目标日期。使用这些新字段时账本升级为 schema 4，电脑和手机请一起升级。详见 [1.8.17 更新说明](docs/releases/1.8.17.md)。
 
@@ -59,7 +60,7 @@ Android 1.3.6 支持按北京时间设置首次和每月扣账小时，小时订
 - 多币种收入、支出、账户余额和总资产，按各币种整数最小单位计算；CNY 默认，支持 USD、USDT、JPY、TRY 等。
 - 每日自动查询公开汇率，也可手动刷新或为单个账户设手动汇率。断网沿用缓存，历史收支汇率保留。详见 [汇率与币种说明](docs/currency-behavior.md)。
 - 每日收支、月度账单筛选、CSV 导出、预算与分类统计、储蓄心愿。
-- ChatGPT、Claude、Gemini、Suno、Grok、TT语音、酷狗音乐、百度网盘等 11 个会员预设，包含官方Logo和已核实档位。档位可下拉选择或自填，金额按实际支付价格填写。
+- ChatGPT、Claude、Gemini、Suno、Grok / X / Cursor 联动会员、TT语音、酷狗音乐、百度网盘等 11 个会员预设，包含官方Logo和已核实档位。档位可下拉选择或自填，金额按实际支付价格填写。
 - 订阅可关联多个邮箱、Apple、Google、手机号、微信、QQ 或其他账号，标注用途并复用已保存账号。可填写会员到期日和备注，按绿色（超过 30 天）、黄色（8–30 天）、橙色（0–7 天）和红色（已到期）显示日期与剩余天数，支持按状态和账号筛选。连续订阅成功记账后会顺延已填写的到期日，未填写时按下次扣账时间提示续费。可手动校正日期，停止记账请关闭订阅开关。安卓按相同规则处理。
 - 连续订阅可按月、季度、半年或年自动记账；单次订阅只记一次。费用填写每次实际扣账金额，汇总按周期折算月均与年度预估。月末适配短月份，漏记账期下次启动补记，同一账期不重复；暂停期间账期恢复后不补扣。
 - JSON完整备份导入/导出；原生文件对话框；导入前自动保留独立备份。

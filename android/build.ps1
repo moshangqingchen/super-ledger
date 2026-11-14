@@ -1,7 +1,7 @@
 ﻿param(
   [switch]$Check,
-    [string]$VersionName = '1.3.14',
-    [int]$VersionCode = 10314
+    [string]$VersionName = '1.3.15',
+    [int]$VersionCode = 10315
 )
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path

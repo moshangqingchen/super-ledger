@@ -24,7 +24,7 @@ public final class BrandIcons {
         {"claude", "Claude", "#D97757", "Pro|Max|Ultra"},
         {"gemini", "Gemini", "#4285F4", "Google AI Plus|Google AI Pro|Google AI Ultra 5x|Google AI Ultra 20x"},
         {"suno", "Suno", "#E89277", "Pro|Premier"},
-        {"grok", "Grok", "#171717", "Plus|Premium|Super|Ultra"},
+        {"grok", "Grok / X / Cursor", "#171717", "Plus|Premium|Super|Ultra"},
         {"ttvoice", "TT语音", "#5E69F5", "超级玩家|超级玩家SVIP"},
         {"kugou", "酷狗音乐", "#009DF4", "豪华VIP|超级VIP|音乐包"},
         {"baidu", "百度网盘", "#2F7DF4", "会员|超级会员"},
@@ -47,6 +47,7 @@ public final class BrandIcons {
     public static String forSubscription(JSONObject subscription) {
         if (!subscription.optString("serviceId").isEmpty()) return subscription.optString("serviceId");
         String name = subscription.optString("name").toLowerCase(Locale.ROOT);
+        if (name.contains("grok")) return "grok";
         for (String[] service : SERVICES) if (name.contains(service[1].toLowerCase(Locale.ROOT))) return service[0];
         if (name.contains("网易云")) return "netease"; if (name.contains("b站")) return "bilibili"; if (name.contains("百度云")) return "baidu"; return "";
     }

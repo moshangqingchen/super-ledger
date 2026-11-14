@@ -432,7 +432,8 @@
 .modal:has(#subscription-form) .form-heading-icon { background: linear-gradient(145deg, #fff, #ece7f8); border-color: #fff; box-shadow: 0 4px 12px #7863a917, inset 0 1px 0 #fff; color: #8c77b7; }
 #subscription-form .membership-shortcuts { gap: 9px; padding-bottom: 23px; margin-bottom: 24px; border-color: #eceff5; }
 #subscription-form .membership-choice { position: relative; min-width: 0; min-height: 76px; gap: 8px; border-radius: 13px; border-color: #e7eaf2; color: #6d7890; background: linear-gradient(145deg, #fff, #f8f9fd); box-shadow: inset 0 1px 0 #fff, 0 2px 4px #27344b03; }
-#subscription-form .membership-choice span { font-size: 11px; }
+#subscription-form .membership-choice span { max-width: 100%; white-space: normal; text-wrap: balance; font-size: 11px; line-height: 1.4; }
+#subscription-form .membership-choice-subtitle { display: block; margin-top: 3px; font-size: 10px; font-weight: 400; color: #7d7192; }
 #subscription-form .membership-choice:hover { border-color: #c7bddf; color: #79659e; background: #fbf9ff; }
 #subscription-form .membership-choice.selected { border-color: #b7a7d6; color: #6d568f; background: linear-gradient(145deg, #faf7ff, #efebf9); box-shadow: inset 0 1px 0 #fff, 0 3px 8px #7863a90b; }
 #subscription-form .membership-choice.selected::after { content: ''; position: absolute; width: 5px; height: 5px; top: 7px; right: 7px; border-radius: 50%; background: #9a80bd; }

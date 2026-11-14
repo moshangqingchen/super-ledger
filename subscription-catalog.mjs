@@ -1,7 +1,7 @@
 /**
  * Local, browser-safe subscription presets. These are editable labels, not live offers.
  * No prices or account entitlements are inferred from a selected service/tier.
- * Sources were checked on 2026-11-05; every tier must remain manually editable in UI.
+ * Source check dates are recorded per preset; every tier must remain manually editable in UI.
  * `color` is a presentation accent; logo assets are maintained separately.
  */
 export const subscriptionCatalog = [
@@ -60,8 +60,9 @@ export const subscriptionCatalog = [
   },
   {
     id: 'grok',
-    name: 'Grok',
-    aliases: ['grok', 'xAI', 'SuperGrok', 'The X Subscription'],
+    name: 'Grok / X / Cursor',
+    subtitle: '联动会员',
+    aliases: ['Grok', 'xAI', 'SuperGrok', 'X', 'Cursor', 'The X Subscription', '联动会员'],
     logo: '/assets/brands/grok.png',
     color: '#171717',
     tiers: ['Plus', 'Premium', 'Super', 'Ultra'],
@@ -69,7 +70,7 @@ export const subscriptionCatalog = [
       { title: 'Pricing: Compare Plans | SpaceXSI', url: 'https://x.ai/pricing' },
       { title: 'The X Subscription pricing', url: 'https://docs.x.ai/x-subscription/pricing' },
     ],
-    verifiedDate: '2026-11-05',
+    verifiedDate: '2026-11-13',
   },
   {
     id: 'kugou',

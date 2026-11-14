@@ -627,7 +627,7 @@ function describePickerOption(select,option){
  }
  if(name==='serviceId'){
   const provider=subscriptionCatalog.find(p=>p.id===value);
-  return {iconHtml:provider?subIcon({serviceId:value}):pickerSymbol('spark'),title,searchText:provider?.aliases?.join(' ')||''};
+  return {iconHtml:provider?subIcon({serviceId:value}):pickerSymbol('spark'),title,subtitle:provider?.subtitle||'',searchText:provider?.aliases?.join(' ')||''};
  }
  if(name==='tierPreset'){
   const serviceId=select.form?.elements.serviceId?.value,provider=subscriptionCatalog.find(p=>p.id===serviceId);
@@ -1021,7 +1021,7 @@ function subscriptionModal(id){
  const hours=Array.from({length:24},(_,hour)=>[String(hour),String(hour).padStart(2,'0')+':00']);
  const customBilling=Boolean(s&&(s.billingDay!==Number(s.startDate.slice(8))||(s.billingHour??0)!==(s.startHour??0)));
  modal(s?'管理这份会员':'添加你的会员订阅','把服务、关联账号和到期时间一起记好。',
- '<form id="subscription-form" data-id="'+(id||'')+'"><div class="membership-shortcuts">'+subscriptionCatalog.map(p=>'<button type="button" class="membership-choice '+(serviceId===p.id?'selected':'')+'" data-action="choose-service" data-id="'+esc(p.id)+'"><img src="'+esc(p.logo)+'" alt="" width="25" height="25"><span>'+esc(p.name)+'</span></button>').join('')+'</div><div class="form-grid">'+
+ '<form id="subscription-form" data-id="'+(id||'')+'"><div class="membership-shortcuts">'+subscriptionCatalog.map(p=>'<button type="button" class="membership-choice '+(serviceId===p.id?'selected':'')+'" data-action="choose-service" data-id="'+esc(p.id)+'"><img src="'+esc(p.logo)+'" alt="" width="25" height="25"><span>'+esc(p.name)+(p.subtitle?'<small class="membership-choice-subtitle">'+esc(p.subtitle)+'</small>':'')+'</span></button>').join('')+'</div><div class="form-grid">'+
  selectField('选择会员服务','serviceId',[['','其他服务 / 自定义'],...subscriptionCatalog.map(p=>[p.id,p.name])],serviceId,true)+field('订阅名称','name',s?.name||'','text','required maxlength="80" placeholder="选择服务后自动填写，也可以自定义"',true)+
  '<div class="field full"><label for="field-tier">会员档位 · 可选择，也可自行填写</label><div class="tier-picker-row"><select id="membership-tier-select" name="tierPreset" aria-label="已有会员档位"><option value="">自定义档位 / 选择已有档位</option>'+(provider?.tiers||[]).map(t=>'<option value="'+esc(t)+'" '+(s?.tier===t?'selected':'')+'>'+esc(t)+'</option>').join('')+'</select><input id="field-tier" name="tier" list="membership-tiers" value="'+esc(s?.tier||'')+'" maxlength="80" placeholder="也可以直接填写档位" autocomplete="off"></div><datalist id="membership-tiers">'+(provider?.tiers||[]).map(t=>'<option value="'+esc(t)+'"></option>').join('')+'</datalist><p class="hint" id="membership-tier-hint">先选一个服务查看档位，或直接输入你的会员档位。</p></div>'+
  '<section class="subscription-section field full"><div class="subscription-section-title"><h3>关联登录账号</h3><p>填写使用会员的邮箱、Apple 账号等；费用从下方所选的扣款账户记账。</p></div><div id="linked-accounts-editor">'+(s?.linkedAccounts||[]).map(linkedAccountRow).join('')+'</div><p class="linked-account-empty" id="linked-account-empty">可选填写，最多关联 10 个账号。</p><div class="linked-account-actions"><select id="saved-linked-account" aria-label="选择已保存的关联账号"><option value="">'+(saved.length?'选择已保存的账号…':'暂无已保存账号')+'</option>'+saved.map((a,i)=>'<option value="'+i+'">'+esc(subscriptionAccountLabel(a)+' · '+a.value+(a.label?' · '+a.label:''))+'</option>').join('')+'</select><button type="button" id="add-linked-account" class="btn btn-outline btn-sm" data-action="add-linked-account">'+icon('plus',14)+' 添加关联账号</button></div></section>'+
